@@ -1,3 +1,5 @@
+> **This repo is a read-only mirror.** Source of truth is [tron-42](https://github.com/42piratas/tron-42). Do not edit directly — changes made here will be overwritten on next sync.
+
 # TRON — Stop coordinating agents. Start shipping.
 
 *Built for developers who want AI agents that work like a team, not a prompt.*
