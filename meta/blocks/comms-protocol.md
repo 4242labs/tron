@@ -41,26 +41,7 @@ tron_poll() {
 
 ### 1.2 CLI-Only Fallback
 
-When TG is unavailable, messages are written to files in a shared directory.
-
-**Path:** `{meta}/logs/tron/bus/`
-
-**Send:**
-```bash
-tron_send_cli() {
-  local timestamp=$(date +%s%N)
-  echo "[${TRON_AGENT_ID}] $1" > "${TRON_META_PATH}/logs/tron/bus/${timestamp}-${TRON_AGENT_ID}.msg"
-}
-```
-
-**Poll:**
-```bash
-tron_poll_cli() {
-  find "${TRON_META_PATH}/logs/tron/bus/" -name "*.msg" -newer "${TRON_META_PATH}/logs/tron/bus/.last_read" \
-    | sort | while read f; do cat "$f"; done
-  touch "${TRON_META_PATH}/logs/tron/bus/.last_read"
-}
-```
+When TG is unavailable, the SQLite bus still operates identically — agents write and poll as normal. The only difference is TRON does not forward messages to TG. The user must read the terminal or query `bus.db` directly.
 
 CLI-only mode is degraded: no remote access, no user interaction via phone. Terminal-only.
 
@@ -256,7 +237,7 @@ Set by TRON at agent spawn time:
 | `TRON_AGENT_ROLE` | Agent's role | `engineer` |
 | `TRON_BLOCK` | Block being worked on | `block-04-02-auth-middleware` |
 | `TRON_META_PATH` | Path to project's meta/ | `/path/to/project/meta` |
-| `TRON_POLL_OFFSET` | Last TG update ID seen | `0` (incremented by agent) |
+| `TRON_POLL_OFFSET` | ~~Last TG update ID seen~~ | **Deprecated** — bus uses SQLite cursors |
 | `TRON_HEARTBEAT_INTERVAL` | Seconds between heartbeats | `300` (5 min) |
 | `TRON_POLL_INTERVAL` | Seconds between TG polls | `30` |
 | `TRON_TRANSPORT` | Active transport | `tg` or `cli` |

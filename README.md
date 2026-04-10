@@ -161,7 +161,11 @@ You are {project}/meta/agents/tron.md. Execute Session Start.
 | :----- | :--------------------------------------------------------- | :------------------------------------------------- |
 | CREATE | `meta/agents/tron.md`                                      | Project-local orchestrator                         |
 | CREATE | `meta/logs/tron/`                                          | TRON session log folder                            |
+| CREATE | `meta/logs/tron/bus.db`                                    | SQLite message bus (WAL mode)                      |
+| CREATE | `meta/logs/tron/tron-state.md`                             | TRON persistent state                              |
 | CREATE | `meta/blocks/handover-reviewer-code.md`                    | Reviewer scope file                                |
+| CREATE | `meta/skills/skill-tg-comms.md`                            | Agent communication skill                          |
+| CREATE | `meta/.env`                                                | TG credentials (gitignored)                        |
 | RENAME | `meta/blocks/session-handover.md` → `handover-engineer.md` | If it exists                                       |
 | UPDATE | `meta/agents/engineer.md`                                  | Handover path + Engineer Return format             |
 | UPDATE | `meta/agents/reviewer-code.md`                             | Handover path + git scope + Reviewer Return format |
@@ -207,13 +211,13 @@ TRON sends notifications to a dedicated Telegram channel at key workflow milesto
 
 **Two tiers:**
 
-- 🔴 **Requires action** — always on, non-configurable: `HIGH_DEBT`, `DECISION_NEEDED`, `USER_VALIDATION`, `ERROR`, `SESSION_ABORTED`
-- ℹ️ **Informational** — configurable per project: `SESSION_START`, `AGENT_SPAWNED`, `SESSION_COMPLETE`
+- 🔴 **Requires action** — always on, non-configurable: `BLOCKER`, `QUESTION`, `ERROR`, `STALL`, `UNRESPONSIVE`, `WATCHDOG_KILL`, `SESSION_ABORTED`
+- ℹ️ **Informational** — configurable per project: `SESSION_START`, `SPAWNED`, `SV-PASS`, `SESSION_COMPLETE`, `PIPELINE_EXHAUSTED`
 
 **Setup per project:**
 
-1. Create a dedicated Telegram channel for the project's TRON instance
-2. Add the project's bot as admin to that channel
+1. Create a dedicated Telegram **group** for the project's TRON instance (groups only — channels are not supported)
+2. Add the project's bot to that group
 3. Create `{meta_path}/.env` (local only, gitignored):
    ```
    TELEGRAM_BOT_TOKEN=...
@@ -230,4 +234,4 @@ TRON-SEED will ask for these credentials during Step 2 and create the `.env` fil
 ---
 
 **Canonical source:** `tron/tron-seed.md`
-**Last Updated:** 2026-03-07
+**Last Updated:** 2026-04-10
