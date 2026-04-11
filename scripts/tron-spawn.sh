@@ -3,7 +3,7 @@
 # Usage: tron-spawn.sh <mode> <agent_id> <role> <block> <model> <meta_path> <project_root> <agent_doc> [extra_prompt]
 #
 # mode:         "interactive" or "headless"
-# agent_id:     e.g., "ENG-1", "REV-1", "ARCH-1"
+# agent_id:     e.g., "ENG-10-01" (engineers), "REV-1", "ARCH-1" (all other roles)
 # role:         e.g., "engineer", "reviewer-code", "architect"
 # block:        e.g., "block-04-02-auth-middleware" or "phase-04-cleanup"
 # model:        e.g., "claude-sonnet-4-6", "claude-opus-4-6"
@@ -74,6 +74,7 @@ SCRIPT
     -e 'activate' \
     -e 'create window with default profile' \
     -e 'tell current session of current window' \
+    -e "set name to \"${AGENT_ID}\"" \
     -e "write text \"${SPAWN_SCRIPT}\"" \
     -e 'end tell' \
     -e 'end tell'
