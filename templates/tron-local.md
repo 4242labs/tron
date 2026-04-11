@@ -235,9 +235,26 @@ Confirm? (yes / adjust)
 
 For each agent the user confirmed:
 
-- [ ] Assign agent ID: `{ROLE}-{N}` (e.g., `ENG-1`, `ENG-2`, `REV-1`)
+- [ ] Assign agent ID:
+  - **Engineers:** `ENG-{BLOCK}` (e.g., `ENG-06-01`, `ENG-06-02`) — block ID is the identifier, not a sequence number
+  - **All other roles:** `{ROLE}-{N}` (e.g., `ARCH-1`, `REV-1`) — sequential number
+- [ ] **For engineers — deduplication check:** Before spawning, verify no active agent exists for this block:
+  ```bash
+  # Check iTerm windows
+  osascript -e 'tell application "iTerm" to get name of windows' 2>/dev/null | grep -q "ENG-{BLOCK}" && echo "WINDOW_EXISTS"
+  # Check manifest in tron-state.md
+  grep -q "| ENG-{BLOCK} |" {meta_path}/logs/tron/tron-state.md && grep -q "active" {meta_path}/logs/tron/tron-state.md && echo "MANIFEST_EXISTS"
+  ```
+  If either check fires → abort spawn for this agent, alert:
+  `[TRON] ⚠️ SPAWN_BLOCKED: ENG-{BLOCK} already active — skipping duplicate spawn`
 - [ ] If reviewer: write `{meta_path}/blocks/handover-reviewer-code.md` with review scope
 - [ ] Spawn agent (see §Spawning below)
+- [ ] **Write to Active Agent Manifest** in `{meta_path}/logs/tron/tron-state.md` (§Active Agent Manifest section):
+  ```bash
+  # Append row to manifest table — sed targets the last | (none) | row or appends after header
+  # Simplest: TRON edits the file directly after spawn confirmation
+  ```
+  Add row: `| {AGENT_ID} | {block/scope} | {role} | {model} | {YYYY-MM-DDTHH:MMZ} | active |`
 - [ ] 📣 Send: `[TRON] ⚙️ SPAWNED: {AGENT_ID} for {block/scope} ({model}, {spawn_mode})`
 - [ ] Immediately proceed to Phase 2 — do NOT wait for agent messages before starting the monitoring loop.
 
@@ -394,6 +411,7 @@ When an agent sends `DONE`:
     - New file in `{meta_path}/logs/{role}/` (session log written)
     - `{meta_path}/pipeline.md` updated
   - If any evidence missing → send agent back with specifics of what's missing
+- [ ] **Update Active Agent Manifest:** In `{meta_path}/logs/tron/tron-state.md`, change this agent's manifest row status from `active` to `done`.
 
 #### 3b. Reviewer Validation
 
@@ -471,7 +489,7 @@ When the last block of a phase completes:
   Kill any orphan claude processes from this session. Log what was cleaned up.
 - [ ] **Finalize metrics:** `session_duration=$(($(date +%s) - session_start_time))`, compute per-agent durations
 - [ ] Write session log: `{meta_path}/logs/tron/log-{YYMMDD-HHMM}-{description}.md` (format in §Session Log Format — include §Metrics section)
-- [ ] Update `{meta_path}/logs/tron/tron-state.md`
+- [ ] Update `{meta_path}/logs/tron/tron-state.md`: session history, last session date, and **clear Active Agent Manifest** (reset all rows — session is over, no agents are active)
 - [ ] Commit and push `{meta_path}/` only — never application repos:
   ```bash
   cd {meta_path} && git add -A && git commit -m "tron: session {YYMMDD-HHMM} — {summary}" && git push origin main

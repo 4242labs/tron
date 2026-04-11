@@ -41,6 +41,14 @@ Persistent state for TRON sessions. Updated after every session.
 | Role | Skill Exists | Path |
 |:--|:--|:--|
 
+## Active Agent Manifest
+
+Updated on every spawn and release. TRON reads this before spawning engineers to prevent duplicates. Cleared at session end.
+
+| Agent ID | Block/Scope | Role | Model | Spawned | Status |
+|:--|:--|:--|:--|:--|:--|
+| (none) | — | — | — | — | — |
+
 ## Watch Items
 
 None
