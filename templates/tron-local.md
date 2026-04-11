@@ -242,19 +242,15 @@ For each agent the user confirmed:
   ```bash
   # Check iTerm windows
   osascript -e 'tell application "iTerm" to get name of windows' 2>/dev/null | grep -q "ENG-{BLOCK}" && echo "WINDOW_EXISTS"
-  # Check manifest in tron-state.md
-  grep -q "| ENG-{BLOCK} |" {meta_path}/logs/tron/tron-state.md && grep -q "active" {meta_path}/logs/tron/tron-state.md && echo "MANIFEST_EXISTS"
+  # Check manifest — must match agent ID AND active status on the same line
+  grep -q "| ENG-{BLOCK} .*| active |" {meta_path}/logs/tron/tron-state.md && echo "MANIFEST_EXISTS"
   ```
   If either check fires → abort spawn for this agent, alert:
   `[TRON] ⚠️ SPAWN_BLOCKED: ENG-{BLOCK} already active — skipping duplicate spawn`
 - [ ] If reviewer: write `{meta_path}/blocks/handover-reviewer-code.md` with review scope
 - [ ] Spawn agent (see §Spawning below)
-- [ ] **Write to Active Agent Manifest** in `{meta_path}/logs/tron/tron-state.md` (§Active Agent Manifest section):
-  ```bash
-  # Append row to manifest table — sed targets the last | (none) | row or appends after header
-  # Simplest: TRON edits the file directly after spawn confirmation
-  ```
-  Add row: `| {AGENT_ID} | {block/scope} | {role} | {model} | {YYYY-MM-DDTHH:MMZ} | active |`
+- [ ] **For engineers — write to Active Agent Manifest** (only after Step 4 readiness check confirms agent started): edit `{meta_path}/logs/tron/tron-state.md`, replace the `(none)` placeholder row or append:
+  `| ENG-{BLOCK} | {block} | engineer | {model} | {YYYY-MM-DDTHH:MMZ} | active |`
 - [ ] 📣 Send: `[TRON] ⚙️ SPAWNED: {AGENT_ID} for {block/scope} ({model}, {spawn_mode})`
 - [ ] Immediately proceed to Phase 2 — do NOT wait for agent messages before starting the monitoring loop.
 
