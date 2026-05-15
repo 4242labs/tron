@@ -65,7 +65,7 @@ Begin idle.
 
 ## Spawn a reviewer
 
-**Fires:** `workflow-state.md` `blocks_since_review >= threshold` (default 3).
+**Fires:** `workflow-state.md` `blocks_since_review >= reviewer_threshold` (from `workflow.md` fixed config).
 
 **TRON sends:**
 
@@ -96,16 +96,27 @@ Begin.
 
 **TRON does:**
 1. Read engineer's PR URL from message; verify PR open and CI green via `gh pr view`.
-2. Run SV-01 (acceptance criteria self-check): send query to engineer.
+2. Send SV-01 query (template below).
 3. If no SV-01 response in 2 sweeps: TRON self-validates AC against block spec (Premise 23).
 4. Forward execute-phase log to architect for R5 review.
 5. If architect flags: route remediation to a fresh engineer.
 6. If all clear: send RELEASE to engineer.
 
+**SV-01 query template:**
+
+```
+[TRON] @ENG-{ID}: SV-01. For each AC item in {block_spec_path}, report:
+(a) delivered?
+(b) tested locally (lints, types, tests)?
+(c) verified against the live deployment (server/preview URL)?
+
+List separately any items requiring operator manual verification (UI flows, TG bridges, third-party UAT, mobile builds, anything in project.md "Local-validation gaps").
+```
+
 **TRON sends RELEASE:**
 
 ```
-[TRON] @ENG-{ID}: RELEASED — session complete. Run your session-end-engineer skill, then idle. TRON will kill the process.
+[TRON] @ENG-{ID}: RELEASED. Read `skill-session-end-engineer.md`. Execute every applicable step in order. Then idle. TRON will close the process.
 ```
 
 **Then:** `workflow-state.md`: increment `blocks_since_review`; clear engineer from `active_workers`; `claude stop {SESSION_ID}` on the worker.
@@ -145,8 +156,10 @@ No operator interruption.
 1. Read worker's `state.json` from `~/.claude/jobs/{worker_id}/`.
 2. Check `lastActivityAt` vs now.
 3. **Override:** if worker's worktree has uncommitted changes (`git -C <worktree> status --porcelain` non-empty), worker is working — reset stall counter (Premise 22).
-4. Tier 1 (silent > 7 min, no worktree activity): ping worker with `[TRON] HEARTBEAT?`.
-5. Tier 2 (silent > 12 min, no response): TRON self-validates (Premise 23): read PR state, CI state, AC from block spec. If all PASS → send RELEASE. If FAIL → escalate to operator.
+4. Tier 1 (silent > `tier1_silent_min` from `workflow.md`, no worktree activity): ping worker with `[TRON] HEARTBEAT?`.
+5. Tier 2 (silent > `tier2_silent_min`, no response): TRON self-validates (Premise 23): read PR state, CI state, AC from block spec. If all PASS → send RELEASE. If FAIL → escalate to operator.
+
+Thresholds live in `workflow.md` fixed config; TRON reads them on session start.
 
 ---
 

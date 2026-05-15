@@ -1,8 +1,8 @@
 # workflow.md — Example
 
-This is the operator's default workflow. The seeder copies this to `meta/agents/tron/workflow.md` as a starting point. Edit freely afterwards — TRON re-reads on session start and updates `workflow-state.md` accordingly.
+The orchestration rules for this project. The seeder copies this as a starting point; edit freely afterwards. TRON re-reads on session start and updates `workflow-state.md` accordingly.
 
-These are prose rules. The live counters TRON tracks (current block, blocks-since-review, etc.) live in `workflow-state.md`.
+This file is the source of truth for rules + tunable knobs. The live counters TRON tracks (current block, blocks-since-review, etc.) live in `workflow-state.md`.
 
 ---
 
@@ -18,11 +18,11 @@ If an engineer hits a technical/design question (architecture, library choice, s
 
 ### R3 — Wall hits involving UI / user journey → operator
 
-If the work hits a wall outside backend (UI rendering, copy, end-to-end user flow, third-party dashboard config, DNS, anything T1/T5), TRON escalates to the operator via Telegram. Engineer pauses; operator decides next step.
+If the work hits a wall outside backend (UI rendering, copy, end-to-end user flow, third-party dashboard config, DNS, anything in `project.md` "Operator-only tasks"), TRON escalates to the operator. Engineer pauses; operator decides next step.
 
 ### R4 — Reviewer cadence
 
-Every N engineer blocks completed, TRON spawns a reviewer over the merged work. Default N = 3 (override in `workflow-state.md`). If the reviewer reports findings, TRON routes remediation back to a fresh engineer (not the original one — see R6).
+Every N engineer blocks completed, TRON spawns a reviewer over the merged work. If the reviewer reports findings, TRON routes remediation back to a fresh engineer (per R6).
 
 ### R5 — Architect mid-session review
 
@@ -30,24 +30,43 @@ After every engineer session-end, before dispatching the next block, TRON sends 
 
 ### R6 — Fresh engineer per block
 
-Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Worker IDs follow `ENG-MM-DD` (block ID). Operator preference for clean state per block.
+Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Worker IDs follow the project's pattern from `project.md`.
 
 ### R7 — Workers never self-terminate
 
-Engineers, architects, and reviewers do not call `claude stop` on themselves. Their session-end skill writes a closeout log, idles, and waits for TRON's explicit RELEASE. Only TRON kills processes. (Premise 20, derived from incident 260411.)
+Engineers, architects, and reviewers do not call `claude stop` on themselves. Their session-end skills write closeout logs, then idle. Only TRON kills processes, and only after sending explicit RELEASE.
 
 ---
 
+## Per-session knobs (TRON asks at session start; defaults below)
+
+TRON greets the operator with these defaults inline at session start and lets the operator override before any work is accepted. Live values land in `workflow-state.md`.
+
+| Knob | Default | Notes |
+|:--|:--|:--|
+| `max_concurrent_engineers` | 3 | Hard cap; TRON refuses to spawn beyond this in the session |
+| `session_end_idle_min` | 15 | If no operator activity for this many minutes and no work in flight, TRON proposes session end |
+
+## Fixed config (set once; never asked)
+
+Project-stable values. Operator edits this file (or asks TRON to edit) to change them.
+
+| Knob | Default | Notes |
+|:--|:--|:--|
+| `reviewer_threshold` | 3 | R4 N value — every N blocks triggers a reviewer |
+| `tier1_silent_min` | 7 | Worker silent this long (no worktree activity) → TRON pings HEARTBEAT |
+| `tier2_silent_min` | 12 | Worker silent past this → TRON self-validates AC, may escalate |
+
 ## Peer consults (Premise 18)
 
-Workers may consult declared peers without going through TRON, **only on this list**. Consultation is logged; TRON picks it up on next sweep.
+Workers may consult declared peers without going through TRON, only on this list. Consultation is logged; TRON picks it up on next sweep.
 
 | Worker | May consult | For |
 |:--|:--|:--|
 | engineer | architect | technical/design questions |
 | reviewer | architect | architectural concerns during review |
 
-Anything outside this list goes through TRON.
+Anything outside this list goes through TRON. Enforcement is by construction: TRON only shares peer session IDs in handovers per this table; workers cannot reach undeclared peers because they don't know the IDs.
 
 ---
 
@@ -56,11 +75,13 @@ Anything outside this list goes through TRON.
 TRON updates these every turn — do not hand-edit:
 
 - `current_block` — block ID currently in progress
+- `active_workers` — list of currently-spawned worker IDs with roles + statuses
 - `blocks_since_review` — increments on engineer DONE; resets when reviewer dispatched
 - `reviewer_findings_open` — count of unresolved findings
-- `active_workers` — list of currently-spawned worker IDs
-- `session_started_at` — TRON session start time
+- `paused_for_operator` — worker ID (or `TRON`) currently awaiting operator
+- `session_started_at`, `tron_session_id` — set on cold start
+- Live values of the per-session knobs above
 
 ---
 
-**Want to change a rule?** Talk to TRON. TRON owns `workflow.md`, `workflow-state.md`, and `scripts.md` edits — it keeps all three in sync. Hand-editing one risks drift; the validator skill will flag mismatches on next session start.
+**Changing a rule or knob:** describe the change to TRON in natural language. TRON owns `workflow.md`, `workflow-state.md`, and `scripts.md` edits — it keeps all three in sync atomically. Hand-editing one risks drift; `skill-validate` will flag mismatches on next session start.

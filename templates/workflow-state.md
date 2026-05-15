@@ -26,9 +26,21 @@ Format: list of `{id, role, session_id, spawned_at, status}` where status ∈ `i
 ## Counters
 
 - `blocks_since_review`: 0
-- `reviewer_threshold`: 3   (operator-configurable; from workflow.md R4)
 - `reviewer_findings_open`: 0
 - `paused_for_operator`: null   (or worker_id awaiting operator decision)
+
+## Live config (this session)
+
+Per-session knobs (set at session start from operator's confirm/override of `workflow.md` defaults):
+
+- `max_concurrent_engineers`: 3
+- `session_end_idle_min`: 15
+
+Fixed config (mirrored from `workflow.md` for fast access during sweeps):
+
+- `reviewer_threshold`: 3
+- `tier1_silent_min`: 7
+- `tier2_silent_min`: 12
 
 ## Reviewer scope (when blocks_since_review hits threshold)
 
