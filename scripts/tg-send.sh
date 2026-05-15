@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tg-send.sh — Send a message to operator's Telegram chat.
-# Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from <repo-root>/.env.
+# Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from $TRON_DIR/.env (meta/agents/tron/.env).
 # Usage: bash meta/agents/tron/scripts/tg-send.sh "<message>"
 # Exits non-zero on any failure so callers can detect.
 
@@ -15,18 +15,9 @@ MESSAGE="$1"
 
 # Resolve repo root by walking up from this script's location until we hit a .git dir.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DIR="$SCRIPT_DIR"
-while [ "$DIR" != "/" ] && [ ! -d "$DIR/.git" ]; do
-  DIR="$(dirname "$DIR")"
-done
-
-if [ ! -d "$DIR/.git" ]; then
-  echo "tg-send: could not locate repo root from $SCRIPT_DIR" >&2
-  exit 3
-fi
-
-REPO_ROOT="$DIR"
-ENV_FILE="$REPO_ROOT/.env"
+# scripts/ lives inside the TRON instance dir
+TRON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$TRON_DIR/.env"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "tg-send: $ENV_FILE not found" >&2

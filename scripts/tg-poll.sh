@@ -7,20 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# meta/agents/tron/ is two levels up from scripts/
+# scripts/ lives inside the TRON instance dir
 TRON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIR="$TRON_DIR"
-while [ "$DIR" != "/" ] && [ ! -d "$DIR/.git" ]; do
-  DIR="$(dirname "$DIR")"
-done
-
-if [ ! -d "$DIR/.git" ]; then
-  echo "tg-poll: could not locate repo root from $SCRIPT_DIR" >&2
-  exit 3
-fi
-
-REPO_ROOT="$DIR"
-ENV_FILE="$REPO_ROOT/.env"
+ENV_FILE="$TRON_DIR/.env"
 INBOX="$TRON_DIR/tg-inbox.jsonl"
 OFFSET_FILE="$TRON_DIR/.tg-offset"
 

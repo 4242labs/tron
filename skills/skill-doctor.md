@@ -27,9 +27,9 @@ Audit project structure against `project.md` (Premise 16). Detects missing files
    - Run `git -C {repo_root} remote -v` — confirm remote matches `github_org_repo`.
 
 4. **Env key checks:**
-   - `.env` exists at `repo_root`.
+   - `.env` exists at `meta/agents/tron/.env` (the TRON instance dir — encapsulated, not at the repo root).
    - Each declared key in `env_keys` is set (non-empty).
-   - `.env` is gitignored (`grep -q "^\.env" {repo_root}/.gitignore`).
+   - `.env` is gitignored (`grep -q "^\.env" meta/agents/tron/.gitignore`).
 
 5. **TRON folder structure:**
    - `meta/agents/tron.md` exists.

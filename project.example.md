@@ -33,7 +33,7 @@ Project-specific conventions. TRON's spawn scripts read patterns from here rathe
 
 ## Env keys
 
-Stored in `<repo-root>/.env` (gitignored). TRON reads via shell scripts, never inlines values into prompts.
+Stored in `meta/agents/tron/.env` (the TRON instance dir, gitignored via `meta/agents/tron/.gitignore`). The `.env` is encapsulated with TRON — not at the repo root — so deleting `meta/agents/tron/` and `meta/agents/tron.md` removes TRON cleanly. TRON reads via shell scripts, never inlines values into prompts.
 
 | Key | Required? | Used for |
 |:--|:--|:--|

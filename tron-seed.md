@@ -108,7 +108,7 @@ Telegram is **optional**. Ask the operator:
 > Configure Telegram escalation now? (recommended for unattended sessions; skip to run with degraded escalation — operator sees alerts on next CLI interaction.)
 
 If yes:
-- Check `{target_repo}/.env`. Create with placeholder lines if missing; ensure `.env` is gitignored.
+- Check `{target_repo}/meta/agents/tron/.env` (the TRON instance dir — `.env` is encapsulated alongside TRON's other state, not at the repo root). Create with placeholder lines if missing; ensure `.env` is gitignored via `{target_repo}/meta/agents/tron/.gitignore`.
 - For each TG key (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): if missing, prompt operator to paste; append to `.env`.
 - Never log key values to seed-trace.
 
