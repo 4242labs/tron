@@ -114,6 +114,12 @@ The architecture is grounded in 23 locked premises (see `marketing-source-tron.m
 
 ---
 
+## Website
+
+The public site lives in `www/` and is served at [tron.build](https://tron.build).
+
+---
+
 ## License
 
 See `LICENSE`.

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>TRON</title>
+
+        <!-- Favicon -->
+        <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+        <link rel="icon" type="image/png" sizes="192x192" href="favicon-192x192.png" />
+        <link rel="apple-touch-icon" href="favicon-192x192.png" />
+
+        <!-- Fonts -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400&display=swap" rel="stylesheet" />
+
+        <style>
+            body,
+            html {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: 100%;
+                overflow: hidden;
+                background-color: #000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #matrix-canvas {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 1;
+                pointer-events: none;
+            }
+
+            .content {
+                position: relative;
+                z-index: 10;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                height: 100vh;
+            }
+
+            #canvas {
+                display: block;
+                max-width: 100vw;
+                max-height: 60vh;
+            }
+
+            .hero-title {
+                width: clamp(178px, 16.5vw, 237px);
+                color: #00FFA7;
+                margin: -16px 0 32px 0;
+                line-height: 0;
+            }
+            .hero-title svg {
+                display: block;
+                width: 100%;
+                height: auto;
+            }
+
+            /* 42labs DS — .btn secondary (dark theme). Literals are inlined
+               canon tokens; do not retune individually — re-sync from
+               https://42labs.io/design if the canon changes.
+               --fg #F2F4F5  --border #2B3540  --surface-muted #16222D
+               --accent #00FFA7  --accent-soft #051F14 */
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                font-family: "IBM Plex Sans", system-ui, sans-serif;
+                font-weight: 400;
+                font-size: 14px;
+                line-height: 1;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: 1px solid transparent;
+                text-decoration: none;
+                cursor: pointer;
+                transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+            }
+
+            .btn.secondary {
+                background: transparent;
+                color: #F2F4F5;
+                border-color: #2B3540;
+            }
+            .btn.secondary:hover { background: #16222D; }
+            .btn.secondary:focus-visible {
+                outline: none;
+                border-color: #00FFA7;
+                box-shadow: 0 0 0 3px #051F14;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="matrix-canvas"></canvas>
+
+        <div class="content">
+            <canvas id="canvas"></canvas>
+
+            <h1 class="hero-title" aria-label="TRON">
+                <svg viewBox="220 2080 2560 690" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true">
+                    <rect x="401.1" y="2302.1" width="64.5" height="421.8"/>
+                    <rect x="228.4" y="2123.6" width="526.6" height="64.5"/>
+                    <rect x="517.9" y="2302.1" width="64.5" height="421.8"/>
+                    <polygon points="2367.3,2724.5 2432.5,2724.5 2432.5,2470.4 2367.3,2397.9"/>
+                    <polygon points="2710.5,2123.6 2710.5,2594.5 2249.3,2082 2249.3,2724.5 2314.5,2724.5 2314.5,2253.2 2775.8,2765.9 2775.8,2123.6"/>
+                    <path d="M1827.3,2123.2c-165.7,0-300.5,134.8-300.5,300.5s134.8,300.5,300.5,300.5s300.5-134.8,300.5-300.5S1993,2123.2,1827.3,2123.2z M1827.3,2659.4c-130,0-235.8-105.7-235.8-235.8s105.7-235.8,235.8-235.8s235.8,105.7,235.8,235.8S1957.3,2659.4,1827.3,2659.4z"/>
+                    <path d="M1827.3,2380.4c-23.8,0-43.3,19.5-43.3,43.3s19.5,43.3,43.3,43.3s43.3-19.5,43.3-43.3S1851.3,2380.4,1827.3,2380.4z"/>
+                    <path d="M1413.7,2307.8c0-101.6-82.1-184.2-183-184.2H886.9v600.9h64.2v-535.7h279.6c64.7,0,117.4,53.4,117.4,118.9c0,65.2-52,118.4-116.1,119.1l-228.1-0.1v297.7h64.2v-232.5h150.4l122.8,232.5h74.5l-128.2-241.6C1362.1,2458.3,1413.7,2386.9,1413.7,2307.8z"/>
+                </svg>
+            </h1>
+
+            <a href="https://42labs.io" class="btn secondary" target="_blank" rel="noopener">
+                <svg width="14" height="16" viewBox="14 18 100 113" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M44,76 L42,70 C36,62 34,52 34,46 C34,22 94,22 94,46 C94,52 92,62 86,70 L84,76 L84,86 L44,86 Z"/>
+                    <circle cx="50" cy="46" r="9" fill="currentColor" stroke="none"/>
+                    <circle cx="78" cy="46" r="9" fill="currentColor" stroke="none"/>
+                    <path d="M60,57 L64,65 L68,57"/>
+                    <line x1="44" y1="76" x2="84" y2="76"/>
+                    <line x1="54" y1="76" x2="54" y2="86"/>
+                    <line x1="64" y1="76" x2="64" y2="86"/>
+                    <line x1="74" y1="76" x2="74" y2="86"/>
+                    <circle cx="26" cy="98" r="7"/>
+                    <line x1="32" y1="102" x2="96" y2="116"/>
+                    <circle cx="102" cy="120" r="7"/>
+                    <circle cx="102" cy="98" r="7"/>
+                    <line x1="96" y1="102" x2="32" y2="116"/>
+                    <circle cx="26" cy="120" r="7"/>
+                </svg>42LABS
+            </a>
+        </div>
+
+        <script>
+            (function () {
+                const assets = {
+                    css: ["css/reset.min.css", "css/main.css"],
+                    js: ["lib/script3.js", "lib/script1.js", "lib/matrix.js"],
+                };
+
+                if (window.location.search) {
+                    history.replaceState({}, "", window.location.pathname);
+                }
+
+                const loadAssets = async () => {
+                    assets.css.forEach((file) => {
+                        const link = document.createElement("link");
+                        link.rel = "stylesheet";
+                        link.href = file;
+                        document.head.appendChild(link);
+                    });
+
+                    for (const file of assets.js) {
+                        await new Promise((resolve, reject) => {
+                            const script = document.createElement("script");
+                            script.src = file;
+                            script.onload = resolve;
+                            script.onerror = reject;
+                            document.body.appendChild(script);
+                        });
+                    }
+                };
+
+                loadAssets().catch((err) =>
+                    console.error("Error loading assets:", err),
+                );
+            })();
+        </script>
+    </body>
+</html>
