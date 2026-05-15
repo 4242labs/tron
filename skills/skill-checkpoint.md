@@ -24,7 +24,7 @@ Any inbound message TRON receives via `claude --resume` with a `[ROLE-ID]` prefi
 1. Extract PR URL from message. Verify: `gh pr view {N} --json url,state,statusCheckRollup`. PR open + CI green required.
 2. If not green: send back `[TRON] @{ID}: FAIL — CI not green: {summary}`. Worker idles.
 3. Send SV-01: `[TRON] @{ID}: SV-01 — confirm AC line-by-line against {block_spec_path}.`
-4. Wait up to 2 sweep cycles. If no SV-01 reply → invoke `skill-validate` self-check (TRON reads block spec + PR diff itself).
+4. Wait up to 2 sweep cycles (one `silence_escalate_min` window). If no SV-01 reply: the stall sweep will already have escalated via `reason=WORKER_UNRESPONSIVE`; do **not** auto-RELEASE. `skill-validate` Mode B may run as read-only diagnosis to attach to the escalation, but does not feed back into RELEASE.
 5. If validation PASS: forward execute-phase log path to architect (R5): `[TRON] @ARCH-PERSIST: EXECUTE_LOG_REVIEW block={BLOCK_ID} log={LOG_PATH}`.
 6. On architect R5_REPORT:
    - `"no changes"` → send RELEASE.

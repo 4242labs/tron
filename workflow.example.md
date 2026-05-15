@@ -54,19 +54,25 @@ Project-stable values. Operator edits this file (or asks TRON to edit) to change
 | Knob | Default | Notes |
 |:--|:--|:--|
 | `reviewer_threshold` | 3 | R4 N value — every N blocks triggers a reviewer |
-| `tier1_silent_min` | 7 | Worker silent this long (no worktree activity) → TRON pings HEARTBEAT |
-| `tier2_silent_min` | 12 | Worker silent past this → TRON self-validates AC, may escalate |
+| `silence_ping_min` | 6 | Worker silent this long (no `lastActivityAt` growth, no uncommitted worktree changes) → TRON pings `[TRON] HEARTBEAT?`. Must be a multiple of the cron sweep cadence (default `*/2` → 6 is the 3rd tick). |
+| `silence_escalate_min` | 8 | Worker silent past this with no ping response → TRON escalates to operator. Must be a multiple of cron cadence; difference from `silence_ping_min` defines the response window (2 min = one tick by default). |
 
 ## Peer consults (Premise 18)
 
-Workers may consult declared peers without going through TRON, only on this list. Consultation is logged; TRON picks it up on next sweep.
+Workers may consult declared peers without going through TRON, only on the project-defined list. The list is set by the seeder per project (Step 3 of `tron-seed.md`) — **canon ships no defaults**. Pairs may be added or removed during the project's life via `skill-edit-self`. Consultation is logged; TRON picks it up on next sweep.
 
+Format: a markdown table with columns `Worker | May consult | For`. Each row declares a peer pair the project allows.
+
+Example (illustrative; not seeded by default):
+
+```
 | Worker | May consult | For |
 |:--|:--|:--|
 | engineer | architect | technical/design questions |
 | reviewer | architect | architectural concerns during review |
+```
 
-Anything outside this list goes through TRON. Enforcement is by construction: TRON only shares peer session IDs in handovers per this table; workers cannot reach undeclared peers because they don't know the IDs.
+Anything outside the project's list goes through TRON. Enforcement is by construction: TRON only shares peer session IDs in handovers per this table; workers cannot reach undeclared peers because they don't know the IDs.
 
 ---
 

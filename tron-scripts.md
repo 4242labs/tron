@@ -153,13 +153,17 @@ List separately any items requiring operator manual verification (UI flows, TG b
 **Fires:** external cron triggers `sweep.sh` → posts wake message to TRON.
 
 **TRON does for each `active_worker`:**
-1. Read worker's `state.json` from `~/.claude/jobs/{worker_id}/`.
-2. Check `lastActivityAt` vs now.
-3. **Override:** if worker's worktree has uncommitted changes (`git -C <worktree> status --porcelain` non-empty), worker is working — reset stall counter (Premise 22).
-4. Tier 1 (silent > `tier1_silent_min` from `workflow.md`, no worktree activity): ping worker with `[TRON] HEARTBEAT?`.
-5. Tier 2 (silent > `tier2_silent_min`, no response): TRON self-validates (Premise 23): read PR state, CI state, AC from block spec. If all PASS → send RELEASE. If FAIL → escalate to operator.
 
-Thresholds live in `workflow.md` fixed config; TRON reads them on session start.
+1. **Skip exclusions.** Do not stall-check workers whose status is `done-pending-release` (post-DONE idle, awaiting RELEASE) or whose ID matches `paused_for_operator` in `workflow-state.md` (paused by WALL escalation). These are silent by design.
+2. **Probe liveness.** Confirm `~/.claude/jobs/{worker_id}/state.json` exists and the process is reachable. If missing, or `claude --resume {worker_id} -p "[TRON] PROBE"` exits non-zero → worker is dead. Purge from `active_workers`, log to `logs/recover-{date}.log`, no operator escalation (the block work is still open and will surface on next operator interaction).
+3. **Activity check (Premise 22, extended).** Worker is **working** (skip stall this tick) if any of:
+   - `state.json` `lastActivityAt` grew since last sweep tick.
+   - Worktree has uncommitted changes (`git -C <worktree> status --porcelain` non-empty).
+   - Worktree file mtimes grew since last sweep tick.
+4. **Silence-ping threshold.** If silent ≥ `silence_ping_min` (from `workflow.md` fixed config, e.g. 6 min, must be a multiple of cron cadence) and no activity per step 3: send `claude --resume {worker_id} -p "[TRON] HEARTBEAT?"`. Mark `pinged_at = now` for this worker.
+5. **Escalate threshold.** If silent ≥ `silence_escalate_min` (e.g. 8 min) and the ping at step 4 went unanswered (no activity, no callback since `pinged_at`): invoke `skill-escalate` with `reason=WORKER_UNRESPONSIVE`. Worker idles; do **not** RELEASE; do **not** auto-validate AC. `skill-validate` Mode B may run as read-only diagnosis to attach to the escalation message — it does not feed back into RELEASE.
+
+Thresholds live in `workflow.md` fixed config; TRON reads them on session start. Cron cadence lives in `cron-install.sh` (`*/2` default); thresholds must be multiples thereof.
 
 ---
 

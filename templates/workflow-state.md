@@ -39,8 +39,8 @@ Per-session knobs (operator answers at session start; no defaults):
 Fixed config (mirrored from `workflow.md` for fast access during sweeps):
 
 - `reviewer_threshold`: 3
-- `tier1_silent_min`: 7
-- `tier2_silent_min`: 12
+- `silence_ping_min`: 6
+- `silence_escalate_min`: 8
 
 ## Reviewer scope (when blocks_since_review hits threshold)
 

@@ -56,14 +56,15 @@ Confirm which canon-shaped agents the project has. Per Premise 17, the project m
 Copy canon `workflow.example.md` to `{target_repo}/meta/agents/tron/workflow.md`. Walk the operator through each rule:
 
 - R1 — persistent architect: keep / modify? (only ask if architect is in declared agents)
-- R2 — engineer technical → architect: keep / modify? (only ask if both roles declared)
+- R2 — engineer ↔ architect peer-consult: keep / modify? (only ask if both roles declared)
 - R3 — UI walls → operator: keep / modify?
 - R4 — reviewer threshold: confirm value (only ask if reviewer is in declared agents)
 - R5 — architect mid-session review: keep / modify? (only ask if architect declared)
 - R6 — fresh engineer per block: keep / modify?
 - R7 — workers never self-terminate: locked, do not modify (Premise 20)
 - Per-session knobs: `max_concurrent_engineers`, `session_end_idle_min` — no defaults; TRON asks at every session start
-- Fixed config: `reviewer_threshold`, `tier1_silent_min`, `tier2_silent_min` — confirm defaults
+- Fixed config: `reviewer_threshold`, `silence_ping_min`, `silence_escalate_min` — confirm defaults; both silence values must be multiples of the cron sweep cadence in `cron-install.sh` (`*/2` → use multiples of 2)
+- **Peer-consult pairs (Premise 18):** ask operator which worker roles may consult which, and for what scope. Write the table into `workflow.md` § Peer consults. Canon ships no defaults — every project sets its own. Pairs may be added/removed during the project's life via `skill-edit-self`.
 
 **Validate workflow against declared agents.** If `workflow.md` references a role not declared in Step 2: refuse to proceed; ask operator to either add the agent or trim the rule.
 

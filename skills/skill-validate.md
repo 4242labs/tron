@@ -42,11 +42,14 @@ Two modes: **doc-drift** (session start) and **worker-AC** (worker silent post-D
 
 ---
 
-## Mode B — worker-AC (worker unresponsive post-DONE)
+## Mode B — worker-AC (read-only diagnosis; no auto-RELEASE)
+
+Mode B exists to produce a diagnosis attached to an escalation — it does **not** decide RELEASE. A silent worker that finished its work may also have crashed mid-session-end; auto-releasing on PR-looks-green would lose closeout logs. The operator is the decision point.
 
 ### When to invoke
 
-- Worker sent DONE; SV-01 query unanswered after 2 sweep cycles.
+- Worker silent past `silence_escalate_min`; stall sweep step 5 has already escalated. Mode B runs alongside to attach context.
+- Operator asks TRON to "diagnose worker {ID}" or "compare PR to AC for block {ID}".
 
 ### Steps
 
@@ -57,13 +60,10 @@ Two modes: **doc-drift** (session start) and **worker-AC** (worker silent post-D
    - Grep the diff for the expected file/change.
    - If AC is testable: confirm tests for it exist and CI is green.
    - Mark PASS / FAIL / UNCERTAIN.
-5. **Decide:**
-   - All PASS → proceed to architect R5 review path in `skill-checkpoint`. Effectively treat worker as having SV-01 passed.
-   - Any FAIL → invoke `skill-escalate` with `reason=REPEATED_FAILURE` or `reason=WORKER_UNRESPONSIVE`. Do not RELEASE the worker.
-   - Any UNCERTAIN → escalate; ask operator to verify manually.
-6. **Log:** append result to `logs/self-validate-{date}.log`.
+5. **Report — never auto-decide.** Surface the diagnosis to the operator (already escalated by stall sweep) as additional context. Do **not** RELEASE on PASS; do **not** kill on FAIL.
+6. **Log:** append diagnosis to `logs/self-validate-{date}.log` so the operator can read it alongside the escalation.
 
 ### Failure modes
 
-- **`gh` not authenticated:** escalate to operator immediately; cannot self-validate without GitHub access.
-- **PR not found:** worker reported a bogus URL; escalate.
+- **`gh` not authenticated:** report unable-to-diagnose to operator; do not infer state.
+- **PR not found:** worker reported a bogus URL or no PR was ever opened; report verbatim.
