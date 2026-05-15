@@ -12,9 +12,9 @@ This file is the source of truth for rules + tunable knobs. The live counters TR
 
 One architect is spawned at session start and stays alive in BG for the whole session, regardless of how many engineers run. The architect is the standing consultant — not bound to a block.
 
-### R2 — Engineer technical question → architect
+### R2 — Engineer technical question → architect (peer-consult)
 
-If an engineer hits a technical/design question (architecture, library choice, schema, API shape), TRON routes the question to the architect. Architect answers; TRON relays answer back. Operator is not interrupted for in-domain questions.
+If an engineer hits a technical/design question (architecture, library choice, schema, API shape), the engineer consults the architect **directly** via `claude --resume {ARCH_SESSION_ID} -p "[ENG-{ID} → ARCH] <q>"` per Premise 18. Architect replies **directly** via `claude --resume {ENG_SESSION_ID} -p "[ARCH-PERSIST → ENG-{ID}] <a>"`. TRON does not relay; TRON observes the exchange on its next sweep. Operator is not interrupted for in-domain questions.
 
 ### R3 — Wall hits involving UI / user journey → operator
 
