@@ -131,24 +131,29 @@ This document is the audit trail. Operators and future re-seeds rely on it.
 
 ## Step 12 — Final validation
 
-Run TRON in dry-run mode (cold-start sequence without spawning workers):
-1. Have the operator run: `claude --bg -n TRON "Start session. Run validate + doctor in audit-only mode and report."`
+Run TRON in dry-run mode (cold-start sequence without spawning workers). The command runs from the project root (CWD = the directory containing both `<meta>/` and the app repo(s)):
+
+1. Have the operator run: `claude --bg -n TRON "Read <meta>/agents/tron.md in full, then run validate + doctor in audit-only mode and report. Do not spawn workers."` Replace `<meta>` with the project's meta repo directory name. The path is project-relative — never substitute an absolute path here.
 2. TRON should output `validate: pass` and `doctor: clean`.
 3. If issues: surface them, iterate.
 
 ## Step 13 — Sign-off
 
-Print summary to operator:
+Print summary to operator. Use project-relative paths only — never `/Users/…` or `/home/…` (canon §14 Portability):
+
 ```
 Seed complete.
 - Project: {NAME}
-- TRON folder: {target_repo}/meta/agents/tron/
+- TRON folder: {meta_dir}/agents/tron/
 - Cron entries installed
 - .env keys configured
-- Seed trace: {target_repo}/meta/agents/tron/seed-trace.md
+- Seed trace: {meta_dir}/agents/tron/seed-trace.md
 
-To start TRON: claude --bg -n TRON "Begin session."
+To start TRON (run from project root):
+  claude --bg -n TRON "Read {meta_dir}/agents/tron.md in full and execute its 'On every session start' sequence."
 ```
+
+`{meta_dir}` is the project's meta repo directory name (e.g. `meta`, `my-meta`, `zovv-meta`).
 
 ---
 
