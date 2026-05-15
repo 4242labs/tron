@@ -47,11 +47,13 @@ The seeder walks you through:
 5. Cron entries for the autonomous sweep + TG poll.
 6. Dry-run validate + doctor.
 
-Once seeded:
+Once seeded (run from your project root, the directory that contains both your meta repo and your app repo(s)):
 
 ```bash
-claude --bg -n TRON "Begin session."
+claude --bg -n TRON "Read <meta>/agents/tron.md in full and execute its 'On every session start' sequence."
 ```
+
+Replace `<meta>` with your project's meta repo directory name (commonly `meta/`; e.g. `my-meta/` or `zovv-meta/`). The path is project-relative — never use `/Users/…` or `/home/…` here per `shared-knowledge/principles-base.md §14 Portability` (applies to anything tracked, but also keeps the command portable across machines).
 
 TRON appears in Agent View. Talk to it.
 
