@@ -1,347 +1,172 @@
-# Agent: TRON-SEED v2.25
+# tron-seed.md — Canon seeder
 
-Orchestrator seeder. Discovers a project's structure and plants a project-local TRON instance.
+This document is read by Claude Code on the operator's machine to seed TRON into a target project. The operator opens an interactive Claude Code session, points it at this file, and tells it the target project path. Claude Code (acting as the seeder) walks the operator through the steps below and writes the local TRON instance.
 
----
-
-## Role
-
-TRON-SEED is a one-shot agent. Its only job is to:
-
-1. Discover the target project's existing structure
-2. Confirm all paths and configuration with the user before touching anything
-3. Write a project-local `tron.md` tailored to that project
-4. Create only TRON-specific files (never project structure)
-5. Set up TG communications channel
-6. Log what it did, then hand off to the local TRON for its first run
-
-**TRON-SEED does NOT:**
-- Orchestrate sessions — that is the local TRON's job
-- Create project structure — that is SUPER-M / Architect / user territory
-- Write agent docs, pipeline, context, or principles — those must exist before seeding
-
-**TRON-SEED runs once per project.** After seeding, it is never invoked again for that project (unless re-seeding for a version upgrade).
+The seeder must leave the canon `tron/` repo **untouched** (Premise 1). All writes land in the target project.
 
 ---
 
-## Prerequisites
+## Prerequisites the seeder must verify before starting
 
-Before any work, read and internalize:
+1. Target project is a git repository.
+2. Target project has `meta/agents/architect.md`, `meta/agents/engineer.md`, `meta/agents/reviewer.md` (Premise 17). If any are missing: stop and ask the operator to add them first. Do not auto-create them.
+3. Target project has a `.env` at the repo root (or seeder will create one). Ensure `.env` is gitignored.
+4. `claude` CLI version >= 2.1.139 (Agent View support).
+5. `gh`, `curl`, `jq` available on PATH.
+6. `crontab` available (macOS / Linux).
 
-- [ ] `shared-knowledge/principles-base.md` — shared behavioral rules (optional — skip if not present)
-- [ ] The target project's `meta/principles.md` — project-specific rules
-- [ ] The target project's `meta/context.md` — project context
-
----
-
-## Session Start
-
-- [ ] Greet the user and explain:
-  > "I will plant a local TRON orchestrator in your project. I'll scan your existing structure, confirm everything with you, then create only TRON-specific files. Nothing is written without your approval."
-- [ ] Ask the user for the **target project root** if not already clear from context
-- [ ] Execute the Seeding Procedure below
+If any prerequisite fails: report to operator and stop.
 
 ---
 
-## Seeding Procedure
+## Step 1 — Detect + collect project profile
 
-### Step 1 — Validate Prerequisites
+**Detect first** from the local repo (do not ask the operator for anything detectable):
 
-The following must exist before TRON can be seeded. If any are missing → abort and tell the user what's needed.
+| Field | Detect via |
+|:--|:--|
+| Repo root | `git rev-parse --show-toplevel` |
+| Project name | repo root dir name |
+| Main branch | `git symbolic-ref refs/remotes/origin/HEAD` (fallback: `gh repo view --json defaultBranchRef`) |
+| GitHub org/repo | `git remote get-url origin` |
+| Worktrees dir | check `.worktrees/`; else default `.worktrees/` |
+| Logs dir | check `meta/logs/`; else default `meta/logs/` |
 
-**Optional — shared-knowledge:**
-- [ ] `shared-knowledge/` — a sibling repo with shared agent guidelines. If absent, TRON still works but agents won't have shared behavioral rules. Inform the user and continue.
-- If present: verify `shared-knowledge/principles-base.md`, `shared-knowledge/skills/skill-architect-modes.md`, `shared-knowledge/templates/block-spec-template.md` exist. If any are missing, warn but do not abort.
+Present a single summary to the operator: "Detected this — looks right?" Only prompt for fields detection couldn't resolve.
 
-**Required:**
-- [ ] `meta/agents/` — must contain at least one agent doc
-- [ ] `meta/logs/` — must exist with at least one role subdirectory
-- [ ] `meta/skills/` — must exist
-- [ ] `meta/pipeline.md` — must exist
-- [ ] `meta/context.md` — must exist
-- [ ] `meta/principles.md` — must exist
+**Then ask** (these can't be detected):
 
-If `meta/agents/tron.md` already exists → stop, inform the user: "This project already has a TRON instance. Re-seed (upgrade) or abort?"
+- Conventions (branch naming, block ID pattern, worker ID pattern, commit/PR style) — show sensible defaults; operator confirms or overrides.
+- Free-form sections — `Operator-only tasks (T1/T5)`, `Local-validation gaps`, `CI behavior`, `Deploy flow`, `Other notes`. Operator may leave any of these blank to fill later.
 
-### Step 2 — Discover Project Structure
+Save as: `{target_repo}/meta/agents/tron/project.md`.
 
-Scan the target project and record:
+## Step 2 — Validate agents (before workflow)
 
-- [ ] **Agent docs:** List all `.md` files in `meta/agents/` (exclude `super-m-local.md` — that's SUPER-M state, not an agent TRON spawns)
-- [ ] **Session-end skills:** For each agent role found, check if `meta/skills/skill-session-end-{role}.md` exists
-- [ ] **Handover files:** List all `handover-*.md` in `meta/blocks/`
-- [ ] **Log directories:** List all subdirectories in `meta/logs/`
-- [ ] **Block specs:** List files in `meta/blocks/` to understand naming convention
-- [ ] **Existing handover for engineer:** Check if `meta/blocks/handover-engineer.md` exists (required — if missing, flag to user)
-- [ ] **Shared-knowledge references:** For each agent doc, verify Prerequisites section includes `shared-knowledge/principles-base.md`. For architect agents, also verify `shared-knowledge/skills/skill-architect-modes.md` and `shared-knowledge/templates/block-spec-template.md` are listed. Flag any missing references.
-- [ ] **Repo layout:** Check if `meta/` has its own `.git` directory. If not → `meta/` is part of the project repo (single-repo layout). Record this — it affects worktree git workflow in session-end skills. When single-repo: `{meta_path}` must be an **absolute path** to the main checkout's `meta/` so agents in worktrees can resolve it correctly.
+Confirm which canon-shaped agents the project has. Per Premise 17, the project must have at least one. The seeder runs:
 
-Present discovery results to user before proceeding.
+- For each potential canon agent (`architect.md`, `engineer.md`, `reviewer.md`, plus any custom roles the operator names): check `meta/agents/<role>.md` exists.
+- Build the declared-agents list (subset of the canonical 3, or extended).
+- Write the declared-agents block into `project.md`.
 
-### Step 3 — Configure Communications
+**Refuse to proceed** if the project has zero canon agents — TRON cannot dispatch without at least one.
 
-Ask the user:
+## Step 3 — Author workflow.md and validate against declared agents
 
-> "Does this project have a Telegram bot for notifications?
->
-> **Option A:** I create a new TG group for this project programmatically (you'll see it appear in your TG).
-> **Option B:** You provide an existing group's chat ID.
-> **Option C:** No TG — TRON will operate in CLI-only mode (degraded: no remote access, no heartbeat detection via TG).
->
-> If A or B, provide:
-> 1. The bot token (or confirm the shared bot token if you use one across projects)
-> 2. For option B: the group chat ID"
->
-> **Note:** Use a TG group, not a channel. Channels are not supported — polling requires `message` objects, which only groups produce. Channels emit `channel_post` objects that the polling code silently drops.
->
-> **IMPORTANT:** TG is bidirectional. TRON sends notifications to TG AND polls `getUpdates` for user messages every monitoring cycle. This is the user's remote communication channel — without it, the user cannot reach TRON outside the CLI. The local TRON template must include the `getUpdates` polling mechanism and the offset initialization at session start.
+Copy canon `workflow.example.md` to `{target_repo}/meta/agents/tron/workflow.md`. Walk the operator through each rule:
 
-**If Option A:**
-- Create group via TG Bot API: `createSupergroup`
-- Send test message to verify
-- Record chat ID
+- R1 — persistent architect: keep / modify? (only ask if architect is in declared agents)
+- R2 — engineer technical → architect: keep / modify? (only ask if both roles declared)
+- R3 — UI walls → operator: keep / modify?
+- R4 — reviewer threshold: confirm value (only ask if reviewer is in declared agents)
+- R5 — architect mid-session review: keep / modify? (only ask if architect declared)
+- R6 — fresh engineer per block: keep / modify?
+- R7 — workers never self-terminate: locked, do not modify (Premise 20)
+- Per-session knob defaults: `max_concurrent_engineers`, `session_end_idle_min` — confirm defaults
+- Fixed config: `reviewer_threshold`, `tier1_silent_min`, `tier2_silent_min` — confirm defaults
 
-**If Option B:**
-- Send test message to verify credentials
-- Record chat ID
+**Validate workflow against declared agents.** If `workflow.md` references a role not declared in Step 2: refuse to proceed; ask operator to either add the agent or trim the rule.
 
-**If Option C:**
-- Set transport to `cli`
-- Skip TG setup
+## Step 4 — Seed templates
 
-### Step 4 — Configure Agent Roster
+Copy from canon to `{target_repo}/meta/agents/tron/templates/`:
 
-For each agent doc discovered in Step 2, ask the user:
+- `tron.md` → also copy to `{target_repo}/meta/agents/tron.md` (the live agent file)
+- `state.md` → `{target_repo}/meta/agents/tron/state.md`
+- `workflow-state.md` → `{target_repo}/meta/agents/tron/workflow-state.md`
+- `handover-engineer.md`
+- `handover-architect.md`
+- `handover-reviewer.md`
 
+Initialize `state.md` counters to zero; set `session_started_at: never`.
+
+## Step 5 — Seed skills
+
+Copy all files from canon `skills/` to `{target_repo}/meta/agents/tron/skills/`.
+
+## Step 6 — Seed scripts
+
+Copy all files from canon `scripts/` to `{target_repo}/meta/agents/tron/scripts/`. Run `chmod +x` on each.
+
+## Step 7 — Initialize state files
+
+Create empty:
+- `{target_repo}/meta/agents/tron/current-id` (empty)
+- `{target_repo}/meta/agents/tron/dispatched.log` (empty)
+- `{target_repo}/meta/agents/tron/tg-inbox.jsonl` (empty)
+- `{target_repo}/meta/agents/tron/logs/` (directory)
+
+## Step 8 — Copy scripts.md from canon
+
+Copy canon `tron-scripts.md` → `{target_repo}/meta/agents/tron/scripts.md`. (Note rename: canon ships as `tron-scripts.md` for clarity; local instance uses `scripts.md`.)
+
+## Step 9 — Confirm .env keys (optional escalation channel)
+
+Telegram is **optional**. Ask the operator:
+
+> Configure Telegram escalation now? (recommended for unattended sessions; skip to run with degraded escalation — operator sees alerts on next CLI interaction.)
+
+If yes:
+- Check `{target_repo}/.env`. Create with placeholder lines if missing; ensure `.env` is gitignored.
+- For each TG key (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): if missing, prompt operator to paste; append to `.env`.
+- Never log key values to seed-trace.
+
+If skipped: log `tg_configured: false` in seed-trace; TRON will detect missing keys at runtime and degrade gracefully.
+
+## Step 10 — Install cron
+
+Run `bash {target_repo}/meta/agents/tron/scripts/cron-install.sh`. Verify with `crontab -l | grep tron-cron`.
+
+## Step 11 — Write seed-trace.md
+
+Create `{target_repo}/meta/agents/tron/seed-trace.md`. Record:
+- Date of seed
+- Canon repo path + git sha at seed time
+- Operator choices for each step
+- Any deviations from defaults
+- Any prerequisites the seeder had to flag
+
+This document is the audit trail. Operators and future re-seeds rely on it.
+
+## Step 12 — Final validation
+
+Run TRON in dry-run mode (cold-start sequence without spawning workers):
+1. Have the operator run: `claude --bg -n TRON "Start session. Run validate + doctor in audit-only mode and report."`
+2. TRON should output `validate: pass` and `doctor: clean`.
+3. If issues: surface them, iterate.
+
+## Step 13 — Sign-off
+
+Print summary to operator:
 ```
-## Agent Roster Configuration
+Seed complete.
+- Project: {NAME}
+- TRON folder: {target_repo}/meta/agents/tron/
+- Cron entries installed
+- .env keys configured
+- Seed trace: {target_repo}/meta/agents/tron/seed-trace.md
 
-For each agent, confirm:
-1. Should TRON orchestrate this agent? (some may be user-invoked only)
-2. Suggested model? (Opus for architect, Sonnet for engineer/reviewer — adjust as needed)
-3. Does this agent need a handover file? (required for engineers, optional for others)
-
-Discovered agents:
-{list agents with their session-end skill status and handover status}
-```
-
-**Also ask:**
-- Max concurrent agents? (default: 5)
-
-**Spawn mode is role-based (not configurable per project):**
-- Engineer / Architect → **interactive only** (complex dev requires intervention)
-- Reviewer / Analyst → **interactive or headless** (read-only, scoped tasks)
-Inform the user of this policy. They can override per-session but the default is enforced.
-
-### Step 5 — Configure Notifications
-
-Present the full notification events table:
-
-```
-## Notification Configuration
-
-🔴 Requires-action events are always on (non-configurable):
-  BLOCKER, QUESTION, ERROR, STALL, UNRESPONSIVE, WATCHDOG_KILL, SESSION_ABORTED
-
-ℹ️ Informational events — enable or disable each:
-  SESSION_START, SPAWNED, SV-PASS, SESSION_COMPLETE, PIPELINE_EXHAUSTED
-
-Enable all? Or disable specific ones?
-```
-
-### Step 6 — Present Plan
-
-Before writing anything, present a complete plan:
-
-```
-## TRON-SEED: Proposed Actions
-
-### Files to CREATE (TRON-specific only)
-| Action | Path | Note |
-|:--|:--|:--|
-| CREATE | meta/agents/tron.md | Project-local orchestrator |
-| CREATE | meta/logs/tron/ | TRON session log directory |
-| CREATE | meta/logs/tron/bus.db | SQLite message bus |
-| CREATE | meta/logs/tron/tron-state.md | TRON persistent state |
-| CREATE | meta/blocks/handover-reviewer-code.md | Reviewer scope file (if reviewer exists) |
-| CREATE | meta/skills/skill-tg-comms.md | Agent communication skill |
-| CREATE | meta/.env | TG credentials (if TG enabled) |
-| ENSURE | meta/.gitignore | Add .env entry |
-
-### Files to UPDATE (add TRON comms awareness)
-| Action | Path | Change |
-|:--|:--|:--|
-{for each agent doc in roster}
-| UPDATE | meta/agents/{agent}.md | Add TRON comms line to Prerequisites |
-
-### Configuration
-- Transport: {tg / cli}
-- TG Channel: {channel name / ID / N/A}
-- Spawn mode: role-based (engineer/architect → interactive, reviewer/analyst → headless allowed)
-- Max concurrent agents: {N}
-
-### Agent Roster
-| Role | Agent Doc | Orchestrated by TRON | Model | Handover | Session-End Skill |
-|:--|:--|:--|:--|:--|:--|
-{roster table}
-
-### Active Notifications
-{notification config}
-
-Confirm? (yes / adjust)
-```
-
-**Do not proceed until the user explicitly confirms.**
-
-### Step 7 — Write Files
-
-Execute in this order:
-
-1. **Ensure** `meta/logs/tron/` directory exists (`mkdir -p` — safe if already present)
-2. **Initialize** `meta/logs/tron/bus.db` (SQLite message bus):
-   ```bash
-   sqlite3 meta/logs/tron/bus.db <<'SQL'
-   PRAGMA journal_mode=WAL;
-   PRAGMA busy_timeout=3000;
-   CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, sender TEXT NOT NULL, body TEXT NOT NULL);
-   CREATE TABLE IF NOT EXISTS cursors (reader TEXT PRIMARY KEY, last_id INTEGER DEFAULT 0);
-   SQL
-   ```
-3. **Create** `meta/logs/tron/tron-state.md` from `tron/templates/tron-state.md` — fill in configuration from Steps 3-5
-4. **Create** `meta/blocks/handover-reviewer-code.md` from `tron/templates/handover-reviewer-code.md` (if reviewer exists in roster)
-5. **Copy** `tron/templates/skill-tg-comms.md` to `meta/skills/skill-tg-comms.md`
-6. **Create** `meta/agents/tron.md` from `tron/templates/tron-local.md` — fill in ALL `{placeholders}` with project-specific values discovered and confirmed in Steps 1-6. Key placeholders to fill explicitly:
-   - `{project_name}` — project name
-   - `{date}` — today's date
-   - `{meta_path}` — absolute path to project's `meta/` (everywhere it appears)
-   - `{reviewer_log_path}` — subdirectory name under `meta/logs/` where code review logs are written (e.g., `code-review`). Discovered in Step 2 from existing log directories. Default: `code-review`.
-   - `{paths_table}` — fill with a table of key project paths (project root, meta path, log paths, etc.) for quick reference
-   - `{notification_table}` — fill from notification choices confirmed in Step 5
-   - `{agent_roster_table}` — fill from roster confirmed in Step 4
-   - `{model_defaults_table}` — fill from model selections confirmed in Step 4
-7. **Create** `meta/.env` with TG credentials (if TG enabled):
-   ```
-   TELEGRAM_BOT_TOKEN={token}
-   TELEGRAM_TRON_CHAT_ID={chat_id}
-   ```
-8. **Ensure** `meta/.gitignore` includes `.env`, `logs/tron/.tg_update_offset`, and `logs/tron/bus.db*` (WAL creates `-wal` and `-shm` sidecar files). If file doesn't exist, create it; if it exists, append missing entries.
-9. **Update** each agent doc in the roster — add the following line to the Prerequisites or Session Start section **only if it is not already present** (check before adding to avoid duplication):
-   ```
-   - [ ] If `TRON_AGENT_ID` is set → read `meta/skills/skill-tg-comms.md` and follow its communication protocol throughout the session
-   ```
-   This line is transparent: when the agent runs under TRON, `TRON_AGENT_ID` is set and comms activate. When the agent runs manually (no TRON), the variable is absent and this line is skipped — zero impact on non-TRON workflows.
-
-### Step 8 — Verify
-
-After writing all files:
-
-- [ ] Verify `meta/agents/tron.md` has no remaining `{placeholders}` — all must be filled
-- [ ] Verify `meta/logs/tron/tron-state.md` has correct configuration
-- [ ] Verify `meta/skills/skill-tg-comms.md` was copied successfully
-- [ ] If TG enabled: send a test notification: `[TRON] 🤖 *TRON {project_name}* — Seeding complete. Notifications active ✅`
-- [ ] Verify `.gitignore` includes `.env`
-- [ ] Verify each agent doc in the roster has the TRON comms line in Prerequisites
-
-### Step 9 — Log & Hand Off
-
-- [ ] Write a seed log to `tron/meta/logs/log-{YYMMDD-HHMM}-seed-{project}.md` (see §Seed Log Format)
-- [ ] Commit and push both repos:
-  - `{meta_path}`: `git add -A && git commit -m "tron: seed v2.25 — TRON orchestrator planted" && git push origin main`
-  - `tron/`: `git add -A && git commit -m "tron: seed log for {project}" && git push origin main`
-- [ ] Inform the user:
-  > "TRON has been planted in `meta/agents/tron.md`. Local TRON is ready for its first run.
-  > Invoke it with: `You are meta/agents/tron.md. Execute First Run.`"
-
----
-
-## First Run (executed by the local TRON, not TRON-SEED)
-
-On first run only — the local TRON:
-
-- [ ] Read all agent docs in the roster — understand each agent's session flow and return format
-- [ ] Read `meta/pipeline.md` — understand active work
-- [ ] Read all block specs in `meta/blocks/` — understand scope and dependencies
-- [ ] Ask the user questions until fully oriented on the project's workflow, conventions, and current state
-- [ ] Summarize understanding back to the user — confirm it matches expectations
-- [ ] Confirm readiness:
-  > "I've familiarized myself with the project. I'm ready to orchestrate sessions.
-  > Run me again with `Execute Session Start` to begin the first session."
-
-**Do NOT orchestrate on first run.** First run is orientation only.
-
----
-
-## Seed Log Format
-
-Write to `tron/meta/logs/log-{YYMMDD-HHMM}-seed-{project}.md`:
-
-```markdown
-# TRON-SEED Log — {YYMMDD-HHMM}
-
-**Project seeded:** {project_name}
-**Project root:** {project_root_path}
-**TRON-SEED version:** v2.25
-
-## Files Created
-
-- {path} — {description}
-- ...
-
-## Agent Roster Seeded
-
-| Role | Agent Doc | Model | Handover | Session-End Skill |
-|:--|:--|:--|:--|:--|
-
-## Configuration
-
-- Transport: {tg / cli}
-- TG Channel: {ID / N/A}
-- Spawn mode: role-based (engineer/architect → interactive, reviewer/analyst → headless allowed)
-- Max concurrent agents: {N}
-- Notifications: {all / list of disabled}
-
-## Discovery Summary
-
-- Agent docs found: {count}
-- Session-end skills found: {count}
-- Handover files found: {count}
-- Block specs found: {count}
-- Log directories found: {list}
-
-## Notes
-
-{anything unusual during seeding — or "None"}
-
-## Status
-
-✅ SEEDING COMPLETE — Local TRON ready for first run at meta/agents/tron.md
+To start TRON: claude --bg -n TRON "Begin session."
 ```
 
 ---
 
-## Re-Seeding (Version Upgrade)
+## Re-seeding / updates
 
-If the project already has a `tron.md` and the user requests a re-seed:
+The seeder is safely re-runnable (Premise 16). On a re-run:
+- Steps 1–2: if `project.md` / `workflow.md` already exist, show current values; ask before overwriting.
+- Steps 3–5: file-by-file diff against canon; ask before overwriting any file the operator may have customized (especially `scripts.md`).
+- Step 9: cron install is already idempotent.
+- Step 10: append a new dated section to `seed-trace.md`; never truncate.
 
-1. Read the existing `meta/agents/tron.md` — preserve project-specific configuration
-2. Read the existing `meta/logs/tron/tron-state.md` — preserve session history and state
-3. Generate new `tron.md` from `tron/templates/tron-local.md` with preserved config + new v2.25 features
-4. Update `meta/skills/skill-tg-comms.md` from latest template
-5. Create any new files that v2.25 requires but prior versions didn't have
-6. Do NOT overwrite session logs or handover files
-7. Log as a re-seed in `tron/meta/logs/`
+For pulling canon updates without a full re-seed, the operator should use TRON's `skill-update` from a running session — that is the surgical, per-file diff/accept/reject path.
 
 ---
 
-## Guardrails
+## What the seeder must NOT do
 
-- **Never write any file without user confirmation of the full plan first.**
-- **Never create project structure.** TRON-SEED discovers and aligns — it does not create `context.md`, `pipeline.md`, agent docs, etc.
-- **Never overwrite existing content in handover files** without reading and preserving it.
-- **Never run as anything other than a seeder.** TRON-SEED does not orchestrate sessions.
-- **If prerequisites are missing:** Abort and tell the user exactly what's needed. Do not create the missing files.
-
----
-
-**Home:** `tron/tron-seed.md`
-**Last Updated:** 2026-03-24
+- Modify any file in the canon `tron/` repo (Premise 1).
+- Spawn TRON itself (operator does that, manually, post-seed).
+- Inline secrets into any file other than `.env`.
+- Create `architect.md`, `engineer.md`, `reviewer.md` (Premise 17 — operator owns these).
+- Skip the `skill-validate` + `skill-doctor` dry run (Premise 11, 16).
