@@ -33,7 +33,7 @@ To reach architect: `claude --resume {ARCH_SESSION_ID} -p "[ENG-{BLOCK_ID} → A
 Begin.
 ```
 
-**Then:** append to `dispatched.log`; update `workflow-state.md` (`active_workers`).
+**Then:** append to `dispatched.log`; update `workflow-state.md` (`active_workers`); push `[TRON] PEER_UP: ENG-{BLOCK_ID} session={ENG_SESSION_ID}` to architect via `claude --resume {ARCH_SESSION_ID}` so architect can reply directly (see "Engineer ↔ architect peer-consult (R2)" below).
 
 ---
 
@@ -119,20 +119,20 @@ List separately any items requiring operator manual verification (UI flows, TG b
 [TRON] @ENG-{ID}: RELEASED. Read `skill-session-end-engineer.md`. Execute every applicable step in order. Then idle. TRON will close the process.
 ```
 
-**Then:** `workflow-state.md`: increment `blocks_since_review`; clear engineer from `active_workers`; `claude stop {SESSION_ID}` on the worker.
+**Then:** `workflow-state.md`: increment `blocks_since_review`; clear engineer from `active_workers`; push `[TRON] PEER_DOWN: ENG-{BLOCK_ID}` to architect; `claude stop {SESSION_ID}` on the worker.
 
 ---
 
-## Engineer technical question → architect (R2)
+## Engineer ↔ architect peer-consult (R2)
 
-**Fires:** TRON receives `[ENG-{ID} → ARCH]` or `[ENG-{ID}] QUESTION`.
+**Fires:** never directly — this exchange does **not** route through TRON. Engineers send `[ENG-{ID} → ARCH] <q>` straight to `{ARCH_SESSION_ID}`; architect replies straight to `{ENG_SESSION_ID}` with `[ARCH-PERSIST → ENG-{ID}] <a>`.
 
-**TRON does:**
-1. Forward question verbatim to architect via `claude --resume {ARCH_SESSION_ID} -p "[ENG-{ID} via TRON] <q>"`.
-2. Wait for architect reply.
-3. Relay reply back to engineer.
+**TRON's role:**
+1. **At engineer spawn:** push the new `{ENG_SESSION_ID}` to architect via `claude --resume {ARCH_SESSION_ID} -p "[TRON] PEER_UP: ENG-{ID} session={ENG_SESSION_ID}"`. Architect stores it in session memory so it can reply directly.
+2. **At engineer RELEASE:** notify architect via `claude --resume {ARCH_SESSION_ID} -p "[TRON] PEER_DOWN: ENG-{ID}"`. Architect drops the ID.
+3. **On sweep:** TRON reads each worker's transcript via `~/.claude/jobs/{id}/` to observe consults — for logging, drift detection, and stall sweep. No intervention unless a wall is reported.
 
-No operator interruption.
+**Note:** if an engineer mistakenly sends `[ENG-{ID} → ARCH]` to TRON's session (wrong target), TRON re-instructs the engineer with the correct architect command. TRON does not forward.
 
 ---
 
