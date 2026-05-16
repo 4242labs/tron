@@ -63,6 +63,18 @@ A project may declare a subset (e.g. no reviewer) or extend with custom roles (e
 - Workflow rules (operator-authored): `meta/agents/tron/workflow.md`
 - Live counters (TRON-managed): `meta/agents/tron/workflow-state.md`
 
+## Protected branches
+
+Per-repo default branches that no agent (TRON included) may commit to directly. All work flows through a feature branch + worktree + PR + manual merge — see `workflow.md` R8.
+
+```
+protected_branches:
+  - <repo-name>: <branch>   # e.g. acme-widgets: main
+  # add a row per repo in the workspace if multi-repo (e.g. release branches like `prod` also belong here)
+```
+
+The seeder writes this from the detected repo set; operator extends if a release branch is later promoted to protected status.
+
 ---
 
 ## Operator-only tasks (T1/T5)

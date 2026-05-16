@@ -91,11 +91,33 @@ Copy all files from canon `scripts/` to `{target_repo}/meta/agents/tron/scripts/
 
 ## Step 7 — Initialize state files
 
+All files in this step are **runtime state** — gitignored, edited in place by TRON, never committed (per `workflow.example.md` R8 + `skill-edit-self` Mode B).
+
 Create empty:
-- `{target_repo}/meta/agents/tron/current-id` (empty)
-- `{target_repo}/meta/agents/tron/dispatched.log` (empty)
-- `{target_repo}/meta/agents/tron/tg-inbox.jsonl` (empty)
+- `{target_repo}/meta/agents/tron/current-id`
+- `{target_repo}/meta/agents/tron/dispatched.log`
+- `{target_repo}/meta/agents/tron/tg-inbox.jsonl`
+- `{target_repo}/meta/agents/tron/.tg-offset`
 - `{target_repo}/meta/agents/tron/logs/` (directory)
+
+Initialize from canon templates (these are also runtime state — gitignored):
+- `{target_repo}/meta/agents/tron/state.md` ← copy from canon `templates/state.md`, set `last_session_id: never`, all lifetime counters to `0`
+- `{target_repo}/meta/agents/tron/workflow-state.md` ← copy from canon `templates/workflow-state.md`, leave session/active_workers placeholders untouched
+
+Compose `{target_repo}/meta/agents/tron/.gitignore` so the runtime state never accidentally lands in a commit:
+
+```
+.env
+.tg-offset
+current-id
+dispatched.log
+tg-inbox.jsonl
+logs/
+state.md
+workflow-state.md
+```
+
+Reasoning: TRON updates these files every turn (sometimes multiple times per turn). Tracking them would force a commit per update, conflict with the no-direct-commits-to-protected-branches rule (R8), and create unwinnable PR churn. The canon templates in `templates/` provide the recovery path if a fresh state is ever needed.
 
 ## Step 8 — Copy scripts.md from canon
 

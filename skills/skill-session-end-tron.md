@@ -9,50 +9,53 @@ End the TRON session cleanly. Distinct from worker session-end skills.
 
 ## Steps
 
-1. **Snapshot state:** copy `workflow-state.md` to `logs/state-snapshot-{date}-{time}.md`.
+1. **Pending config commits.** For each TRON-owned worktree under the workspace's worktrees dir with uncommitted Mode A changes from this session: stage the named files (never `git add -A`), commit with a scoped lowercase subject, push, and open a PR targeting the repo's protected default branch. Operator merges manually post-session. Runtime state (Mode B) is **not** committed and stays in place.
 
-2. **RELEASE all active workers** in `active_workers`:
+2. **Snapshot state:** copy `workflow-state.md` to `logs/state-snapshot-{date}-{time}.md`.
+
+3. **RELEASE all active workers** in `active_workers`:
    - For each worker: `claude --resume {session_id} -p "[TRON] @{id}: RELEASED — session complete. Run your session-end skill, then idle."`
    - Update worker status to `released`.
 
-3. **Wait for worker session-end completion** (up to 60s per worker):
+4. **Wait for worker session-end completion** (up to 60s per worker):
    - Poll `~/.claude/jobs/{id}/state.json` `status` field.
    - Worker should report final close-out activity, then go idle.
 
-4. **Kill worker processes:**
+5. **Kill worker processes:**
    - For each worker: `claude stop {session_id}` (or equivalent kill via Agent View).
    - Remove from `active_workers`.
 
-5. **Write session log:**
+6. **Write session log:**
    - Path: `logs/log-{YYMMDD-HHMM}-{slug}.md`
    - Contents: session start time, blocks completed, workers spawned, escalations, findings, anomalies.
 
-6. **Update lifetime counters** in `state.md`:
+7. **Update lifetime counters** in `state.md`:
    - `total_sessions` += 1
    - `total_blocks_completed` += blocks finished this session
    - `total_workers_spawned` += spawns this session
    - `total_operator_escalations` += escalations this session
    - `last_session_id` = current TRON session id
 
-7. **Truncate `dispatched.log`** (or rotate to `logs/dispatched-{date}.log`). Fresh start next session.
+8. **Truncate `dispatched.log`** (or rotate to `logs/dispatched-{date}.log`). Fresh start next session.
 
-8. **Clear `current-id`:** truncate to empty. Workers from prior sessions trying to resume will fail loudly, which is correct.
+9. **Clear `current-id`:** truncate to empty. Workers from prior sessions trying to resume will fail loudly, which is correct.
 
-9. **Reset `workflow-state.md`** for next session:
-   - `current_block`: null
-   - `active_workers`: []
-   - Keep counters intact unless operator says "fresh start".
+10. **Reset `workflow-state.md`** for next session:
+    - `current_block`: null
+    - `active_workers`: []
+    - Keep counters intact unless operator says "fresh start".
 
-10. **Final message to operator:**
+11. **Final message to operator:**
     ```
     TRON: session ended.
     - Blocks: {N}
     - Workers: {N}
     - Escalations: {N}
     - Log: logs/log-{date}-{slug}.md
+    - Pending PRs (TRON config): {list of PR URLs from step 1, or "none"}
     ```
 
-11. **TRON idles.** Operator closes the terminal session when ready. TRON does not call `claude stop` on itself — let the operator end the parent session.
+12. **TRON idles.** Operator closes the terminal session when ready. TRON does not call `claude stop` on itself — let the operator end the parent session.
 
 ## Failure modes
 

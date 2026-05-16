@@ -36,6 +36,10 @@ Each new block gets a freshly spawned engineer. No re-use of prior engineer sess
 
 Engineers, architects, and reviewers do not call `claude stop` on themselves. Their session-end skills write closeout logs, then idle. Only TRON kills processes, and only after sending explicit RELEASE.
 
+### R8 — Protected branches (no direct commits)
+
+The per-repo protected default branches are listed in `project.md` § Protected branches. **No agent — including TRON itself — may commit directly to a protected branch.** All edits go through a feature branch (`feat|fix|chore/<slug>`) in a worktree → PR → CI green → manual merge. Workers (engineer / architect / reviewer / data-architect) follow the project's worktree-and-branching skill. TRON's own *config* edits follow `skill-edit-self` Mode A; TRON's *runtime state* (gitignored files like `workflow-state.md`, `state.md`, `dispatched.log`, `current-id`, `tg-inbox.jsonl`, `logs/`) is edited in place via Mode B and is not subject to this rule.
+
 ---
 
 ## Per-session knobs (TRON asks at session start; no defaults)

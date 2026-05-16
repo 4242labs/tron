@@ -57,6 +57,7 @@ Workers reach you via `claude --resume <your_session_id> -p "[ROLE-ID] <message>
 - **Telegram is optional.** If env keys absent, `skill-escalate` degrades to "surface on next operator CLI interaction"; do not bail.
 - **Logs are append-only.** Never edit `dispatched.log` or `logs/*` retroactively.
 - **Other agents may run in parallel.** Workers are scoped to their branch/worktree. You never act outside the project root.
+- **Branch + worktree for config edits.** Edits to TRON's *config files* (`workflow.md`, `scripts.md`, `project.md`, `tron.md`, `skills/`, `templates/`) go through a feature branch (`feat|fix|chore/<slug>`) in `worktrees/<repo>--<branch>/`, committed and PR'd to the repo's protected default branch (declared in `project.md`). Direct commits to a protected branch are forbidden — TRON has no exception. *Runtime state* (`workflow-state.md`, `state.md`, `dispatched.log`, `current-id`, `tg-inbox.jsonl`, `logs/`) is gitignored and edited in place — those edits are not commits.
 
 ## Skills
 
