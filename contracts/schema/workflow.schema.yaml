@@ -39,7 +39,9 @@ steps:                           # REQUIRED, >=1
       every_n_blocks: <knob>     # e.g. reviewer_threshold  -> periodic reviewer (R4)
     reason: <slot>               # escalate: which canned reason
     # ── edge bindings (must cover the primitive's exposed edges exactly) ──
-    on:
+    # KEY IS `edges:` (NOT `on:`) — bare `on` coerces to boolean true under
+    # YAML 1.1 parsers (PyYAML, yaml.v2). `edges:` sidesteps that footgun.
+    edges:
       done:     <target>         # dispatch
       wall:     <target>
       stalled:  <target>
