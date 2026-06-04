@@ -1,0 +1,79 @@
+# routing.yaml — CANON instance (B2)
+# The step-primitive library (fixed edges + judgment tools per primitive) and
+# the closed message-tag -> action map. Ships with TRON, copied verbatim at seed.
+# run.sh reads THIS to drive the FSM; the seeder never writes it.
+# Shapes locked by contracts/schema/routing.schema.yaml; lint canon rules L1-L5.
+
+# ── Primitive library ──────────────────────────────────────────────
+# Each primitive declares its FIXED outcome-edge set (L1) and the judgment
+# tool(s) it may call. The composition (workflow.yaml) binds every edge (L7).
+# A trailing "?" marks an optional param.
+primitives:
+  dispatch:
+    params: [role, "concurrency?"]
+    tools:  [classify_message, assess_stall]
+    edges:  [done, wall, stalled]
+  review:
+    params: [role, "cadence?"]
+    tools:  [classify_message]
+    edges:  [clean, findings]
+  gate:
+    params: [kind]
+    tools:  []                  # deterministic external check; classify only if a kind needs it
+    edges:  [pass, fail]
+  escalate:
+    params: [reason]
+    tools:  [classify_message]
+    edges:  [resolved, abort]
+  findings-triage:
+    params: []
+    tools:  [triage, scope_fix]
+    edges:  [fixes, none]
+
+# ── Message-tag enum (closed) + action map ─────────────────────────
+# Every tag classify_message can return maps to exactly one action:
+#   edge:<name>          -> the active step's outcome edge
+#   side:<handler>       -> a global run.sh handler; FSM does not advance, step re-entered
+#   tick                 -> run one bounded tick (contracts §5)
+#   hardwired:escalate   -> canon, not composable (contracts §2 reserved)
+# Closed enum (L2); total coverage (L3).
+tags:
+  # worker-origin
+  worker.done:              edge:done
+  worker.wall:              edge:wall
+  worker.findings:          edge:findings
+  worker.question_peer:     side:observe
+  worker.question_tron:     side:answer_from_context
+  worker.blocked_dep:       side:mark_blocked
+  worker.progress:          side:none
+  # operator-origin
+  operator.decision:        edge:resolved
+  operator.abort:           edge:abort
+  operator.bug_report:      side:scope_fix_block
+  operator.status_query:    side:reply_digest
+  operator.workflow_change: side:edit_self
+  operator.directive:       side:best_effort
+  # system (produced deterministically, not by classify)
+  sweep.tick:               tick
+  worker.stalled:           edge:stalled
+  worker.dead:              side:purge_recover
+  gate.pass:                edge:pass
+  gate.fail:                edge:fail
+  # reserved
+  unclassified:             hardwired:escalate   # reason=unclassified | invalid_output
+
+# ── Invalid-output policy (contracts §4) ───────────────────────────
+invalid_output:
+  max_retries: 2
+  on_exhaustion: unclassified   # -> hardwired escalate(reason=invalid_output)
+
+# ── Judgment-tool reference (contracts §3; schemas in contracts/schema/ drive validation) ──
+# Output is always tag + structured slots, never free prose to the flow (L5).
+# A trailing "?" marks an optional input field.
+tools:
+  classify_message: {in: [text, sender, current_step, "open_escalation?"], out: [tag, slots, confidence]}
+  triage:           {in: [findings, block_ctx],                          out: [verdicts, fix_needed]}
+  scope_fix:        {in: [finding],                                      out: [goal, acceptance_criteria, scope_bounds, owner_role, deps]}
+  assess_wall:      {in: [situation, block_ctx, project_operator_only],  out: [wall, kind, rationale]}
+  assess_stall:     {in: [activity, transcript_tail],                    out: [stalled, rationale]}
+  # tiering: classify_message, scope_fix -> cheap; triage, assess_wall, assess_stall -> strong

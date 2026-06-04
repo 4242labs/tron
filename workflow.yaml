@@ -1,0 +1,80 @@
+# workflow.yaml — embedded DEFAULT composition (B2 canon instance)
+# The per-project composition TRON ships with — works out of the box. The seeder
+# (B1) re-writes this per project from the R1-R8 walk; this is the default it starts from.
+# Validated against routing.yaml + project.yaml by blueprint-lint (contracts §9, L6-L13).
+#
+# Maps the v1 default (workflow.example.md):
+#   R1 persistent architect  -> session.persistent_architect
+#   R6 fresh engineer/block   -> dispatch(engineer) at entry (SELECT_BLOCK each loop)
+#   R5 per-block arch review  -> review(architect), no cadence
+#   R4 periodic reviewer      -> review(reviewer), cadence every_n_blocks: reviewer_threshold
+#   R4->R6 remediation        -> findings-triage -> fix blocks -> back to dispatch
+#   R3 wall                   -> escalate
+#
+# Edge-target convention used here:
+#   <step-id>  -> intra-block forward jump
+#   next       -> block complete: SELECT_BLOCK -> re-enter `entry` (next dispatchable block)
+#   escalate   -> the escalate step   |   end -> session end
+
+# ── Knobs (per-project tunables; steps reference these by name) ──
+knobs:
+  reviewer_threshold: 3            # R4: spawn a reviewer every N completed blocks
+  max_concurrent_engineers: ~      # REQUIRED per-session input; NO baked default —
+                                   # run.sh refuses to start until the operator sets it.
+  silence_ping_min: 6              # multiple of cron cadence; worker silent this long -> ping
+  silence_escalate_min: 8          # multiple of cron cadence; > silence_ping_min -> escalate
+  git: on                          # workflow commits (drives R8 + gate(ci) availability)
+
+# ── Peer-consult pairs (R2) — canon ships none; the seeder sets them per project ──
+peer_consults: []
+
+# ── Session-lifecycle (not composed steps) ──
+session:
+  persistent_architect: true       # R1: one architect spawned at start, alive until session end
+
+# ── The composition ──
+entry: dispatch_engineer
+steps:
+  # R6 — fresh engineer per block. SELECT_BLOCK runs on entry into this step.
+  - id: dispatch_engineer
+    primitive: dispatch
+    role: engineer
+    concurrency: max_concurrent_engineers
+    edges:
+      done:    arch_review          # R5: architect reviews before the next block
+      wall:    escalate             # R3: UI / journey / operator-only wall -> operator
+      stalled: escalate             # unresponsive past silence_escalate_min -> operator
+
+  # R5 — per-block architect review (no cadence: runs on every completed block).
+  - id: arch_review
+    primitive: review
+    role: architect
+    edges:
+      clean:    reviewer_check
+      findings: triage              # architect findings -> triage into fix blocks
+
+  # R4 — periodic reviewer. Cadence-gated: only spawns every reviewer_threshold blocks;
+  #       otherwise a pass-through that advances to the next block.
+  - id: reviewer_check
+    primitive: review
+    role: reviewer
+    cadence:
+      every_n_blocks: reviewer_threshold
+    edges:
+      clean:    next                # block complete -> next block
+      findings: triage
+
+  # R4->R6 — turn agreed findings into fix blocks and loop; otherwise advance.
+  - id: triage
+    primitive: findings-triage
+    edges:
+      fixes: dispatch_engineer      # insert fix blocks into the ledger, dispatch a fresh engineer
+      none:  next                   # no agreed fixes -> next block
+
+  # R3 / unclassified — operator escalation. `unclassified` hardwires here (L12).
+  - id: escalate
+    primitive: escalate
+    reason: wall
+    edges:
+      resolved: dispatch_engineer   # operator decided -> resume work
+      abort:    end                 # operator aborted -> session end

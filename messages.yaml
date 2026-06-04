@@ -1,0 +1,102 @@
+# messages.yaml — CANON runtime copy registry (B2 instance)
+# Every line TRON emits during a SESSION (operator / worker / terminal / TG),
+# keyed by template id, with named slots. Rendered via render(id, slots).
+# Seeder voice (tron-seed.md) is SEPARATE and never shares keys (contracts §6).
+#
+# Tone: landing-page persona — dark, dry, sardonic. NO host-runtime names, ever.
+# The {detail} slot is the one place free-text (LLM judgment payload) is allowed.
+
+# ── Slot catalog (the only interpolations templates may use) ──
+slots:
+  worker_id: <str>      # e.g. ENG-06-19  (NEVER a host-runtime name)
+  role: <str>
+  block: <str>
+  branch: <str>
+  pr: <str>
+  detail: <str>         # free-text judgment payload (the one slot the LLM may fill with prose)
+  reason: <str>
+  count: <int>
+
+# ── Templates, grouped by channel/situation ──
+templates:
+
+  # dispatch / spawn (worker channel — TRON's kickoff line; run.sh appends the
+  # technical handover separately, so no host-runtime strings live here)
+  spawn.engineer:
+    channel: worker
+    slots: [worker_id, block, branch]
+    text: "[TRON]  {worker_id}, you're on {block}. Branch {branch} is yours and yours alone. Validate before you report DONE. Do not self-terminate."
+  spawn.architect:
+    channel: worker
+    slots: []
+    text: "[TRON]  Architect online. You're the standing consultant — persistent, patient, never off the clock. Idle until summoned. Do not self-terminate."
+  spawn.reviewer:
+    channel: worker
+    slots: [worker_id, count]
+    text: "[TRON]  {worker_id}, review pass over the last {count} merged blocks. Findings only — file, line, severity. The fleet thinks it's clean. Prove otherwise."
+  release.worker:
+    channel: worker
+    slots: [worker_id]
+    text: "[TRON]  {worker_id}, RELEASED. Run your session-end skill, then idle. I close the process — you don't get to."
+  heartbeat.ping:
+    channel: worker
+    slots: [worker_id]
+    text: "[TRON]  {worker_id}? You've gone quiet. Still building, or stuck? Answer before I assume the worst."
+  sv01.query:
+    channel: worker
+    slots: [worker_id, block]
+    text: "[TRON]  {worker_id}: self-validation on {block}. Per acceptance item — delivered? tested locally? verified live? Flag anything only an operator can confirm."
+
+  # between-task / terminal feedback (terminal channel; landing-page voice)
+  terminal.dispatched:
+    channel: terminal
+    slots: [worker_id, block]
+    text: "[TRON]  {worker_id} dispatched on {block}. Worktree clean. May the source compile."
+  terminal.block_done:
+    channel: terminal
+    slots: [block]
+    text: "[TRON]  {block} done. Spawning the next. We'll be back."
+  terminal.review:
+    channel: terminal
+    slots: [count]
+    text: "[TRON]  Reviewer scheduled over the last {count} blocks. Brace yourselves."
+  terminal.between:
+    channel: terminal
+    slots: []
+    text: "[TRON]  Programs handling it. Users elsewhere."
+
+  # escalation (operator / tg channels)
+  escalate.wall:
+    channel: operator
+    slots: [worker_id, block, detail]
+    text: "[TRON]  Above my pay grade. {worker_id} walled on {block}: {detail}. Peer-consult exhausted. Your call."
+  escalate.stall:
+    channel: operator
+    slots: [worker_id, block]
+    text: "[TRON]  {worker_id} went dark on {block} and didn't answer the ping. Paused it. You'll want to look."
+  escalate.unclassified:
+    channel: operator
+    slots: [detail]
+    text: "[TRON]  Got something I can't parse: {detail}. I don't guess on flow decisions. Tell me what to do with it."
+  tg.escalate:
+    channel: tg
+    slots: [worker_id, detail]
+    text: |
+      [TRON]  Hey boss — hope you're enjoying the beach.
+              {worker_id} walled on {detail}.
+              Architect peer-consulted, no consensus.
+              What do you say?
+  tg.status_digest:
+    channel: tg
+    slots: [detail]
+    text: "[TRON]  Status, since you asked: {detail}. Routine: handled. End of line."
+
+  # session lifecycle (operator channel)
+  session.start:
+    channel: operator
+    slots: []
+    text: "[TRON]  Online. The fleet's mine now. You'll hear from me when it matters — not before."
+  session.end:
+    channel: operator
+    slots: [count]
+    text: "[TRON]  Session closed. {count} blocks through the loop. Pings kept to a minimum. End of line."
