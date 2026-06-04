@@ -1,53 +1,36 @@
 # project.md — Example
 
-This is an illustrative example of a project profile. The seeder builds your project's own `meta/agents/tron/project.md` by **detecting** most fields from the local repo, **confirming** the summary with you, and **asking** only for what it can't determine. TRON re-reads this file on every session start.
+TRON's own config record for one project. It lives inside TRON's folder (`<agents>/tron/project.md`) and the host never owns it. The seeder builds it by **detecting** what it can, **asking** for the rest, and documenting the result. TRON re-reads it on every session start.
+
+`<agents>` = the directory where the project's worker agent definitions live; TRON installs itself there too (`<agents>/tron.md` + `<agents>/tron/`). It's project-specific and arbitrary — never hardcode it. `<specs>` = where the spec files live.
 
 The example below uses a fictional project (`acme-widgets`) for illustration only.
 
 ---
 
-## Project
+## Pointers
 
-The seeder auto-detects most of these:
+The two locations TRON must know. These are the heart of the config — everything else is detail.
 
-| Field | Auto-detected from | Example value |
+| Pointer | What it is | Example |
 |:--|:--|:--|
-| Name | repo dir name | `acme-widgets` |
-| Repo root | `git rev-parse --show-toplevel` | `~/code/acme-widgets` |
-| Main branch | `git symbolic-ref refs/remotes/origin/HEAD` | `main` |
-| GitHub org/repo | `git remote get-url origin` | `acme/widgets` |
-| Worktrees dir | check `.worktrees/` exists, else default | `.worktrees/` |
-| Logs dir | check `meta/logs/` exists, else default | `meta/logs/` |
+| **Agents path** (`<agents>`) | Where the worker agent definitions live. TRON dispatches from here and installs itself here. | `meta/agents/` |
+| **Specs path** (`<specs>`) | Where the host keeps its spec files (local MD). TRON reads these to cut blocks. | `specs/` |
 
-The seeder shows a summary, asks "looks right?" — only prompts for fields it couldn't resolve.
+**Specs read-contract:** specs carry the fields in `spec.example.md` (ID, goal, acceptance criteria, scope, dependencies, owner). Note any project-specific reading rule here.
 
-## Conventions
+**Pipeline ledger:** the status + sequence record (see `pipeline.example.md`).
 
-Project-specific conventions. TRON's spawn scripts read patterns from here rather than hardcoding them, so each project can use its own ID schema.
-
-- **Branch naming:** `chore/<slug>-YYMMDD` for chores; `feat/<slug>-YYMMDD` for features.
-- **Block ID pattern:** `block-MM-DD-<slug>` (TRON uses `MM-DD` as the stripped form for worker IDs).
-- **Worker ID pattern:** `<ROLE>-<block-stripped>` (e.g. `ENG-06-19`, `ARCH-06-19`, `REV-06-19`).
-- **Commit convention:** present-tense, lowercase, scope prefix (`fix:`, `feat:`, `chore:`).
-- **PR title:** under 70 chars; body has Summary + Test plan.
-
-## Env keys
-
-Stored in `meta/agents/tron/.env` (the TRON instance dir, gitignored via `meta/agents/tron/.gitignore`). The `.env` is encapsulated with TRON — not at the repo root — so deleting `meta/agents/tron/` and `meta/agents/tron.md` removes TRON cleanly. TRON reads via shell scripts, never inlines values into prompts.
-
-| Key | Required? | Used for |
-|:--|:--|:--|
-| `TELEGRAM_BOT_TOKEN` | optional | operator escalation channel |
-| `TELEGRAM_CHAT_ID` | optional | operator's chat |
-| `GITHUB_TOKEN` | optional | `gh` CLI (also satisfied by `gh auth login`) |
-
-**Telegram is optional.** If unconfigured, TRON degrades gracefully: escalations surface in the operator's next CLI interaction rather than via push notification.
+```
+pipeline: host            # host keeps its own pipeline doc — TRON uses it as the live ledger
+pipeline_path: PIPELINE.md
+# --- or ---
+pipeline: internal        # host had none — ledger lives at <agents>/tron/pipeline.md
+```
 
 ## Agents available
 
-Per Premise 17, TRON requires at least one canon-shaped agent in `meta/agents/` to dispatch. The seeder validates **which agents this project has**, then validates `workflow.md` references against that set.
-
-Declare the agents this project uses:
+The roles found at the agents path, and the subset the workflow uses. The seeder enumerates the files present and validates `workflow.md` only references roles that exist — it does **not** create agent files.
 
 ```
 agents:
@@ -56,66 +39,101 @@ agents:
   - reviewer:  meta/agents/reviewer.md
 ```
 
-A project may declare a subset (e.g. no reviewer) or extend with custom roles (e.g. `designer`). The seeder refuses to proceed if `workflow.md` references a role not declared here.
+A project may have a subset (e.g. no reviewer) or custom roles (e.g. `designer`). If `workflow.md` references a role not found here, the seeder stops and asks the operator to add the agent or trim the rule.
 
 ## Workflow doc
 
-- Workflow rules (operator-authored): `meta/agents/tron/workflow.md`
-- Live counters (TRON-managed): `meta/agents/tron/workflow-state.md`
+- Workflow rules: `<agents>/tron/workflow.md`
+- Live counters (TRON-managed): `<agents>/tron/workflow-state.md`
+
+---
+
+## Detected repo facts
+
+Auto-detected; the seeder shows a summary ("looks right?") and prompts only for what it can't resolve. They matter only to workflows that use them (e.g. the default git workflow).
+
+| Field | Detected from | Example |
+|:--|:--|:--|
+| Name | repo dir name | `acme-widgets` |
+| Repo root | `git rev-parse --show-toplevel` | `~/code/acme-widgets` |
+| Main branch | `git symbolic-ref refs/remotes/origin/HEAD` | `main` |
+| GitHub org/repo | `git remote get-url origin` | `acme/widgets` |
+| Worktrees dir | check `.worktrees/`, else default | `.worktrees/` |
+| Logs dir | check, else default | `meta/logs/` |
+
+## Conventions
+
+Project-specific patterns TRON's spawn scripts read rather than hardcoding.
+
+- **Branch naming:** `chore/<slug>-YYMMDD`; `feat/<slug>-YYMMDD`.
+- **Block ID pattern:** `block-MM-DD-<slug>`.
+- **Worker ID pattern:** `<ROLE>-<block-stripped>` (e.g. `ENG-06-19`).
+- **Commit convention:** present-tense, lowercase, scope prefix.
+- **PR title:** under 70 chars; body has Summary + Test plan.
+
+## Env keys
+
+Stored in `<agents>/tron/.env` (encapsulated with TRON, gitignored). TRON reads via shell scripts, never inlines values into prompts.
+
+| Key | Required? | Used for |
+|:--|:--|:--|
+| `TELEGRAM_BOT_TOKEN` | optional | operator escalation channel |
+| `TELEGRAM_CHAT_ID` | optional | operator's chat |
+| `GITHUB_TOKEN` | optional | `gh` CLI (or `gh auth login`) |
+
+**Telegram is optional.** If unconfigured, escalations surface in the operator's next session rather than via push.
+
+## Notifications + heartbeat
+
+Config the seeder and TRON **follow without asking**. Edit here to change behavior.
+
+```
+telegram: off    # off | on   (on routes escalations via Telegram; keys go in .env; implies heartbeat on)
+cron: auto       # auto | on | off   (auto = on whenever telegram is on; force on for stall-sweeps without TG)
+```
+
+Effective heartbeat = `telegram == on` OR `cron == on`. The heartbeat (cron) is what polls Telegram and runs stall-sweeps — so Telegram can't work without it, hence the coupling.
 
 ## Protected branches
 
-Per-repo default branches that no agent (TRON included) may commit to directly. All work flows through a feature branch + worktree + PR + manual merge — see `workflow.md` R8.
+Used only by workflows that commit (e.g. the default git workflow). Branches no agent — TRON included — may commit to directly; work flows through a feature branch + PR (see `workflow.md` R8).
 
 ```
 protected_branches:
   - <repo-name>: <branch>   # e.g. acme-widgets: main
-  # add a row per repo in the workspace if multi-repo (e.g. release branches like `prod` also belong here)
 ```
-
-The seeder writes this from the detected repo set; operator extends if a release branch is later promoted to protected status.
 
 ---
 
-## Operator-only tasks (T1/T5)
+## Operator-only tasks
 
-Tasks engineers must NOT attempt — TRON escalates these directly to the operator without dispatching work.
+Tasks engineers must NOT attempt — TRON escalates these directly without dispatching.
 
 - DNS / domain configuration
-- Third-party dashboard configuration (Stripe, Vercel project settings, Auth0, etc.)
+- Third-party dashboard configuration (Stripe, Vercel, Auth0, …)
 - Production billing / paid plan changes
-- Anything requiring physical access (hardware, device-side install)
+- Anything requiring physical access
 
 ## Local-validation gaps
 
-Tasks engineers will perform but cannot fully verify alone. TRON flags these at SV-01 so the operator manually tests.
+Tasks engineers perform but cannot fully verify alone. TRON flags these for manual operator testing.
 
-- Mobile builds (TestFlight upload + device install)
+- Mobile builds (device install)
 - Live integration tests with paid third-party services
-- End-to-end user-journey flows requiring a real account
-- Telegram bridge live message verification
+- End-to-end flows requiring a real account
 
 ## CI behavior
 
-- Runner: GitHub Actions
-- Typical full-suite duration: ~6 min
-- Stall threshold override: applies after CI start (see `workflow.md` fixed config)
+- Runner / typical duration / any stall-threshold override.
 
 ## Deploy flow
 
-- Trigger: merge to `main`
-- Target: Vercel (auto-deploys on merge)
-- Preview URL: on every PR
-- Monitor: TRON watches deployment status past merge (see [Monitor the full flow] feedback)
+- Trigger / target / preview URL / what TRON monitors past merge.
 
 ## Other notes
 
-Free-form context TRON should know but doesn't act on programmatically. Examples:
-
-- This is a monorepo; engineers should respect package boundaries.
-- Migration files must be paired with rollback SQL.
-- (Anything else worth capturing.)
+Free-form context TRON should know but doesn't act on programmatically (monorepo boundaries, migration rules, …).
 
 ---
 
-**Editing this file:** safe to hand-edit; TRON re-reads on session start. To change knobs that TRON also tracks live (workflow rules, counters, scripts), describe the change to TRON in natural language — TRON owns those edits to keep dependent docs in sync.
+**Editing this file:** safe to hand-edit; TRON re-reads on session start. To change knobs TRON also tracks live (workflow rules, counters), describe the change to TRON — it owns those edits to keep dependent docs in sync.
