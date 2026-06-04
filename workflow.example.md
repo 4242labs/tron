@@ -1,6 +1,6 @@
-# workflow.md — Example
+# workflow.md — Example (embedded default)
 
-The orchestration rules for this project. The seeder copies this as a starting point; edit freely afterwards. TRON re-reads on session start and updates `workflow-state.md` accordingly.
+The orchestration rules for this project. TRON ships with this **embedded default workflow already in place** — it works out of the box. During seeding TRON explains it and asks whether it fits; the operator changes any rule or knob in natural language and TRON applies the edit via `skill-edit-self`. TRON re-reads on session start and updates `workflow-state.md` accordingly.
 
 This file is the source of truth for rules + tunable knobs. The live counters TRON tracks (current block, blocks-since-review, etc.) live in `workflow-state.md`.
 
@@ -30,7 +30,7 @@ After every engineer session-end, before dispatching the next block, TRON sends 
 
 ### R6 — Fresh engineer per block
 
-Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Worker IDs follow the project's pattern from `project.md`.
+Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Blocks are drawn from the pipeline ledger in `Order`, gated by each spec's `Dependencies`; worker IDs follow the project's pattern from `project.md`.
 
 ### R7 — Workers never self-terminate
 
@@ -44,12 +44,11 @@ The per-repo protected default branches are listed in `project.md` § Protected 
 
 ## Per-session knobs (TRON asks at session start; no defaults)
 
-TRON asks the operator for these values at the start of every session. No defaults — TRON does not proceed until both are answered. Live values land in `workflow-state.md`.
+TRON asks the operator for this at the start of every session. No default — TRON does not proceed until it is answered. Live value lands in `workflow-state.md`.
 
 | Knob | Notes |
 |:--|:--|
-| `max_concurrent_engineers` | Hard cap; TRON refuses to spawn beyond this in the session |
-| `session_end_idle_min` | If no operator activity for this many minutes and no work in flight, TRON proposes session end |
+| `max_concurrent_engineers` | Hard cap. Actual concurrency = min(this value, dispatchable blocks) — TRON never spawns more engineers than there are blocks ready to run. |
 
 ## Fixed config (set once; never asked)
 

@@ -34,7 +34,6 @@ Format: list of `{id, role, session_id, spawned_at, status}` where status ∈ `i
 Per-session knobs (operator answers at session start; no defaults):
 
 - `max_concurrent_engineers`: (set on cold start)
-- `session_end_idle_min`: (set on cold start)
 
 Fixed config (mirrored from `workflow.md` for fast access during sweeps):
 
