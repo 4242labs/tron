@@ -148,10 +148,13 @@ def spawn_detached(worker_id, prompt, cwd=None, settle_s=2.0):
     or {} if it could not be confirmed within settle_s.
     """
     cmd = ["claude", "--bg", "-n", worker_id, prompt]
-    subprocess.Popen(
-        cmd, cwd=cwd, start_new_session=True,
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    try:
+        subprocess.Popen(
+            cmd, cwd=cwd, start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except (OSError, ValueError):
+        return {}   # runtime missing / spawn failed — caller leaves a dead reservation the sweep recovers
     deadline = time.time() + settle_s
     while time.time() < deadline:
         rec = find(worker_id)

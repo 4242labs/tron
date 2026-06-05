@@ -51,10 +51,6 @@ templates:
     channel: worker
     slots: [worker_id]
     text: "[TRON]  {worker_id}? You've gone quiet. Still building, or stuck? Answer before I assume the worst."
-  sv01.query:
-    channel: worker
-    slots: [worker_id, block]
-    text: "[TRON]  {worker_id}: self-validation on {block}. Per acceptance item — delivered? tested locally? verified live? Flag anything only an operator can confirm."
 
   # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched:
@@ -69,20 +65,12 @@ templates:
     channel: terminal
     slots: [count]
     text: "[TRON]  Reviewer scheduled over the last {count} blocks. Brace yourselves."
-  terminal.between:
-    channel: terminal
-    slots: []
-    text: "[TRON]  Programs handling it. Users elsewhere."
 
   # escalation (operator / tg channels)
   escalate.wall:
     channel: operator
     slots: [worker_id, block, detail]
     text: "[TRON]  Above my pay grade. {worker_id} walled on {block}: {detail}. Peer-consult exhausted. Your call."
-  escalate.stall:
-    channel: operator
-    slots: [worker_id, block]
-    text: "[TRON]  {worker_id} went dark on {block} and didn't answer the ping. Paused it. You'll want to look."
   escalate.unclassified:
     channel: operator
     slots: [detail]

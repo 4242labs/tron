@@ -109,6 +109,12 @@ grammar) is the only thing that is a canon change here.
 | `worker.question_tron` | question for TRON | side: answer from context |
 | `worker.progress` | heartbeat | side: none |
 
+### Architect-origin (the persistent, forward-only consultant)
+| Tag | Meaning | Maps to |
+|:--|:--|:--|
+| `architect.cleared` | forward-review done — block cleared | `block:<block>:clear` |
+| `architect.logged` | log-review done — findings shaped into adhoc | `block:adhoc:clear` |
+
 ### Operator-origin (session or TG)
 | Tag | Meaning | Maps to |
 |:--|:--|:--|

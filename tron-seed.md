@@ -52,14 +52,15 @@ Everything else TRON brings (canon, skills, scripts, state) or detects (branch, 
   workflow.yaml                  # seeder writes — the KNOBS (worker/architect counts, cadence, git, silence), from the canon default
   routing.yaml                   # canon, copied verbatim — NEVER edited by the seeder
   messages.yaml                  # canon, copied verbatim
-  skills/  protocols/  scripts/  # canon, copied (scripts chmod +x)
+  skills/  protocols/  scripts/  templates/   # canon, copied (scripts chmod +x)
   workflow-state.yaml            # runtime FSM state (gitignored)
   pipeline.md                    # internal pipeline, if host has none (gitignored)
-  current-id dispatched.log tg-inbox.jsonl .tg-offset .env logs/   # runtime (gitignored)
+  current-id dispatched.log .tg-offset .env logs/                       # runtime (gitignored)
+  worker-inbox.jsonl operator-inbox.jsonl tg-inbox.jsonl home-events.jsonl   # runtime (gitignored)
   seed-trace.md  .gitignore
 ```
 
-**Tracked** (committed, PR'd): `tron`, `engine/`, `project.yaml`, `workflow.yaml`, `routing.yaml`, `messages.yaml`, `skills/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
+**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `project.yaml`, `workflow.yaml`, `routing.yaml`, `messages.yaml`, `skills/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
 
 ---
 
@@ -70,7 +71,7 @@ Check silently; **report only problems.**
 - The runtime can read this canon clone and write to the target. (Required.)
 - The worker-spawn runtime is available (needed later when TRON dispatches). Warn if absent; seeding can still finish.
 - `git` — only if the chosen workflow commits (the default does). Warn, don't hard-fail.
-- `yq`, `jq` — the rails parse YAML/JSON; warn if absent (lint + run need them).
+- `jq` — the shell connectors parse JSON (report + Telegram); warn if absent.
 - `curl`, `crontab` — only for optional Telegram + cron. Check at those steps.
 
 ---
@@ -107,11 +108,12 @@ Copy canon (verbatim — never edit):
 - all of `skills/` → `<agents>/tron/skills/`
 - all of `protocols/` → `<agents>/tron/protocols/`
 - all of `scripts/` → `<agents>/tron/scripts/` (`chmod +x` each)
+- all of `templates/` → `<agents>/tron/templates/` (runtime-state seeds the engine reads on first start)
 
 Init runtime state (gitignored, edited in place, never committed):
 
-- `<agents>/tron/workflow-state.yaml` ← from `templates/workflow-state.yaml`; counters `0`, placeholders untouched
-- `<agents>/tron/state.md` ← from `templates/state.md`; counters `0`, `last_session_id: never`
+- `<agents>/tron/workflow-state.yaml` ← from `templates/workflow-state.yaml` (the engine also
+  self-seeds this from `templates/` on first start, so this is belt-and-suspenders)
 - empty: `current-id`, `dispatched.log`, `tg-inbox.jsonl`, `.tg-offset`, `logs/`
 
 Write `<agents>/tron/.gitignore`:
@@ -122,10 +124,13 @@ Write `<agents>/tron/.gitignore`:
 current-id
 dispatched.log
 tg-inbox.jsonl
+worker-inbox.jsonl
+operator-inbox.jsonl
+home-events.jsonl
 logs/
-state.md
 workflow-state.yaml
 pipeline.md
+engine/__pycache__/
 ```
 
 (`pipeline.md` line only if the pipeline is internal — see Step 5.)
