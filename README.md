@@ -190,9 +190,6 @@ Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/i
   <img src="https://avatars.githubusercontent.com/u/18232600?s=72&v=4" width="72" height="72" alt="42piratas" />
 </a>
 
-Want to join them? See [`CONTRIBUTING.md`](CONTRIBUTING.md). The full list lives on the
-[contributors graph](https://github.com/42piratas/tron/graphs/contributors).
-
 ## License
 
 TRON is dual-licensed:
