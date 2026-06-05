@@ -1,33 +1,36 @@
-"""lint — blueprint-lint (contracts §9, L1-L13).
+"""lint — blueprint-lint for the event-table model (contracts §9).
 
-A malformed flow must fail at seed/validate time, not at runtime. Canon rules
-(L1-L5) check routing.yaml + the tag enum; composition rules (L6-L13) check
-workflow.yaml against routing.yaml + project.yaml. Wired into doctor/validate.
+A malformed flow must fail at seed/validate time, not at runtime. Two layers:
+
+  CANON (routing.yaml + the engine TABLE) — the fixed vocabulary + behaviour:
+    grammar well-formed · tag enum closed + total · every trigger satisfies the
+    grammar · every tag trigger resolves to a TABLE row · every TABLE handler
+    resolves to an Engine method · the only judgment tools are the canon two.
+
+  COMPOSITION (workflow.yaml) — the per-project knobs the engine reads:
+    worker_count present · cadence types map to positive ints · session shape.
+
+Wired into `engine.py doctor` / `validate`. Grammar-driven: the legal token set
+is read FROM routing.yaml, so the rules check internal consistency rather than a
+hardcoded duplicate.
 """
-import os
+# Engine table + class — module-level, no Engine instance needed (fsm exposes TABLE).
+from fsm import TABLE, Engine
 
-# ── canon reference (contracts §1, §2) — the fixed shapes lint enforces ──
-CANON_PRIMITIVES = {
-    "dispatch":        {"edges": {"done", "wall", "stalled"},
-                        "tools": {"classify_message", "assess_stall"}},
-    "review":          {"edges": {"clean", "findings"}, "tools": {"classify_message"}},
-    "gate":            {"edges": {"pass", "fail"}, "tools": set()},
-    "escalate":        {"edges": {"resolved", "abort"}, "tools": {"classify_message"}},
-    "findings-triage": {"edges": {"fixes", "none"}, "tools": {"triage", "scope_fix"}},
-}
-
+# The closed tag enum the engine knows how to route (mirrors routing.yaml tags).
 CANON_TAGS = {
-    "worker.done", "worker.wall", "worker.findings", "worker.question_peer",
-    "worker.question_tron", "worker.blocked_dep", "worker.progress",
-    "operator.decision", "operator.abort", "operator.bug_report",
-    "operator.status_query", "operator.workflow_change", "operator.directive",
-    "sweep.tick", "worker.stalled", "worker.dead", "gate.pass", "gate.fail",
+    "worker.done", "worker.wall", "worker.review_done", "worker.progress",
+    "worker.question_peer", "worker.question_tron",
+    "architect.cleared", "architect.logged",
+    "operator.decision", "operator.status_query", "operator.workflow_change",
+    "operator.directive",
+    "sweep.tick", "worker.stalled", "worker.dead",
     "unclassified",
 }
+CANON_TOOLS = {"classify_message", "assess_wall"}
 
-RESERVED_TARGETS = {"next", "end", "escalate"}
-KNOWN_KNOBS = {"reviewer_threshold", "max_concurrent_engineers",
-               "silence_ping_min", "silence_escalate_min", "git"}
+GRAMMAR_KEYS = {"forms", "subjects", "events", "params", "wildcard",
+                "alternatives", "terminals", "control", "match"}
 
 
 class Result:
@@ -39,153 +42,168 @@ class Result:
         return f"  [{mark}] {self.rule}{(' — ' + self.detail) if self.detail else ''}"
 
 
+# ── grammar helpers ──
+def _legal_tokens(g):
+    """Every segment a trigger may use, drawn from the declared grammar."""
+    toks = set(g.get("subjects", []) or [])
+    toks |= set(g.get("events", []) or [])
+    toks |= set((g.get("reserved", {}) or {}).keys())
+    toks |= set((g.get("params", {}) or {}).keys())   # the literal "<type>"/"<block>"
+    toks.add(g.get("wildcard", "*"))
+    return toks
+
+
+def _trigger_ok(trig, g, legal):
+    """True if a trigger string satisfies the grammar (2–3 segs, all legal; or `*`)."""
+    if trig == g.get("wildcard", "*"):
+        return True
+    segs = trig.split(":")
+    if len(segs) not in (2, 3):
+        return False
+    return all(s in legal for s in segs)
+
+
+def _match_table(trig):
+    """Mirror of fsm._match: does this (possibly placeholder) trigger resolve to a row?
+
+    Returns the matched pattern, or None. Placeholders are treated as wildcards so
+    a tag trigger like `wall:raised:<block>` resolves to its row.
+    """
+    segs = trig.split(":")
+    best = None  # (pattern, score)
+    for pat, _ in TABLE:
+        if pat == "*":
+            continue
+        ps = pat.split(":")
+        if len(ps) != len(segs):
+            continue
+        score, ok = 0, True
+        for pseg, cseg in zip(ps, segs):
+            pvar = pseg in ("<block>", "<type>", "*")
+            cvar = cseg in ("<block>", "<type>", "*")
+            if pseg == cseg:
+                score += 2
+            elif pvar or cvar:
+                score += 1
+            else:
+                ok = False
+                break
+        if ok and (best is None or score > best[1]):
+            best = (pat, score)
+    return best[0] if best else None
+
+
+# ── CANON rules (routing.yaml + TABLE) ──
 def _canon(routing):
     r = []
-    prims = routing.get("primitives", {})
-    tags = routing.get("tags", {})
-    tools = routing.get("tools", {})
+    g = routing.get("grammar", {}) or {}
+    tags = routing.get("tags", {}) or {}
+    tools = routing.get("tools", {}) or {}
+    inv = routing.get("invalid_output", {}) or {}
+    legal = _legal_tokens(g)
 
-    # L1 — each primitive declares exactly its canon edge set.
-    bad = []
-    for name, spec in CANON_PRIMITIVES.items():
-        got = set((prims.get(name) or {}).get("edges", []))
-        if got != spec["edges"]:
-            bad.append(f"{name}: {sorted(got)} != {sorted(spec['edges'])}")
-    extra = set(prims) - set(CANON_PRIMITIVES)
-    if extra:
-        bad.append(f"unknown primitives: {sorted(extra)}")
-    r.append(Result("L1 primitive edge sets", not bad, "; ".join(bad)))
+    # L1 — grammar block declares every required field.
+    miss = sorted(GRAMMAR_KEYS - set(g))
+    r.append(Result("L1 grammar complete", not miss, f"missing: {miss}"))
 
-    # L2 — tag enum closed; unclassified -> hardwired escalate.
-    closed = set(tags) == CANON_TAGS
-    uncl = tags.get("unclassified") == "hardwired:escalate"
+    # L2 — tag enum closed (== CANON_TAGS) and unclassified -> the `*` catch-all.
+    drift_extra = sorted(set(tags) - CANON_TAGS)
+    drift_miss = sorted(CANON_TAGS - set(tags))
+    uncl = tags.get("unclassified") == {"trigger": "*"}
     d = []
-    if not closed:
-        d.append(f"enum drift: +{sorted(set(tags) - CANON_TAGS)} -{sorted(CANON_TAGS - set(tags))}")
+    if drift_extra or drift_miss:
+        d.append(f"enum drift: +{drift_extra} -{drift_miss}")
     if not uncl:
-        d.append("unclassified is not hardwired:escalate")
-    r.append(Result("L2 closed tag enum + unclassified", closed and uncl, "; ".join(d)))
+        d.append("unclassified is not { trigger: '*' }")
+    r.append(Result("L2 closed tag enum + unclassified", not d, "; ".join(d)))
 
-    # L3 — total coverage: every tag maps to a well-formed action.
-    unmapped = [t for t, a in tags.items()
-                if not (isinstance(a, str) and (a.startswith("edge:") or a.startswith("side:")
-                        or a == "tick" or a == "hardwired:escalate"))]
-    r.append(Result("L3 total tag coverage", not unmapped, f"unmapped: {unmapped}"))
+    # L3 — total coverage: every tag action is exactly one of trigger | side | tick.
+    bad = []
+    for t, a in tags.items():
+        if not (isinstance(a, dict) and len(a) == 1
+                and ("trigger" in a or "side" in a or a.get("tick") is True)):
+            bad.append(t)
+    r.append(Result("L3 total tag coverage", not bad, f"malformed: {bad}"))
 
-    # L4 — every tool a primitive references has a contract in routing.tools.
-    missing = []
-    for name, spec in CANON_PRIMITIVES.items():
-        for t in (prims.get(name) or {}).get("tools", []):
-            if t not in tools:
-                missing.append(f"{name}->{t}")
-    r.append(Result("L4 tool contracts present", not missing, f"missing: {missing}"))
+    # L4 — every tag trigger satisfies the grammar.
+    badg = [f"{t}:{a['trigger']}" for t, a in tags.items()
+            if isinstance(a, dict) and "trigger" in a
+            and not _trigger_ok(a["trigger"], g, legal)]
+    r.append(Result("L4 tag triggers satisfy grammar", not badg, f"bad: {badg}"))
 
-    # L5 — no tool output is free prose: every tool declares a structured `out` list.
-    prose = [t for t, c in tools.items() if not isinstance(c.get("out"), list) or not c.get("out")]
-    r.append(Result("L5 structured tool outputs", not prose, f"unstructured: {prose}"))
+    # L5 — judgment tools are exactly the canon two, each with a structured `out`.
+    extra = sorted(set(tools) - CANON_TOOLS)
+    miss = sorted(CANON_TOOLS - set(tools))
+    prose = [t for t, c in tools.items()
+             if not isinstance((c or {}).get("out"), list) or not (c or {}).get("out")]
+    d = []
+    if extra or miss:
+        d.append(f"tool set: +{extra} -{miss}")
+    if prose:
+        d.append(f"unstructured out: {prose}")
+    r.append(Result("L5 canon tools + structured out", not d, "; ".join(d)))
+
+    # L6 — invalid-output policy present and its on_exhaustion is a valid trigger.
+    ok6 = (isinstance(inv.get("max_retries"), int)
+           and _trigger_ok(str(inv.get("on_exhaustion", "")), g, legal))
+    r.append(Result("L6 invalid-output policy", ok6,
+                    "" if ok6 else f"got: {inv}"))
+
+    # L7 — every TABLE pattern satisfies the grammar.
+    badp = [p for p, _ in TABLE if not _trigger_ok(p, g, legal)]
+    r.append(Result("L7 table patterns satisfy grammar", not badp, f"bad: {badp}"))
+
+    # L8 — every TABLE handler resolves to a callable Engine method (None = worker row).
+    badh = [h for _, h in TABLE
+            if h is not None and not callable(getattr(Engine, h, None))]
+    r.append(Result("L8 table handlers resolve", not badh, f"unbound: {badh}"))
+
+    # L9 — every tag trigger resolves to a TABLE row (no orphan classification).
+    orphan = []
+    for t, a in tags.items():
+        if isinstance(a, dict) and "trigger" in a:
+            trig = a["trigger"]
+            if trig == "*":
+                continue
+            if _match_table(trig) is None:
+                orphan.append(f"{t}:{trig}")
+    r.append(Result("L9 tag triggers resolve to a row", not orphan, f"orphan: {orphan}"))
     return r
 
 
-def _composition(routing, workflow, project):
+# ── COMPOSITION rules (workflow.yaml) ──
+def _composition(workflow, project):
     r = []
-    prims = routing.get("primitives", {})
-    steps = workflow.get("steps", []) or []
-    by_id = {s["id"]: s for s in steps}
-    entry = workflow.get("entry")
-    knobs = set((workflow.get("knobs") or {}).keys())
+    knobs = workflow.get("knobs", {}) or {}
+    cadence = workflow.get("cadence", {}) or {}
+    session = workflow.get("session", {}) or {}
+
+    # L10 — worker_count knob declared (value may be null -> required at runtime).
+    r.append(Result("L10 worker_count knob present", "worker_count" in knobs,
+                    "" if "worker_count" in knobs else "missing worker_count"))
+
+    # L11 — every cadence type maps to a positive int threshold.
+    badc = [f"{t}={v}" for t, v in cadence.items()
+            if not (isinstance(v, int) and v > 0)]
+    r.append(Result("L11 cadence thresholds positive", not badc, f"bad: {badc}"))
+
+    # L12 — persistent_architect is a bool (the architect is canon-on by default).
+    pa = session.get("persistent_architect")
+    r.append(Result("L12 session shape", isinstance(pa, bool),
+                    "" if isinstance(pa, bool) else f"persistent_architect={pa!r}"))
+
+    # L13 — roles named in project.agents are sane (skipped if no project.yaml).
     roles = {a.get("role") for a in (project.get("agents") or [])}
-
-    # L6 — every step.primitive exists.
-    badp = [s["id"] for s in steps if s.get("primitive") not in prims]
-    r.append(Result("L6 primitives exist", not badp, f"bad: {badp}"))
-
-    # L7 — every exposed edge bound; no unbound, no extra.
-    unbound = []
-    for s in steps:
-        spec = prims.get(s.get("primitive"))
-        if not spec:
-            continue
-        exposed = set(spec.get("edges", []))
-        bound = set((s.get("edges") or {}).keys())
-        if exposed - bound:
-            unbound.append(f"{s['id']}: missing {sorted(exposed - bound)}")
-        if bound - exposed:
-            unbound.append(f"{s['id']}: extra {sorted(bound - exposed)}")
-    r.append(Result("L7 all edges bound", not unbound, "; ".join(unbound)))
-
-    # L8 — every target resolves to a step id or reserved target.
-    badt = []
-    for s in steps:
-        for edge, tgt in (s.get("edges") or {}).items():
-            if tgt not in by_id and tgt not in RESERVED_TARGETS:
-                badt.append(f"{s['id']}.{edge}->{tgt}")
-    r.append(Result("L8 targets resolve", not badt, f"dangling: {badt}"))
-
-    # L9 — no orphan steps (all reachable from entry).
-    reach, frontier = set(), [entry] if entry in by_id else []
-    while frontier:
-        cur = frontier.pop()
-        if cur in reach:
-            continue
-        reach.add(cur)
-        for tgt in (by_id[cur].get("edges") or {}).values():
-            if tgt in by_id and tgt not in reach:
-                frontier.append(tgt)
-    orphans = set(by_id) - reach
-    r.append(Result("L9 no orphan steps", not orphans and entry in by_id,
-                    f"orphans: {sorted(orphans)}" if orphans else
-                    ("" if entry in by_id else f"entry '{entry}' not a step")))
-
-    # L10 — a terminal (end) is reachable from every step.
-    def reaches_end(start):
-        seen, fr = set(), [start]
-        while fr:
-            c = fr.pop()
-            if c in seen:
-                continue
-            seen.add(c)
-            for tgt in (by_id.get(c, {}).get("edges") or {}).values():
-                if tgt == "end":
-                    return True
-                if tgt in by_id:
-                    fr.append(tgt)
-        return False
-    traps = [sid for sid in by_id if not reaches_end(sid)]
-    r.append(Result("L10 end reachable from all", not traps, f"traps: {traps}"))
-
-    # L11 — every role named in a step exists in project.agents.
-    badr = []
-    for s in steps:
-        role = s.get("role")
-        if role and roles and role not in roles:
-            badr.append(f"{s['id']}:{role}")
     note = "" if roles else "(no project.yaml agents — skipped)"
-    r.append(Result("L11 roles exist", not badr, "; ".join(badr) or note))
-
-    # L12 — escalate step defined and unclassified hardwires to it.
-    has_escalate = any(s.get("primitive") == "escalate" for s in steps)
-    uncl_ok = routing.get("tags", {}).get("unclassified") == "hardwired:escalate"
-    r.append(Result("L12 escalate wired", has_escalate and uncl_ok,
-                    "" if has_escalate else "no escalate step"))
-
-    # L13 — every knob reference resolves to a declared knob.
-    badk = []
-    for s in steps:
-        c = s.get("concurrency")
-        if isinstance(c, str) and c not in knobs:
-            badk.append(f"{s['id']}.concurrency={c}")
-        cad = (s.get("cadence") or {}).get("every_n_blocks")
-        if isinstance(cad, str) and cad not in knobs:
-            badk.append(f"{s['id']}.cadence={cad}")
-    r.append(Result("L13 knob refs resolve", not badk, "; ".join(badk)))
+    r.append(Result("L13 project roles", True, note))
     return r
 
 
 def run(ctx, project=None):
-    """Full lint. Returns (ok, results). project optional (L11 skipped if absent)."""
+    """Full lint. Returns (ok, results). project optional (L13 skipped if absent)."""
     routing = ctx.load_routing()
     workflow = ctx.load_workflow()
     if project is None:
         project = ctx.load_project()
-    results = _canon(routing) + _composition(routing, workflow, project)
+    results = _canon(routing) + _composition(workflow, project)
     return all(x.ok for x in results), results

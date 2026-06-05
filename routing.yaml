@@ -1,79 +1,70 @@
-# routing.yaml — CANON instance (B2)
-# The step-primitive library (fixed edges + judgment tools per primitive) and
-# the closed message-tag -> action map. Ships with TRON, copied verbatim at seed.
-# run.sh reads THIS to drive the FSM; the seeder never writes it.
-# Shapes locked by contracts/schema/routing.schema.yaml; lint canon rules L1-L5.
+# routing.yaml — CANON. Two things the engine needs that are NOT the workflow itself:
+#   1. the TRIGGER GRAMMAR — the closed vocabulary every trigger must satisfy.
+#   2. the INBOUND tag map — how a raw worker/operator message becomes a trigger.
+# The behaviour (trigger -> step -> on-complete) lives in workflow.yaml (the explicit
+# event table). The old "primitive library" is gone: the table states every edge directly.
+# Ships with TRON, copied verbatim at seed. The seeder never writes it.
+# Shapes locked by contracts/schema/routing.schema.yaml; checked by blueprint-lint.
 
-# ── Primitive library ──────────────────────────────────────────────
-# Each primitive declares its FIXED outcome-edge set (L1) and the judgment
-# tool(s) it may call. The composition (workflow.yaml) binds every edge (L7).
-# A trailing "?" marks an optional param.
-primitives:
-  dispatch:
-    params: [role, "concurrency?"]
-    tools:  [classify_message, assess_stall]
-    edges:  [done, wall, stalled]
-  review:
-    params: [role, "cadence?"]
-    tools:  [classify_message]
-    edges:  [clean, findings]
-  gate:
-    params: [kind]
-    tools:  []                  # deterministic external check; classify only if a kind needs it
-    edges:  [pass, fail]
-  escalate:
-    params: [reason]
-    tools:  [classify_message]
-    edges:  [resolved, abort]
-  findings-triage:
-    params: []
-    tools:  [triage, scope_fix]
-    edges:  [fixes, none]
+# ── Trigger grammar (closed) ───────────────────────────────────────
+grammar:
+  notation: "lowercase, colon-delimited segments, no spaces"
+  forms:                       # every trigger matches exactly one form
+    - "domain:object"          # imperative dispatch     e.g. build:block:next
+    - "subject:event"          # completion              e.g. review:next, session:end
+    - "subject:object:event"   # qualified completion    e.g. block:next:done, review:<type>:done
+  subjects: [tron, build, block, review, cadence, session, worker, operator, wall]
+  events:   [start, build, done, clear, stalled, next, end, adhoc, raised, decision]
+  params:
+    "<type>":  "reviewer type: code | security | data | …  (never the reserved literal 'next')"
+    "<block>": "a pipeline block ID, e.g. NN-NN-NN"
+  reserved:
+    next: "the next block to dispatch (literal segment; never a <type>)"
+  wildcard: "*"                # fallback trigger (the SCRIPTS catch-all row)
+  alternatives: "|"            # alternatives within one cell
+  terminals: ["end", "-"]      # end = session over ; - = no trigger
+  control: "pulse"             # the dispatch-loop signal; NOT a table-listener trigger
+  match: "most-specific-wins"  # literal > <type>/<block> > *
 
-# ── Message-tag enum (closed) + action map ─────────────────────────
-# Every tag classify_message can return maps to exactly one action:
-#   edge:<name>          -> the active step's outcome edge
-#   side:<handler>       -> a global run.sh handler; FSM does not advance, step re-entered
-#   tick                 -> run one bounded tick (contracts §5)
-#   hardwired:escalate   -> canon, not composable (contracts §2 reserved)
-# Closed enum (L2); total coverage (L3).
+# ── Inbound message classification (closed tag enum -> trigger | side | tick) ──
+# classify_message returns exactly ONE tag. Each maps to:
+#   trigger: <t>  -> emit that workflow trigger (the FSM advances per workflow.yaml)
+#   side: <h>     -> a global handler; the FSM does not advance
+#   tick: true    -> run one bounded tick (the sweep)
+# Closed enum + total coverage (blueprint-lint).
 tags:
   # worker-origin
-  worker.done:              edge:done
-  worker.wall:              edge:wall
-  worker.findings:          edge:findings
-  worker.question_peer:     side:observe
-  worker.question_tron:     side:answer_from_context
-  worker.blocked_dep:       side:mark_blocked
-  worker.progress:          side:none
+  worker.done:              { trigger: "block:next:done" }
+  worker.wall:              { trigger: "wall:raised:<block>" }
+  worker.review_done:       { trigger: "review:<type>:done" }
+  worker.progress:          { side: none }
+  worker.question_peer:     { side: observe }            # peer consult; logged, no advance
+  worker.question_tron:     { side: answer_from_context }
+  # architect-origin (the persistent, forward-only consultant's reports)
+  architect.cleared:        { trigger: "block:<block>:clear" }   # forward-review done -> block cleared
+  architect.logged:         { trigger: "block:adhoc:clear" }     # log-review done -> adhoc shaped
   # operator-origin
-  operator.decision:        edge:resolved
-  operator.abort:           edge:abort
-  operator.bug_report:      side:scope_fix_block
-  operator.status_query:    side:reply_digest
-  operator.workflow_change: side:edit_self
-  operator.directive:       side:best_effort
-  # system (produced deterministically, not by classify)
-  sweep.tick:               tick
-  worker.stalled:           edge:stalled
-  worker.dead:              side:purge_recover
-  gate.pass:                edge:pass
-  gate.fail:                edge:fail
+  operator.decision:        { trigger: "operator:decision:<block>" }
+  operator.status_query:    { side: reply_digest }
+  operator.workflow_change: { side: edit_self }
+  operator.directive:       { side: best_effort }
+  # system (engine-produced, not from classify_message)
+  sweep.tick:               { tick: true }
+  worker.stalled:           { trigger: "worker:stalled" }   # engine liveness side-system
+  worker.dead:              { trigger: "worker:stalled" }   # recover handles both
   # reserved
-  unclassified:             hardwired:escalate   # reason=unclassified | invalid_output
+  unclassified:             { trigger: "*" }                # -> SCRIPTS catch-all (may wall)
 
-# ── Invalid-output policy (contracts §4) ───────────────────────────
+# ── Invalid-output policy (a judgment tool that won't validate) ─────
 invalid_output:
-  max_retries: 2
-  on_exhaustion: unclassified   # -> hardwired escalate(reason=invalid_output)
+  max_retries: 2                         # read by the engine (judge retry budget)
+  on_exhaustion: "*"                     # -> unclassified -> SCRIPTS catch-all (may wall via assess_wall)
 
-# ── Judgment-tool reference (contracts §3; schemas in contracts/schema/ drive validation) ──
-# Output is always tag + structured slots, never free prose to the flow (L5).
-# A trailing "?" marks an optional input field.
+# ── Judgment tools (the ONLY LLM calls; schema-in / schema-out) ────
+# Output is always a tag + structured slots, never free prose to the flow.
 tools:
-  classify_message: {in: [text, sender, current_step, "open_escalation?"], out: [tag, slots, confidence]}
-  triage:           {in: [findings, block_ctx],                          out: [verdicts, fix_needed]}
-  scope_fix:        {in: [finding],                                      out: [goal, acceptance_criteria, scope_bounds, owner_role, deps]}
-  assess_wall:      {in: [situation, block_ctx, project_operator_only],  out: [wall, kind, rationale]}
-  assess_stall:     {in: [activity, transcript_tail],                    out: [stalled, rationale]}
-  # tiering: classify_message, scope_fix -> cheap; triage, assess_wall, assess_stall -> strong
+  classify_message: { in: [text, sender], out: [tag, slots, confidence] }
+  assess_wall:      { in: [situation, block_ctx, project_operator_only],    out: [wall, kind, rationale] }
+  # tiering: classify_message -> cheap ; assess_wall -> strong
+  # NOT judgment tools (by design): review verdicts (review is a milestone),
+  # findings-triage (-> architect log-review skill), stall detection (-> engine liveness).

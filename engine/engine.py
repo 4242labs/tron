@@ -70,7 +70,7 @@ def cmd_start(ctx):
             util.atomic_write(ctx.state, open(tpl).read())
     max_c = _arg("--max")
     if max_c is None:
-        print("start: --max <N> required (max_concurrent_engineers; no default)")
+        print("start: --max <N> required (worker_count: engineers + reviewers; no default)")
         return 2
     eng = Engine(ctx)
     eng.start(int(max_c))
@@ -111,9 +111,20 @@ def cmd_recover(ctx):
     return 0
 
 
+def cmd_console(ctx):
+    from console import Console
+    if not os.path.exists(ctx.state):
+        tpl = os.path.join(ctx.dir, "templates", "workflow-state.yaml")
+        if os.path.exists(tpl):
+            util.atomic_write(ctx.state, open(tpl).read())
+    Console(ctx).run()
+    return 0
+
+
 COMMANDS = {
     "start": cmd_start, "tick": cmd_tick, "msg": cmd_msg, "stop": cmd_stop,
     "recover": cmd_recover, "validate": cmd_validate, "doctor": cmd_doctor,
+    "console": cmd_console,
 }
 
 

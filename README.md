@@ -1,140 +1,189 @@
 # TRON
 
-A canon-shaped supervisor agent for Claude Code's Agent View. One agent you talk to; it runs the rest.
+A deterministic supervisor that builds software from specs — one agent you talk to; it runs the fleet.
 
 ---
 
 ## What this is
 
-TRON is a thin, markdown-defined orchestrator. It spawns and supervises your fleet of worker agents — architects, engineers, reviewers — according to a workflow you author in plain markdown. You talk to TRON. TRON talks to everyone else.
+You hand TRON a pipeline of spec'd work. TRON dispatches and supervises a fleet of worker agents —
+an architect, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
+everyone else.**
 
-It encapsulates the operator boilerplate ("no verbose," "follow your skill steps," "validate locally before reporting done," "execute session-end") into reusable scripts. You stop repeating yourself. Agents stay on rails.
+The core is a **deterministic engine**, not a chatbot improvising. A fixed dispatch loop decides what
+happens next by lookup, never by guesswork; the language model is called only for the actual building
+and for two narrow, typed judgments. That makes the flow predictable, inspectable, and lint-checked
+before it ever runs.
 
 ## What this isn't
 
-- A production runtime — use [LangGraph](https://langchain-ai.github.io/langgraph/) for unattended loops.
-- A customer-facing surface.
+- A production runtime for unattended app traffic.
+- A customer-facing surface or a SaaS — TRON is yours; it runs on your machine.
 - A multi-machine fleet manager.
-- A SaaS — TRON is yours; it runs in your terminal.
+
+---
+
+## How it works
+
+- **Pipeline.** Your work is a list of blocks, each tied to a spec, each with a status:
+  `pending · cleared · in-progress · blocked · done · abandoned`.
+- **The architect clears the way.** A single persistent architect — *forward-looking only* — reviews
+  the work ahead and marks the next block `cleared`. Only a `cleared` block is dispatchable. It never
+  reopens finished work; remediation is always a new block ahead.
+- **Engineers build; reviewers check.** Engineers and reviewers share a worker pool (you set its size).
+  An engineer takes one cleared block, validates against its acceptance criteria, and reports done.
+- **Review is a milestone, not a verdict.** On a cadence you set (every N completed blocks), a reviewer
+  delivers a findings log; the architect turns real findings into upcoming blocks.
+- **Walls go to you.** Anything no worker can clear — an operator-only task, an external blocker, a
+  call only you can make — parks the block and asks you. Everything short of that stays in the fleet.
+- **It runs on its own.** A cron heartbeat wakes the engine on a fixed cadence; each wake is one
+  bounded tick — fill free slots, clear ahead, wait, or end — and surfaces to you only what matters.
+
+The engine spine (the dispatch loop + the work-selector) is code and never an LLM call. The LLM is
+asked exactly two questions: *classify this inbound message* and, rarely, *is this really the
+operator's problem?* Each is schema-in, schema-out — never free prose steering the flow.
+
+## The flow
+
+```mermaid
+flowchart TD
+    start([▶ tron start]):::evt --> boot[Bootup<br/>spawn persistent architect]:::tron
+    boot --> pulse{{ PULSE · dispatch loop }}:::tron
+    pulse --> sw{SWITCHBOARD<br/>free slot? · cleared work?}:::gate
+
+    sw -->|next cleared block| eng[Engineer<br/>build + validate]:::work
+    sw -->|cadence due| rev[Reviewer<br/>findings log]:::work
+    sw -->|pending block| fwd[Architect<br/>forward-review → cleared]:::arch
+    sw -->|all settled| done([ ■ session end ]):::evt
+
+    eng --> g{done<br/>or wall?}:::gate
+    g -->|done| rel[Release engineer<br/>tick cadence]:::tron
+    g -->|wall| wall[Block → blocked<br/>slot freed]:::wall
+    wall --> op[/Operator<br/>resume · amend · abandon/]:::op
+    rev --> log[Architect<br/>log-review → adhoc]:::arch
+
+    rel -. pulse .-> pulse
+    fwd -. block cleared .-> pulse
+    log -. pulse .-> pulse
+    op  -. pulse .-> pulse
+
+    classDef evt  fill:#b5683a,stroke:#e8c9b0,color:#fff,stroke-width:2px
+    classDef tron fill:#1c2b3a,stroke:#4a90d9,color:#eaf2fb
+    classDef gate fill:#6b4e16,stroke:#e0a93b,color:#fff
+    classDef arch fill:#2e2350,stroke:#a87bd9,color:#f0e9fb
+    classDef work fill:#173a32,stroke:#3fb59a,color:#e6fbf4
+    classDef wall fill:#4a1717,stroke:#d96a6a,color:#fbe6e6
+    classDef op   fill:#3a2f12,stroke:#d9c24a,color:#fbf6e0
+```
+
+<sub>● events · ◆ gateways · the **architect** (purple) clears blocks forward and turns findings into new work · **workers** (teal) build and review · a **wall** parks the block and asks the **operator** (gold) · every completion returns control to **PULSE** (dotted).</sub>
 
 ---
 
 ## Requirements
 
-- Claude Code CLI **>= 2.1.139** (Agent View support).
-- `gh`, `curl`, `jq` on PATH.
-- A `crontab` (macOS / Linux).
-- A target project that already has canon-shaped `meta/agents/architect.md`, `engineer.md`, `reviewer.md`.
+- `python3` and `git`.
+- `jq` (the shell connectors parse JSON).
+- `crontab` (the autonomous heartbeat).
+- A background-capable agent runtime on `PATH` — the runtime that runs the worker agents TRON
+  dispatches. TRON drives it; you never address it directly.
 
----
+## Commands
 
-## Quickstart
+Two commands. Everything else is internal (the heartbeat, recovery, and validation run themselves).
+
+| Command | What it does |
+|:--|:--|
+| `tron seeder` | Seed TRON into a target project — an interview that detects your repo, settles the knobs, and writes the instance. Touches only TRON's own folder. Run from the project root. |
+| `tron start`  | Wake TRON — a short bootup (where to start, how many workers) then the live console: watch the fleet, talk to TRON, `stop` when you're done. |
 
 ```bash
-# 1. Clone canon
-git clone https://github.com/42piratas/tron.git ~/code/tron-canon
-
-# 2. From your target project, open an interactive Claude Code session pointed at the seeder
+# 1. From a canon clone, seed TRON into your project:
 cd ~/code/my-project
-claude "Read ~/code/tron-canon/tron-seed.md and seed TRON into this project."
+~/code/tron/tron seeder
+
+# 2. Wake it (from the seeded instance):
+<agents>/tron/tron start
 ```
 
-The seeder walks you through:
-1. Project profile (paths, conventions, env keys).
-2. Workflow rules (5 defaults; edit freely).
-3. Templates, skills, scripts copied into `meta/agents/tron/`.
-4. `.env` keys for Telegram.
-5. Cron entries for the autonomous sweep + TG poll.
-6. Dry-run validate + doctor.
-
-Once seeded (run from your project root, the directory that contains both your meta repo and your app repo(s)):
-
-```bash
-claude --bg -n TRON "Read <meta>/agents/tron.md in full and execute its 'On every session start' sequence."
-```
-
-Replace `<meta>` with your project's meta repo directory name (commonly `meta/`; e.g. `my-meta/` or `zovv-meta/`). The path is project-relative — never use `/Users/…` or `/home/…` here per `shared-knowledge/principles-base.md §14 Portability` (applies to anything tracked, but also keeps the command portable across machines).
-
-TRON appears in Agent View. Talk to it.
+Inside `tron start`: type to talk to TRON; `status` / `pipeline` to look; `stop` to end.
 
 ---
 
-## File layout — canon
+## File layout — canon (this repo)
 
 ```
 tron/
-├── README.md
-├── tron-seed.md                # the seeder doc
-├── tron-scripts.md             # situation→script index (operator-extensible)
-├── workflow.example.md         # default workflow rules
-├── project.example.md          # default project profile shape
-├── templates/                  # tron.md, state.md, workflow-state.md, handovers
-├── skills/                     # 9 markdown skills
-├── scripts/                    # 4 shell helpers
-└── LICENSE
+├── tron                    # the operator entrypoint (seeder · start)
+├── README.md · LICENSE
+├── tron.md                 # the judgment context (the two LLM calls run under this)
+├── tron-seed.md            # the seeding protocol
+├── routing.yaml            # the trigger grammar + inbound-message map (canon, never per-project)
+├── workflow.yaml           # the default knobs (worker/architect counts, cadence, git)
+├── messages.yaml           # every line TRON says, by template
+├── engine/                 # the deterministic engine (dispatch loop, selector, judgment, lint)
+├── skills/                 # how a worker behaves: engineer · reviewer · architect
+├── protocols/              # lifecycle: bootup · session-end
+├── scripts/                # thin shell connectors (heartbeat, worker→engine report, notifications)
+├── templates/              # runtime-state seeds
+├── contracts/              # design contracts + schemas
+├── spec.example.md         # the spec contract a block is built from
+├── project.example.yaml    # the project-profile shape the seeder fills
+├── workflow.example.md     # the knobs, explained
+└── pipeline.example.md     # the pipeline format + statuses
 ```
 
-## File layout — consumer project (after seed)
+## File layout — your project (after `tron seeder`)
 
 ```
-<project>/meta/agents/
-├── tron.md                     # live TRON agent file
-└── tron/
-    ├── project.md              # this project's profile
-    ├── workflow.md             # this project's workflow rules
-    ├── workflow-state.md       # live counters (TRON-managed)
-    ├── scripts.md              # this project's situation→script index
-    ├── state.md                # persistent memory (counters, subs)
-    ├── current-id              # TRON's live session ID
-    ├── dispatched.log          # spawn history (append-only)
-    ├── seed-trace.md           # audit of seed
-    ├── tg-inbox.jsonl          # inbound TG messages
-    ├── skills/                 # copied from canon
-    ├── templates/              # copied from canon
-    ├── scripts/                # copied from canon
-    └── logs/                   # session logs
+<agents>/tron.md            # the judgment context (copied)
+<agents>/tron/
+├── tron · engine/          # the entrypoint + the deterministic engine (canon, copied)
+├── project.yaml            # this project's pointers, agents, repo facts
+├── workflow.yaml           # this project's knobs
+├── routing.yaml · messages.yaml · skills/ · protocols/ · scripts/   # canon, copied verbatim
+├── pipeline.md             # the live pipeline (if the host keeps none)
+└── …runtime state…         # workflow-state, logs, inboxes (gitignored, edited in place)
 ```
 
-Plus, outside `meta/agents/tron/`:
-- `<project>/.env` — Telegram keys.
-- `<project>/meta/agents/architect.md`, `engineer.md`, `reviewer.md` — canon prereq.
-
-To remove TRON entirely: delete `meta/agents/tron.md` and `meta/agents/tron/`. No other project traces.
+To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No other traces.
 
 ---
 
-## Design premises
+## Design principles
 
-The architecture is grounded in 23 locked premises (see `marketing-source-tron.md` in the related plan repo for the full list). A few highlights:
-
-- **Canon purity.** The canon repo has zero project-specific or machine-specific traces.
-- **Local encapsulation.** Two paths (`meta/agents/tron.md` + `meta/agents/tron/`) are the entire local surface.
-- **Agent View native.** No custom bus, no daemon, no sidecar — everything rides on `claude --bg` / `claude --resume`.
-- **Workers never self-terminate.** Only TRON kills (closes the bus-dead-post-DONE failure mode).
-- **TRON owns its own edits.** Operator describes a change in natural language; TRON updates all docs atomically. No hand-editing of `workflow-state.md` / `scripts.md`.
-- **External cron drives autonomy.** TRON is a turn-based agent; cron-driven sweeps + decoupled TG poller close the autonomous-loop gap.
+- **Deterministic spine.** Flow is decided by code and a closed trigger grammar — lint-validated at
+  seed time, so a malformed workflow fails before it runs, not during.
+- **Two bounded judgments.** The only LLM calls into the flow are typed and schema-checked; the model
+  never returns prose that steers a transition.
+- **Architect out of the pool, forward-only.** Clearing throughput is the one knob that bounds speed;
+  finished work is never reopened.
+- **Every word is canon copy.** All operator- and worker-facing text comes from one registry — no
+  backend narration ever reaches a human.
+- **Crash-safe ticks.** State is persisted atomically; dispatch intent is committed before any spawn,
+  and messages are processed at-least-once — a crashed wake retries cleanly.
+- **Canon purity.** This repo carries zero project- or machine-specific traces; per-project values
+  live only in the seeded instance.
 
 ---
 
 ## Website
 
-The public site lives in its own repo — `42piratas/tron-www` (private) — and is served at [tron.42labs.io](https://tron.42labs.io). It was extracted from this repo's former `www/` directory.
+The public site lives in its own repo — `42piratas/tron-www` (private) — and is served at
+[tron.42labs.io](https://tron.42labs.io).
 
 ---
 
 ## License
 
-See `LICENSE`.
+TRON is dual-licensed:
 
----
+- **Open source** — [AGPL-3.0](LICENSE).
+- **Commercial** — to use TRON without the AGPL-3.0's obligations (e.g. closed-source or SaaS),
+  contact **ahoy@42labs.io**.
 
 ## Contributing
 
-This canon repo is the single source of truth. Per-project customization happens in consumer projects, never here.
-
-PRs that:
-- Touch project-specific assumptions → rejected.
-- Add machine-specific paths → rejected.
-- Add new skills, refine handovers, improve scripts → welcome.
-
-Open an issue first for non-trivial changes.
+This canon repo is the single source of truth; per-project customization happens in seeded instances,
+never here. PRs that add project- or machine-specific assumptions are rejected. Open an issue first
+for non-trivial changes.

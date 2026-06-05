@@ -1,32 +1,51 @@
 """judge — the only place the engine calls an LLM (contracts §3, §4).
 
-Each of the five judgment tools is one bounded, typed question: tron.md is the
-prompt context, the tool instruction names the decision, and the model must
-return JSON in the tool's exact output shape. The runner schema-validates every
-return; invalid output is retried (budget 2) and then collapses to `unclassified`
--> the hardwired escalate edge. The LLM never sees the flow path and never
-returns free prose to the flow. Model tiering: cheap vs strong.
+The canon set is TWO bounded, typed questions:
+  classify_message (cheap)  put an inbound worker/operator message into exactly one
+                            tag from routing.yaml's closed enum (+ structured slots).
+  assess_wall (strong)      is an unexpected/ambiguous input actually the operator's
+                            problem? (the `*` SCRIPTS path).
 
-Offline testability: set TRON_JUDGE_STUB to a JSON file mapping tool name ->
-list of canned responses (popped in order). The FSM is then fully exercisable
-without spending a token.
+tron.md is the prompt context; the tool instruction names the decision; the model
+must return JSON in the tool's exact shape. The runner schema-validates every
+return; invalid output is retried (budget 2) then collapses to `unclassified`
+-> the `*` SCRIPTS catch-all (which may wall). The LLM never sees the flow path
+and never returns free prose to the flow.
+
+NOT judgment tools, by design: review verdicts (review is a milestone), findings
+triage / fix scoping (the architect's log-review skill), stall detection (the
+engine's deterministic liveness sweep).
+
+Offline testability: set TRON_JUDGE_STUB to a JSON file mapping tool name -> list
+of canned responses (popped in order). The FSM is then fully exercisable without
+spending a token.
 """
 import os
 import re
 import json
 import subprocess
 
-from lint import CANON_TAGS
+import util
 
 CHEAP = os.environ.get("TRON_MODEL_CHEAP", "claude-haiku-4-5")
 STRONG = os.environ.get("TRON_MODEL_STRONG", "claude-opus-4-8")
-TIER = {
-    "classify_message": CHEAP, "scope_fix": CHEAP,
-    "triage": STRONG, "assess_wall": STRONG, "assess_stall": STRONG,
-}
+TIER = {"classify_message": CHEAP, "assess_wall": STRONG}
 
 _stub_cache = None
 _stub_idx = {}
+_tags_cache = None
+
+# Engine-produced tags — the classifier must NEVER emit these (the engine's liveness
+# sweep / cron produce them). Enforced at the validator, not just in the prompt.
+ENGINE_ONLY = {"worker.stalled", "worker.dead", "sweep.tick"}
+
+
+def _allowed_tags(ctx):
+    """The closed tag enum, read from routing.yaml (single source — no duplication)."""
+    global _tags_cache
+    if _tags_cache is None:
+        _tags_cache = set((util.load_yaml(ctx.routing).get("tags", {}) or {}).keys())
+    return _tags_cache
 
 
 def _stub_response(tool):
@@ -45,33 +64,17 @@ def _stub_response(tool):
     return queue[i]
 
 
-# ── output validators: enforce tag+structured-slots, never prose (L5) ──
-def _v_classify(o):
-    if o.get("tag") not in CANON_TAGS:
-        return f"tag '{o.get('tag')}' not in closed enum"
+# ── output validators: enforce tag+structured-slots, never prose ──
+def _v_classify(o, ctx):
+    tag = o.get("tag")
+    if tag not in _allowed_tags(ctx) or tag in ENGINE_ONLY:
+        return f"tag '{tag}' is not a valid classifier output"
     if not isinstance(o.get("slots", {}), dict):
         return "slots must be an object"
     return None
 
 
-def _v_triage(o):
-    if not isinstance(o.get("verdicts"), list):
-        return "verdicts must be a list"
-    if not isinstance(o.get("fix_needed"), bool):
-        return "fix_needed must be a bool"
-    return None
-
-
-def _v_scope_fix(o):
-    for k in ("goal", "acceptance_criteria", "scope_bounds", "owner_role", "deps"):
-        if k not in o:
-            return f"missing '{k}'"
-    if not isinstance(o.get("acceptance_criteria"), list):
-        return "acceptance_criteria must be a list"
-    return None
-
-
-def _v_assess_wall(o):
+def _v_assess_wall(o, ctx):
     if not isinstance(o.get("wall"), bool):
         return "wall must be a bool"
     if o.get("kind") not in ("backend", "ui", "operator-only", "external"):
@@ -79,37 +82,18 @@ def _v_assess_wall(o):
     return None
 
 
-def _v_assess_stall(o):
-    if not isinstance(o.get("stalled"), bool):
-        return "stalled must be a bool"
-    return None
-
-
-VALIDATORS = {
-    "classify_message": _v_classify, "triage": _v_triage, "scope_fix": _v_scope_fix,
-    "assess_wall": _v_assess_wall, "assess_stall": _v_assess_stall,
-}
+VALIDATORS = {"classify_message": _v_classify, "assess_wall": _v_assess_wall}
 
 INSTRUCTIONS = {
     "classify_message":
         "TOOL: classify_message. Put the inbound message in exactly one tag from the "
-        "closed vocabulary (or `unclassified`). Return JSON: "
+        "closed vocabulary (or `unclassified`). Pull any block id / reviewer type / "
+        "operator decision into slots. Return JSON: "
         '{"tag": <tag>, "slots": {<pulled fields>}, "confidence": <0..1>}.',
-    "triage":
-        "TOOL: triage. Judge the findings. Return JSON: "
-        '{"verdicts": [{"finding_id": <id>, "agree": <bool>, "severity": <str>}], '
-        '"fix_needed": <bool>}.',
-    "scope_fix":
-        "TOOL: scope_fix. Size one fix into a block a fresh engineer can own. Return JSON: "
-        '{"goal": <str>, "acceptance_criteria": [<str>], '
-        '"scope_bounds": {"in": [<str>], "out": [<str>]}, "owner_role": <str>, "deps": [<str>]}.',
     "assess_wall":
-        "TOOL: assess_wall. Is this actually the operator's problem? Default solvable. "
-        'Return JSON: {"wall": <bool>, "kind": "backend|ui|operator-only|external", '
-        '"rationale": <one line>}.',
-    "assess_stall":
-        "TOOL: assess_stall. Slow, or actually stuck? Return JSON: "
-        '{"stalled": <bool>, "rationale": <one line>}.',
+        "TOOL: assess_wall. Is this actually the operator's problem, or solvable? "
+        "Default solvable. Return JSON: "
+        '{"wall": <bool>, "kind": "backend|ui|operator-only|external", "rationale": <one line>}.',
 }
 
 
@@ -132,8 +116,7 @@ def _call_llm(tool, payload, ctx, correction=None):
              "\n\nReturn ONLY the JSON object. No prose, no fences."]
     if correction:
         parts.append(f"\n\nYour previous output failed validation: {correction}")
-    prompt = "".join(parts)
-    cmd = ["claude", "-p", "--model", TIER[tool], prompt]
+    cmd = ["claude", "-p", "--model", TIER[tool], "".join(parts)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return r.stdout or ""
@@ -145,11 +128,12 @@ def call(tool, payload, ctx, max_retries=2):
     """Run one judgment tool. Returns (ok, output_dict_or_None, raw_attempts).
 
     ok=False means the invalid-output budget was exhausted -> the caller maps
-    this to `unclassified` / hardwired escalate (contracts §4).
+    this to `unclassified` / the `*` SCRIPTS catch-all (contracts §4).
     """
+    validate = VALIDATORS[tool]
     stub = _stub_response(tool)
     if stub is not None:
-        err = VALIDATORS[tool](stub)
+        err = validate(stub, ctx)
         return (err is None), (stub if err is None else None), [stub]
 
     raw_attempts = []
@@ -161,7 +145,7 @@ def call(tool, payload, ctx, max_retries=2):
         if obj is None:
             correction = "output was not valid JSON"
             continue
-        err = VALIDATORS[tool](obj)
+        err = validate(obj, ctx)
         if err is None:
             return True, obj, raw_attempts
         correction = err

@@ -3,13 +3,14 @@
 # keyed by template id, with named slots. Rendered via render(id, slots).
 # Seeder voice (tron-seed.md) is SEPARATE and never shares keys (contracts §6).
 #
-# Tone: landing-page persona — dark, dry, sardonic. NO host-runtime names, ever.
+# Tone: the TRON persona — dark, dry, sardonic. NO host-runtime names, ever.
 # The {detail} slot is the one place free-text (LLM judgment payload) is allowed.
 
 # ── Slot catalog (the only interpolations templates may use) ──
 slots:
   worker_id: <str>      # e.g. ENG-06-19  (NEVER a host-runtime name)
   role: <str>
+  type: <str>           # reviewer lens: code | security | data | …
   block: <str>
   branch: <str>
   pr: <str>
@@ -20,7 +21,7 @@ slots:
 # ── Templates, grouped by channel/situation ──
 templates:
 
-  # dispatch / spawn (worker channel — TRON's kickoff line; run.sh appends the
+  # dispatch / spawn (worker channel — TRON's kickoff line; the engine appends the
   # technical handover separately, so no host-runtime strings live here)
   spawn.engineer:
     channel: worker
@@ -30,6 +31,14 @@ templates:
     channel: worker
     slots: []
     text: "[TRON]  Architect online. You're the standing consultant — persistent, patient, never off the clock. Idle until summoned. Do not self-terminate."
+  arch.forward:
+    channel: worker
+    slots: [block]
+    text: "[TRON]  Architect — clear {block}. Review the work ahead of it, shape it, then report it cleared. Forward only — never reopen what's done."
+  arch.log:
+    channel: worker
+    slots: [type, block]
+    text: "[TRON]  Architect — a {type} review landed on {block}. Turn its findings into upcoming work. Forward only — never reopen what's done."
   spawn.reviewer:
     channel: worker
     slots: [worker_id, count]
@@ -47,7 +56,7 @@ templates:
     slots: [worker_id, block]
     text: "[TRON]  {worker_id}: self-validation on {block}. Per acceptance item — delivered? tested locally? verified live? Flag anything only an operator can confirm."
 
-  # between-task / terminal feedback (terminal channel; landing-page voice)
+  # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched:
     channel: terminal
     slots: [worker_id, block]

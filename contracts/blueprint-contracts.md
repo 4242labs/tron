@@ -1,9 +1,14 @@
-# Blueprint contracts — TRON deterministic FSM (B0)
+# Blueprint contracts — TRON deterministic FSM (B0 · reconciled to the converged workflow)
 
-**Status:** canon · **Block:** B0 (Phase 0, Foundations) · **Date:** 2026-06-04
-**Implements:** `42agents/super-m/plans/tron-adr-001-deterministic-rebuild.md`
+**Status:** canon · **Block:** D1 (canon shape) · **Date:** 2026-06-05
+**Implements:** `42agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
+**Conforms to:** the frozen workflow — `42agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
 
-This is the authoritative contract set the rest of TRON is built against. It is **design only** — no executable engine, no real copy. It locks: the step-primitive library, the closed situation-tag enum, the judgment-tool contracts, the invalid-output policy, the tick model, copy scope, the `pipeline: host` accepted format, the pipeline-tracking decision, and the blueprint-lint rules.
+This is the authoritative contract set the rest of TRON is built against. **Design only** — no real
+copy. It locks: the event-table model, the standing layer (PULSE + SWITCHBOARD), the trigger
+grammar, the closed inbound-tag map, the judgment-tool contracts, the invalid-output policy, the
+tick model, copy scope, the `pipeline: host` accepted format, the pipeline-tracking decision, and
+the blueprint-lint rules.
 
 Schema stubs live in `contracts/schema/` (`project`, `workflow`, `routing`, `messages`).
 
@@ -12,199 +17,255 @@ Schema stubs live in `contracts/schema/` (`project`, `workflow`, `routing`, `mes
 ## 0. How the pieces fit
 
 ```
-cron ──> sweep.sh ──> [SWEEP] tick ──> run.sh (the spine, deterministic)
-                                          │
-                                          │ executes routing.yaml (primitives) + workflow.yaml (composition)
-                                          │ calls claude -p ONLY for a typed judgment tool, schema-in/schema-out
+cron ──> sweep.sh ──> [SWEEP] tick ──> engine (the spine, deterministic)
+                                          │  PULSE — the dispatch loop
+                                          │  SWITCHBOARD — per-slot work selection
+                                          │  executes workflow.yaml (the event table)
+                                          │  against routing.yaml (grammar + inbound tag map)
+                                          │  calls the LLM ONLY for a typed judgment tool (schema-in/out)
                                           ▼
-                                   advance FSM ──> persist (atomic) ──> exit
+                                   advance ──> persist (atomic) ──> exit
 ```
 
-- **`run.sh`** is the only executor. It reads the project's **composition** (`workflow.yaml`) and the canon **primitive library + edges** (`routing.yaml`), and drives the flow. The LLM never reads the routing path.
-- The LLM is *called out to* only for a bounded **judgment tool** (§3), then control returns to `run.sh`.
-- All emitted text comes from **`messages.yaml`** via `render(tag, slots)` (§6). No backend narration ever reaches a human.
-- `tron.md` (built in B4) is the prompt context those judgment tools run under — **not** an executor.
+- **The engine** is the only executor (Python core + thin `tron`/`sweep.sh` shell connectors). It reads
+  the project's **event table** (`workflow.yaml`) and the canon **grammar + tag map** (`routing.yaml`)
+  and drives the flow. The LLM never reads the routing path.
+- **PULSE** = the standing dispatch loop (the engine spine). **SWITCHBOARD** = the deterministic
+  per-slot work selector PULSE calls. Both are code — **never** an LLM call.
+- The LLM is *called out to* only for a bounded **judgment tool** (§3), then control returns to the engine.
+- All emitted text comes from **`messages.yaml`** via `render(tag, slots)` (§6). No backend narration
+  ever reaches a human.
+- `tron.md` (D5) is the prompt context the judgment tools run under — **not** an executor.
 
-Two tag namespaces, kept strictly separate:
-- **Message tags** (§2) — what `classify_message` returns for an inbound message. Closed enum.
-- **Step outcome edges** (§1) — the named exits each primitive exposes; the composition binds them.
-
----
-
-## 1. Step-primitive library (canon-invariant)
-
-A small fixed menu of step *types*. Projects **compose** them (order, roles, checks, knobs) in `workflow.yaml`; they never author primitives. Adding CI / security-review / data-architect = naming them into existing primitives. Only a genuinely new *kind* of step (fan-out/join, loop-until, wait-for-event) is a canon change here.
-
-Each primitive declares: its parameters, the judgment tool(s) it may call, and a **fixed set of outcome edges**. The composition must bind every exposed edge to a target (`next`, `end`, or a step id). Reserved targets: `next` (advance to the next composed step / next block), `end` (session-end), `escalate` (the escalate step).
-
-| Primitive | Params | Judgment tool(s) | Outcome edges |
-|:--|:--|:--|:--|
-| **`dispatch(role)`** | `role` (∈ agents map); `concurrency?` (default: `max_concurrent_engineers` for `engineer`) | `classify_message` (worker inbound); `assess_stall` (during sweep) | `done`, `wall`, `stalled` |
-| **`review(role)`** | `role`; `cadence?` (`every_n_blocks: <knob>` → periodic; absent → runs once on the triggering block) | `classify_message` (reads the report into clean/findings) | `clean`, `findings` |
-| **`gate(kind)`** | `kind` (`ci`, `lint`, `<custom>`) | none by default (deterministic external check); `classify_message` only if a kind needs interpretation | `pass`, `fail` |
-| **`escalate`** | `reason` (slot) | `classify_message` (operator reply) | `resolved`, `abort` |
-| **`findings-triage`** | — (operates on the findings list in state) | `triage`, `scope_fix` | `fixes`, `none` |
-
-Notes grounded in v1 (`tron-scripts.md`):
-- `dispatch(engineer)` = "Spawn an engineer for a block"; `done` ← `worker.done`; `wall` ← `worker.wall`; `stalled` ← `assess_stall` past `silence_escalate_min`.
-- `review(architect)` with no cadence = the **R5** post-block architect review; `review(reviewer)` with `cadence: every_n_blocks: reviewer_threshold` = the **R4** periodic reviewer.
-- `findings-triage` is where the architect's judgment turns reviewer findings into fix blocks (R4→R6 path): `fixes` inserts fresh blocks into the pipeline and loops to `dispatch`; `none` advances.
-- `escalate` covers **R3** (wall → operator) and `WORKER_UNRESPONSIVE` (stall). `resolved` resumes per the operator's `operator.decision`; `abort` ends the block/session per `operator.abort`.
-
-**Persistent architect (R1)** is not a composed step — it is a session-lifecycle action `run.sh` performs at session start (`dispatch(architect)` once, stays alive in BG until session-end). The composition's `dispatch` steps are per-block workers.
-
-**Peer-consult (R2)** is not a transition — engineer↔architect exchanges bypass TRON entirely; `classify_message` tags them `worker.question_peer` and the runner stays in place (observe only).
+Two vocabularies, kept strictly separate:
+- **Triggers** (§1, grammar in `routing.yaml`) — the event-table edges. Every step's *on-complete* is
+  itself a trigger; the table is a closed loop.
+- **Message tags** (§2) — what `classify_message` returns for an inbound message; each maps to a trigger
+  or a side action.
 
 ---
 
-## 2. Situation-tag enum (closed)
+## 1. The event-table model (canon-invariant)
 
-`classify_message(text, ctx) → {tag, slots}` returns exactly one tag from this closed set (or `unclassified`). The enum is canon; blueprint-lint checks against it, never an open set.
+TRON's behaviour is an **explicit event table**, not a library of primitives. Each row is:
+
+```
+trigger → step (actor, skill) → outputs → on-complete (== a trigger)
+```
+
+- **Steps are explicit.** A step names its actor (TRON / engineer / architect / reviewer) and, for a
+  TRON step, the **skill** it runs. Worker steps carry no TRON skill (the actor owns its method).
+- **On-complete is a trigger.** Outcomes feed straight back as triggers; `pulse` returns control to
+  the dispatcher. Terminals: `end` (session over), `-` (no trigger).
+- **Multi-outcome** steps stack alternatives with `|`; the named **selector** (a skill or the worker's
+  reported outcome) decides which fires.
+- **Fan-out** is allowed and declared: one trigger may drive more than one row (e.g. a review-completion
+  fires *release reviewer* AND *log review* in parallel).
+
+### Standing layer
+- **PULSE** — runs at `tron:start` and on every `pulse` return. It keeps every worker slot busy and
+  hands off to SWITCHBOARD; any unexpected input → SCRIPTS (the `*` catch-all). It is the loop, not a row.
+- **SWITCHBOARD** — per free worker slot, in priority: (a) oldest open **cleared adhoc** block →
+  (b) a **due cadence** reviewer (consume its counter) → (c) next **cleared** block by sequential ID.
+  Then **clear-ahead**: enqueue the architect (`review:next:<block>`) for every *pending* block not yet
+  queued. Then **wait** or **session:end**. A block is dispatchable **iff `cleared`**; dispatch flips
+  it `cleared → in-progress` (idempotent against concurrent passes).
+
+### Roles
+- **Architect** — a **persistent, dedicated** agent, **excluded from the worker slot pool**, with a FIFO
+  queue. Architect rows ENQUEUE (never need a free slot, never contend with workers). The architect is
+  **forward-looking only**: it clears the next block (`forward-review`) and turns reviewer findings into
+  **upcoming** adhoc blocks (`log-review`); it never reopens a done block. `architect-count` is the knob
+  that drains the queue faster (the throughput bottleneck).
+- **Engineers + reviewers** share the worker slot pool. Reviewer types are open (code / security / data / …).
+- **Review is a milestone, not a verdict.** A reviewer delivers a log + "done"; the architect's
+  log-review decides what becomes work.
+- **Cadence is PULL** — SWITCHBOARD checks the clock; a `<type>` counter increments on every
+  `block:next:done` and is reset on dispatch. Never auto-fired.
+- **Wall → operator.** A wall parks its block `blocked` + frees the slot; `operator:decision:<block>`
+  resumes / amends / abandons it. Liveness (stall / dead worker) is the engine's side-system; it feeds a
+  single `worker:stalled` trigger into the table.
+- **Bootup & Session-End are protocols** (TRON lifecycle), not rows; SCRIPTS handle the `*` catch-all.
+
+The canon-invariant part is the **trigger grammar** (`routing.yaml`) + this model. Projects compose the
+*table* (rows, actors, skills, knobs) in `workflow.yaml`; a genuinely new *shape* of control (beyond the
+grammar) is the only thing that is a canon change here.
+
+---
+
+## 2. Inbound message tags (closed) → triggers
+
+`classify_message(text, ctx) → {tag, slots}` returns exactly one tag from this closed set (or
+`unclassified`). Each maps to a **trigger** (the FSM advances) or a **side** action (no advance) or a
+**tick**. Full map in `routing.yaml`; summary:
 
 ### Worker-origin
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `worker.done` | reports work complete | step edge `done` |
-| `worker.wall` | hit a wall needing operator (UI/journey/operator-only/external) | step edge `wall` |
-| `worker.findings` | reviewer/architect reporting findings | step edge `findings` |
-| `worker.question_peer` | technical question for a declared peer (architect) | side: observe, no transition |
-| `worker.question_tron` | question/decision directed at TRON | side: TRON answers from context, no transition |
-| `worker.blocked_dep` | blocked on another block/dependency | side: mark block `blocked` in pipeline, no transition |
-| `worker.progress` | status/heartbeat | side: none |
+| `worker.done` | block built | `block:next:done` |
+| `worker.wall` | hit a wall needing the operator | `wall:raised:<block>` |
+| `worker.review_done` | reviewer delivered its log | `review:<type>:done` |
+| `worker.question_peer` | peer consult (e.g. architect) | side: observe (no advance) |
+| `worker.question_tron` | question for TRON | side: answer from context |
+| `worker.progress` | heartbeat | side: none |
 
 ### Operator-origin (session or TG)
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `operator.decision` | answer to an open escalation | step edge `resolved` (in `escalate`) |
-| `operator.abort` | stop this block / the session | step edge `abort` |
-| `operator.bug_report` | a defect to fix | side: scope a fix block into the pipeline |
-| `operator.status_query` | asking for state | side: reply with digest |
-| `operator.workflow_change` | change a rule/knob | side: `skill-edit-self` |
-| `operator.directive` | general instruction | side: best-effort, may scope a block |
+| `operator.decision` | reply to a wall | `operator:decision:<block>` |
+| `operator.status_query` | asking for state | side: reply digest |
+| `operator.workflow_change` | change a rule/knob | side: edit_self |
+| `operator.directive` | general instruction | side: best-effort |
 
-### System (produced deterministically, not by classify)
+### System (engine-produced, not from classify)
 | Tag | Source | Maps to |
 |:--|:--|:--|
 | `sweep.tick` | cron → sweep.sh | run one bounded tick (§5) |
-| `worker.stalled` | `assess_stall` true past `silence_escalate_min` | step edge `stalled` |
-| `worker.dead` | process gone / `state.json` missing | side: purge + recover (re-dispatch same block) |
-| `gate.pass` / `gate.fail` | gate check result | step edges `pass` / `fail` |
+| `worker.stalled` / `worker.dead` | engine liveness side-system | `worker:stalled` (→ recover) |
 
 ### Reserved
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `unclassified` | classify returned out-of-enum, or invalid-output budget exhausted (§4) | **hardwired** edge → `escalate(reason=unclassified)` (canon, not composable) |
+| `unclassified` | out-of-enum, or invalid-output budget exhausted (§4) | `*` → SCRIPTS (may wall) |
 
-"Side" actions are global handlers in `run.sh` that do not advance the composed FSM; the active step is re-entered after handling.
+"Side" actions are global engine handlers that do not advance the FSM; the active step is re-entered.
 
 ---
 
 ## 3. Judgment-tool contracts
 
-Every LLM touch is one of these. Schema-in / schema-out; the model returns a tag + structured slots, never free prose to the flow. Full schemas in `contracts/schema/` references; signatures here.
+Every LLM touch is one of these. Schema-in / schema-out; the model returns a tag + structured slots,
+never free prose to the flow.
 
 | Tool | Input | Output | Called by |
 |:--|:--|:--|:--|
-| **`classify_message`** | `{text, sender:{kind:worker\|operator, id?, role?}, current_step, open_escalation?}` | `{tag ∈ enum∪unclassified, slots:{…}, confidence:0..1}` | every primitive on inbound; the runner on TG/operator messages |
-| **`triage`** | `{findings:[{id,file_line?,severity,desc}], block_ctx}` | `{verdicts:[{finding_id, agree:bool, severity}], fix_needed:bool}` | `findings-triage` |
-| **`scope_fix`** | `{finding}` | `{goal, acceptance_criteria:[…], scope_bounds:{in:[…],out:[…]}, owner_role, deps:[…]}` | `findings-triage` (per agreed finding) |
-| **`assess_wall`** | `{situation, block_ctx, project_operator_only:[…]}` | `{wall:bool, kind:backend\|ui\|operator-only\|external, rationale}` | `dispatch` when a worker message is ambiguous wall-vs-solvable |
-| **`assess_stall`** | `{activity:{last_activity_delta_s, worktree_dirty:bool, mtime_grew:bool}, transcript_tail}` | `{stalled:bool, rationale}` | `dispatch`/sweep. Deterministic pre-filter first (if any activity signal is positive → `stalled:false` without an LLM call); LLM only resolves the ambiguous "slow vs stuck" case |
+| **`classify_message`** | `{text, sender:{kind:worker\|operator, id?, role?}}` | `{tag ∈ enum∪unclassified, slots:{…}, confidence:0..1}` | the engine on any inbound worker/operator/TG message |
+| **`assess_wall`** | `{situation, block_ctx, project_operator_only:[…]}` | `{wall:bool, kind:backend\|ui\|operator-only\|external, rationale}` | when a worker message is ambiguous wall-vs-solvable |
 
-**Tiering:** `classify_message`, `scope_fix` → cheap model. `triage`, `assess_wall`, `assess_stall` (the ambiguous branch) → strong model. Wired in B3.
+**Tiering:** `classify_message` → cheap model; `assess_wall` → strong model. Wired in the engine (D2).
+
+**Not judgment tools, by design:** review verdicts (review is a milestone), findings-triage (→ the
+architect's `log-review` skill), and stall detection (→ the engine liveness side-system). These were
+LLM tools in the old model and are removed.
 
 ---
 
-## 4. Invalid-output policy (G-2)
+## 4. Invalid-output policy
 
-`run.sh` schema-validates every judgment-tool return.
+The engine schema-validates every judgment-tool return.
 
 1. **Valid** → use it.
-2. **Invalid / malformed / out-of-enum tag** → retry the same call, appending `your previous output failed validation: <error>`. Budget: `MAX_LLM_RETRIES = 2`.
-3. **Budget exhausted** → emit `unclassified` → hardwired `escalate(reason=invalid_output)`. Log the raw outputs to `logs/invalid-output-{date}.log`.
+2. **Invalid / malformed / out-of-enum tag** → retry the same call, appending the validation error.
+   Budget: `invalid_output.max_retries` (default 2), read from `routing.yaml` by the engine.
+3. **Budget exhausted** → `unclassified` → the `*` SCRIPTS catch-all, which may escalate via
+   `assess_wall`. Raw outputs logged (`logs/invalid-output-{date}.log`).
 
-TRON never guesses, never improvises a flow decision from malformed output. An out-of-enum `tag` is itself a validation failure (the enum is closed in the tool schema).
+TRON never guesses a flow decision from malformed output. An out-of-enum `tag` is itself a validation
+failure (the enum is closed in the tool schema).
 
 ---
 
-## 5. Tick model (G-3)
+## 5. Tick model
 
 Turn-based, no daemon. **One wake = one bounded tick.**
 
-- **Trigger:** cron → `sweep.sh` → `claude --resume {TRON_ID} -p "[SWEEP] tick …"` (this exact path already exists in `scripts/sweep.sh`). Operator messages and TG inbound are drained within the same tick.
+- **Trigger:** cron → `sweep.sh` → resume the TRON session with `[SWEEP] tick`. Operator/TG inbound is
+  drained in the same tick.
 - **A tick:**
-  1. **Load** `workflow-state.yaml` (the FSM cursor + counters + pipeline mirror).
-  2. **One bounded pass:** poll TG inbox; sweep active workers (liveness probe, `assess_stall`); drain inbound messages → `classify_message` → map each to a step outcome edge or a side action; advance the FSM **at most as far as the available signals allow**.
+  1. **Load** `workflow-state.yaml` (the FSM cursor, counters, pipeline mirror, worker/architect-queue state).
+  2. **One bounded pass:** poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck);
+     drain inbound → `classify_message` → trigger or side; then run **PULSE** (which calls SWITCHBOARD) to
+     fill free slots, clear ahead, wait, or end — advancing the FSM as far as the available signals allow.
   3. **Persist atomically.**
   4. **Exit.**
-- **Atomic writes:** write `workflow-state.yaml.tmp`, then `mv` over the live file (rename is atomic on one filesystem). The live file is never left half-written.
-- **Idempotency:** state is persisted only *after* the bounded pass completes, so a tick that crashes mid-LLM-call leaves the pre-tick state intact and the next wake safely re-runs the same classify/advance. World-mutating actions are state-guarded so a retried tick cannot double-fire:
-  - spawn — guarded by `active_workers` (worker already present → skip);
-  - escalate — guarded by `paused_for_operator` (already paused → skip);
+- **Atomic writes:** write `*.tmp`, then `mv` over the live file (atomic rename). Never half-written.
+- **Idempotency:** state persists only *after* the pass completes, so a crashed tick re-runs safely.
+  World-mutating actions are state-guarded:
+  - spawn — guarded by `active_workers` + the `cleared → in-progress` flip (no double-dispatch);
+  - clear-ahead enqueue — guarded by "already queued for review";
+  - escalate — guarded by block `blocked` status;
   - release/kill — guarded by worker `status`;
   - dispatch history — `dispatched.log` keyed by `block_id + attempt`.
-- A tick that has no actionable signal (worker still building) simply persists `last_sweep_at` and exits — no transition.
+- A tick with no actionable signal persists `last_sweep_at` and exits — no transition.
 
-This is the "Temporal-lite durability" claim: atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
-
----
-
-## 6. Copy scope (G-4)
-
-- **`messages.yaml` = runtime copy only.** Every line TRON emits during a *session* — to operator, worker, terminal, or Telegram — keyed by template id, with named slots. Rendered via `render(tag, slots)`.
-- **Seeder voice is separate.** The greeting / sign-off / prompts in `tron-seed.md` are seeding-time copy and do **not** draw from `messages.yaml`. The two registries never share keys.
-- **Tone authority:** the built-in TRON persona (landing-page voice — dark, dry, sardonic; no host-runtime names ever) is the canon floor and ships complete. The operator may **override individual templates** by editing `messages.yaml`; edited keys win, unedited keys keep the persona default. Persona and operator copy **coexist** — the operator extends, never has to author from empty.
+Atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
 
 ---
 
-## 7. `pipeline: host` accepted format (R-2)
+## 6. Copy scope
 
-When `pipeline: host`, TRON accepts the host doc **only** in this constrained shape:
+- **`messages.yaml` = runtime copy only.** Every line TRON emits during a *session* — operator, worker,
+  terminal, Telegram — keyed by template id, with named slots. Rendered via `render(tag, slots)`.
+- **Seeder voice is separate.** `tron-seed.md` greeting/prompts are seeding-time copy and do **not** draw
+  from `messages.yaml`. The two registries never share keys.
+- **Tone authority:** the built-in TRON persona (dark, dry, sardonic; no host-runtime names ever) is the
+  canon floor and ships complete. The operator overrides individual templates by editing `messages.yaml`;
+  edited keys win, unedited keep the persona default.
+
+---
+
+## 7. `pipeline: host` accepted format
+
+When `pipeline: host`, TRON accepts the host doc **only** in this shape:
 
 - A single GitHub-flavored Markdown table.
-- A header row whose columns map (by name or obvious equivalent) to **Order, ID, Owner, Status** (Notes optional).
-- Each `Status` cell ∈ `{todo, in-progress, blocked, review, done}` (case-insensitive).
+- A header row mapping (by name or obvious equivalent) to **Order, ID, Owner, Status** (Notes optional).
+- Each `Status` cell ∈ `{pending, cleared, in-progress, blocked, done, abandoned}` (case-insensitive).
 - One block per row.
 
-Determinism guard: TRON parses the host table **once at session start** into a **normalized internal mirror** (`workflow-state.yaml › pipeline`), reads the mirror every tick, and **writes back to the host file only on status-change events** (done / blocked / review) — never a full rewrite every tick. If the host doc deviates from this shape, the **seeder** flags it and offers: reformat (operator) or switch to `pipeline: internal`. The rails never parse free-form prose.
+Determinism guard: TRON parses the host table **once at session start** into a **normalized internal
+mirror** (`workflow-state.yaml › pipeline`), reads the mirror every tick, and **writes back to the host
+file only on status-change events** — never a full rewrite every tick. `cleared` and `abandoned` are
+TRON-managed statuses; using a host doc means TRON writes them there too. If the host doc deviates from
+this shape, the **seeder** flags it and offers: reformat (operator) or switch to `pipeline: internal`.
 
 ---
 
-## 8. Pipeline-tracking decision (R-3)
+## 8. Pipeline-tracking decision
 
-Internal `pipeline.md` **stays gitignored** (runtime state). Rationale: it mutates on every status change; tracking it would create churny commits and merge friction, and host-owned **specs** (tracked) already encode intent. **Accepted trade-off:** block-status *history* is not version-controlled. End-of-session status is captured in the session log (`logs/`). If history later matters, revisit by committing periodic snapshots — out of scope for the rebuild. A later block must not silently reverse this.
+Internal `pipeline.md` **stays gitignored** (runtime state): it mutates on every status change; tracking
+it would create churny commits, and host-owned **specs** (tracked) already encode intent. **Accepted
+trade-off:** block-status *history* is not version-controlled; end-of-session status is captured in the
+session log (`logs/`). A later block must not silently reverse this.
 
 ---
 
 ## 9. Blueprint-lint rules
 
-Runs in `skill-doctor` / `skill-validate` (B3). A malformed flow fails at **seed/validate time, not runtime**.
+Runs in `validate` / `doctor` (D3, implemented in `engine/lint.py`). A malformed instance fails at
+**seed/validate time, not runtime**. The rules are grammar-driven: the legal token set is read FROM
+`routing.yaml › grammar`, so the checks verify internal consistency rather than a hardcoded duplicate.
 
-### Canon-level (over `routing.yaml` + the tag enum)
-- **L1** Each primitive declares exactly its fixed outcome-edge set (§1); no extra, no missing.
-- **L2** Message-tag enum is closed; `unclassified` present with a hardwired `escalate` edge.
-- **L3** Total tag coverage: every message tag maps to a step-outcome mapping or a global side action — no unhandled tag.
-- **L4** Every judgment tool a primitive references has a contract (input + output schema) in `contracts/schema/`.
-- **L5** No tool output reaches the flow as free prose — every tool's output schema is tag + structured slots.
+### Canon-level (over `routing.yaml` + the engine event TABLE)
+- **L1** Grammar block complete — every required field present (forms, subjects, events, params,
+  wildcard, alternatives, terminals, control, match).
+- **L2** Inbound tag enum is closed (== the engine's known set) and `unclassified` maps to the `*` catch-all.
+- **L3** Total tag coverage: every tag action is exactly one of `{trigger, side, tick}`.
+- **L4** Every tag's `trigger` satisfies the grammar (2–3 legal segments, or `*`).
+- **L5** The judgment tools are exactly the canon two (`classify_message`, `assess_wall`), each with a
+  structured (non-prose) `out` list.
+- **L6** Invalid-output policy present: `max_retries` an int, `on_exhaustion` a grammar-valid trigger.
+- **L7** Every event-TABLE pattern satisfies the grammar.
+- **L8** Every TABLE handler resolves to a callable `Engine` method (a `None` handler = a worker-activity row).
+- **L9** Every tag `trigger` resolves to a TABLE row (no orphan classification); `<type>` never binds `next`.
 
-### Composition-level (over `workflow.yaml` against `routing.yaml` + `project.yaml`)
-- **L6** Every step's `primitive` exists in the library.
-- **L7** Every outcome edge the primitive exposes is bound to a target — no unbound edge.
-- **L8** Every target resolves to a real step id or a reserved target (`next`, `end`, `escalate`).
-- **L9** No orphan steps — every step reachable from session-start.
-- **L10** A terminal (`end`) is reachable from every step — no trap.
-- **L11** Every `role` named in a step exists in `project.yaml › agents`.
-- **L12** The `escalate` step is defined and the `unclassified` hardwired edge resolves to it.
-- **L13** Every knob reference (`reviewer_threshold`, `cadence.every_n_blocks`, `max_concurrent_engineers`, …) resolves to a declared knob.
+### Composition-level (over `workflow.yaml` against `project.yaml`)
+- **L10** `worker_count` knob is declared (value may be null → asked at runtime).
+- **L11** Every cadence `<type>` maps to a positive-int threshold.
+- **L12** Session shape valid (`persistent_architect` is a bool).
+- **L13** Project roles sane (skipped if no `project.yaml › agents`).
 
-The composition is the seed-time author-error surface — L6–L13 are what the gate most needs to catch.
+The data layer + the engine TABLE are the author-error surface; L1–L9 are what the gate most needs to catch.
 
 ---
 
-## 10. Boundary vs B2
+## 10. Boundary vs the data layer (workflow.yaml / routing.yaml / messages.yaml)
 
-This block defines **shapes**: the primitive library + edges, the closed tag enum, the judgment-tool contracts, the four file schemas, and the lint rules. **B2 authors the instances**: the embedded default composition (`workflow.yaml`), the actual `routing.yaml` edges + tag→action map, and the `messages.yaml` templates. No file content beyond schema stubs is authored here.
+This block defines **shapes**: the event-table model + grammar, the closed tag map, the judgment-tool
+contracts, the four file schemas, and the lint rules. The **data layer authors the instances**: the
+embedded default event table (`workflow.yaml`), the actual `routing.yaml` grammar + tag map, and the
+`messages.yaml` templates.
 
 ## 11. Open / carried watch-items
-- **R-1** keep `run.sh` small; if YAML/JSON/render grows fragile in bash, factor a tiny non-bash helper (B3).
-- **R-4** B2 may ship placeholder copy keyed to this tag enum so B3 can test before final copy lands.
+- **R-1** keep the bash connectors small; FSM/JSON/render fragility lives in the Python engine core.
+- **R-4** the data layer may ship placeholder copy keyed to the tag map so the engine can be tested before final copy lands.
