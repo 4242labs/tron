@@ -60,12 +60,6 @@ class State:
         """Per-type pull counter: <type> -> blocks completed since its last review."""
         return self.data.setdefault("cadence", {})
 
-    def worker(self, wid):
-        for w in self.workers:
-            if w.get("id", "").lower() == wid.lower():
-                return w
-        return None
-
     # ── idempotency guards (contracts §5) ──
     def has_active_worker_for_block(self, block_id, role=None):
         for w in self.workers:

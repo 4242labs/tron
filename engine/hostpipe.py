@@ -13,7 +13,7 @@ import re
 
 import util
 
-STATUSES = {"todo", "in-progress", "blocked", "review", "done"}
+STATUSES = {"pending", "cleared", "in-progress", "blocked", "done", "abandoned"}
 COL_ALIASES = {
     "order": "order", "seq": "order", "sequence": "order", "#": "order",
     "id": "id", "spec": "id", "block": "id",

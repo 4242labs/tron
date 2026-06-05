@@ -1,44 +1,36 @@
 # workflow-state.yaml — live FSM state (runtime; gitignored)
-# TRON's per-session memory: the FSM cursor + counters + pipeline mirror.
-# Written atomically every tick (tmp + mv). Do NOT hand-edit — TRON manages it
-# via skill-edit-self Mode B. Reconciled against live processes on session start.
-# Seeded from this template with counters at 0 and placeholders untouched.
+# TRON's per-session memory: workers, counters, cadence, the architect queue, and
+# the pipeline mirror. Written atomically every tick (tmp + mv). Do NOT hand-edit —
+# the engine manages it. Seeded from this template; the engine fills it via setdefault,
+# so missing keys are created on first run.
 
 session:
-  started_at: null          # set on cold start
-  tron_session_id: null     # set on cold start; mirrors current-id
+  started_at: null            # set at bootup; cleared at session-end
+  ended_at: null
 
-# ── FSM cursor ──
-fsm:
-  current_step: null        # the workflow.yaml step id in progress (null = idle/select)
-  current_block: null       # block ID currently dispatched (or null)
-  current_block_started_at: null
-  current_block_branch: null
+# ── FSM context (passed to judgment tools as block_ctx) ──
+fsm: {}
 
 # ── Active workers (source of truth for "what's running now") ──
-# list of {id, role, session_id, spawned_at, status, pinged_at?}
-# status in: idle | working | stalled | done-pending-release | released
+# list of {id, role, session_id, shortid, spawned_at, status, block, [rtype], [current_job]}
+# status in: spawning | working | idle (architect) | released
 active_workers: []
 
-# ── Counters ──
-counters:
-  blocks_since_review: 0     # ++ on engineer DONE; reset when reviewer dispatched
-  reviewer_findings_open: 0
-  paused_for_operator: null  # worker_id (or TRON) awaiting operator, else null
+# ── Counters (stall counts, etc.) ──
+counters: {}
+
+# ── Reviewer cadence (PULL): <type> -> completed blocks since its last review ──
+cadence: {}
+
+# ── Architect FIFO queue: pending {kind: forward|log, block, [type]} jobs ──
+architect_queue: []
 
 # ── Live config (this session) ──
 live_config:
-  max_concurrent_engineers: null   # set at session start (no default)
-  # mirrored from workflow.yaml knobs for fast sweep access:
-  reviewer_threshold: 3
-  silence_ping_min: 6
-  silence_escalate_min: 8
+  worker_count: null          # set at session start (engineers + reviewers; architect excluded)
 
-# ── Reviewer scope (blocks accumulated since last reviewer pass) ──
-reviewer_scope: []
-
-# ── Pipeline mirror (normalized; for pipeline.mode host, parsed once at start) ──
-# list of {order, id, owner, status, notes}
+# ── Pipeline mirror (normalized) ──
+# list of {order, id, owner, status, kind, [notes]}
 pipeline: []
 
 # ── Last sweep ──

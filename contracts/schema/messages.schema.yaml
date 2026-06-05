@@ -36,18 +36,15 @@ templates:
   arch.log:         {channel: worker,   slots: [type, block],               text: "<canned>"}  # architect log-review job
   release.worker:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
   heartbeat.ping:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
-  sv01.query:       {channel: worker,   slots: [worker_id, block],          text: "<canned>"}
 
   # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched: {channel: terminal, slots: [worker_id, block], text: "<canned>"}
   terminal.block_done: {channel: terminal, slots: [block],            text: "<canned>"}
   terminal.review:     {channel: terminal, slots: [count],            text: "<canned>"}
-  terminal.between:    {channel: terminal, slots: [],                 text: "<canned>"}   # generic progress filler
 
   # escalation (operator / tg channels)
   escalate.wall:        {channel: operator, slots: [worker_id, block, detail], text: "<canned>"}
-  escalate.stall:       {channel: operator, slots: [worker_id, block],         text: "<canned>"}
-  escalate.unclassified:{channel: operator, slots: [detail],                   text: "<canned>"}
+  escalate.unclassified: {channel: operator, slots: [detail],                  text: "<canned>"}
   tg.escalate:          {channel: tg,       slots: [worker_id, detail],        text: "<canned>"}
   tg.status_digest:     {channel: tg,       slots: [detail],                   text: "<canned>"}
 

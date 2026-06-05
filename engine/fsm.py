@@ -108,9 +108,26 @@ class Engine:
         last = self.st.data.setdefault("last_sweep", {})
         last["at"] = util.now_iso()
         last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
+        self._host_writeback()                          # host pipeline mode: mirror status changes back
         self.st.save()                                  # persist effects FIRST
         self._consume_inboxes(consumed)                 # then drop consumed lines (at-least-once)
         return self.ended
+
+    def _host_writeback(self):
+        """pipeline.mode host: write the normalized mirror back to the operator's doc,
+        but only when a block status actually changed (contracts §7 — never a per-tick rewrite)."""
+        pl = self.project.get("pipeline") or {}
+        if pl.get("mode") != "host" or not pl.get("path"):
+            return
+        sig = [(r.get("id"), r.get("status")) for r in self.st.pipeline]
+        if sig == self.st.data.get("_host_sig"):
+            return
+        import hostpipe
+        try:
+            hostpipe.write_back(os.path.expanduser(pl["path"]), self.st.pipeline)
+            self.st.data["_host_sig"] = sig
+        except Exception as e:
+            self.log("pipeline", f"host write-back failed: {e}")
 
     # ── trigger queue + routing ──
     def _emit(self, trigger, slots=None):
@@ -352,8 +369,9 @@ class Engine:
         for w in list(self.st.workers):
             if w.get("role") == "reviewer" and w.get("rtype") == typ:
                 self._release_worker(w)
-        self.st.architect_queue.append({"kind": "log", "type": typ, "block": block})
-        self._pump_architect()
+        if self._architect():                       # no architect -> nothing drains a log job
+            self.st.architect_queue.append({"kind": "log", "type": typ, "block": block})
+            self._pump_architect()
         self._emit("pulse")
 
     def _h_forward_review(self, m):
@@ -390,22 +408,27 @@ class Engine:
         # Park only an engineer's in-progress block; never reopen a done block a reviewer cited.
         if row and row.get("status") == "in-progress":
             self.st.set_block_status(block, "blocked")
-        self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
-                                    "detail": m.get("detail", "wall")})
+        detail = m.get("detail", "wall")
+        self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?", "detail": detail})
+        if self._tg_on():                            # an away operator gets the wall via Telegram too
+            self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
         self._emit("pulse")
 
     def _h_apply_decision(self, m):
         # operator:decision:<block> — resume | amend | abandon.
         block = m.get("block")
         decision = (m.get("decision") or "").lower()
-        if block:
-            if decision == "resume":
+        row = next((r for r in self.st.pipeline if r.get("id") == block), None)
+        cur = row.get("status") if row else None
+        if row:
+            # Guarded so a replayed decision (at-least-once) is a no-op, not a status flip.
+            if decision == "resume" and cur == "blocked":
                 self.st.set_block_status(block, "cleared")
-            elif decision == "amend":
+            elif decision == "amend" and cur == "blocked":
                 self.st.set_block_status(block, "pending")   # re-cleared by architect
-            elif decision == "abandon":
+            elif decision == "abandon" and cur not in ("done", "abandoned"):
                 self.st.set_block_status(block, "abandoned")
-        self.log("flow", f"operator:decision:{block} -> {decision}")
+        self.log("flow", f"operator:decision:{block} -> {decision} (was {cur})")
         self._emit("pulse")
 
     def _h_recover(self, m):
@@ -507,6 +530,10 @@ class Engine:
         if not isinstance(action, dict):
             self.log("flow", f"unknown tag '{tag}'")
             return
+        # The reporting worker's id rides on the message sender (report.sh), not in the
+        # classifier's slots — surface it so handlers (escalate/recover) can match by id.
+        if sender.get("id") and not slots.get("worker_id"):
+            slots = {**slots, "worker_id": sender["id"]}
         if "trigger" in action:
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
@@ -526,6 +553,9 @@ class Engine:
             self.log("side", f"{handler}: {slots}")
         # observe / none: deliberately nothing.
 
+    def _tg_on(self):
+        return str((self.project.get("notifications") or {}).get("telegram") or "").lower() == "on"
+
     def _digest(self):
         running = [w["id"] for w in self._pool() if w.get("status") == "working"]
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
@@ -537,25 +567,34 @@ class Engine:
             return
         idx = jobs.index()
         last = (self.st.data.get("last_sweep") or {}).get("at")
+        ping = int(self.knobs.get("silence_ping_min", 6))
         esc = int(self.knobs.get("silence_escalate_min", 8))
         for w in list(self.st.workers):
-            if w.get("status") in ("released", "spawning"):
+            if w.get("status") == "released":
                 continue
+            sess = w.get("session_id")
+            # A worker is live only with a confirmed, alive session. An empty session is a
+            # stale 'spawning' reservation (crashed tick / failed spawn) — treat it as dead.
+            alive = bool(sess) and sess != "dry" and jobs.is_alive(w.get("id"), idx)
             if w.get("role") == "architect":
-                # the architect is persistent: if it died, restore it (not a table recover).
-                if w.get("session_id") and not jobs.is_alive(w.get("id"), idx):
+                if not alive:                    # persistent: died or never confirmed -> restore
                     self.st.workers.remove(w)
                     self._spawn_architect()
                 continue
-            if not jobs.is_alive(w.get("id"), idx):
+            if not alive:
                 self._emit("worker:stalled", {"worker_id": w.get("id")})
                 continue
             sig = jobs.activity_signals(w.get("id"), since_iso=last, idx=idx)
             if jobs.has_positive_activity(sig):
                 continue
             delta = sig.get("last_activity_delta_s")
-            if delta is not None and delta > esc * 60:
+            if delta is None:
+                continue
+            if delta > esc * 60:
                 self._emit("worker:stalled", {"worker_id": w.get("id")})
+            elif delta > ping * 60 and not w.get("pinged_at"):
+                w["pinged_at"] = util.now_iso()       # one nudge before escalating (silence_ping_min)
+                self.emit("heartbeat.ping", {"worker_id": w.get("id")}, worker_session=sess)
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):
@@ -643,6 +682,9 @@ class Engine:
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
         self.emit("session.end", {"count": done})
         self.ended = True
+        sess = self.st.data.setdefault("session", {})
+        sess["ended_at"] = util.now_iso()
+        sess["started_at"] = None            # so the next `tron start` bootstraps fresh, not reconnect
         if os.path.exists(self.ctx.current_id):
             os.remove(self.ctx.current_id)
 
