@@ -2,6 +2,10 @@
 
 A deterministic supervisor that builds software from specs — one agent you talk to; it runs the fleet.
 
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Contributors](https://img.shields.io/github/contributors/42piratas/tron)](https://github.com/42piratas/tron/graphs/contributors)
+[![Wiki](https://img.shields.io/badge/docs-wiki-success.svg)](https://github.com/42piratas/tron/wiki)
+
 ---
 
 ## What this is
@@ -18,7 +22,6 @@ before it ever runs.
 ## What this isn't
 
 - A production runtime for unattended app traffic.
-- A customer-facing surface or a SaaS — TRON is yours; it runs on your machine.
 - A multi-machine fleet manager.
 
 ---
@@ -167,23 +170,24 @@ To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No othe
 
 ---
 
-## Website
+## Contributing
 
-The public site lives in its own repo — `42piratas/tron-www` (private) — and is served at
-[tron.42labs.io](https://tron.42labs.io).
+Pull requests welcome. TRON is a canon repo — one source of truth — so contributions extend the canon
+itself: a new worker skill or reviewer lens, a sharper protocol, an engine or lint improvement, better
+docs. Per-project or machine-specific assumptions live in seeded instances, never here. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the clone → branch → PR → CI → merge flow.
 
----
+Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/issues/new/choose).
+
+## Contributors
+
+<a href="https://github.com/42piratas/tron/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=42piratas/tron&max=24" alt="TRON contributors" />
+</a>
 
 ## License
 
 TRON is dual-licensed:
 
 - **Open source** — [AGPL-3.0](LICENSE).
-- **Commercial** — to use TRON without the AGPL-3.0's obligations (e.g. closed-source or SaaS),
-  contact **ahoy@42labs.io**.
-
-## Contributing
-
-This canon repo is the single source of truth; per-project customization happens in seeded instances,
-never here. PRs that add project- or machine-specific assumptions are rejected. Open an issue first
-for non-trivial changes.
+- **Commercial** — contact **ahoy@42labs.io**.
