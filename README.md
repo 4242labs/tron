@@ -1,10 +1,16 @@
-# TRON
+<p align="center">
+  <img src=".github/tron-logo.svg" alt="TRON" width="340" />
+</p>
 
-A deterministic supervisor that builds software from specs — one agent you talk to; it runs the fleet.
+<p align="center">
+  A deterministic supervisor that builds software from specs — one agent you talk to; it runs the fleet.
+</p>
 
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Contributors](https://img.shields.io/github/contributors/42piratas/tron)](https://github.com/42piratas/tron/graphs/contributors)
-[![Wiki](https://img.shields.io/badge/docs-wiki-success.svg)](https://github.com/42piratas/tron/wiki)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
+  <a href="https://github.com/42piratas/tron/graphs/contributors"><img src="https://img.shields.io/github/contributors/42piratas/tron" alt="Contributors" /></a>
+  <a href="https://github.com/42piratas/tron/wiki"><img src="https://img.shields.io/badge/docs-wiki-success.svg" alt="Wiki" /></a>
+</p>
 
 ---
 
