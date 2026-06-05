@@ -1,5 +1,5 @@
 # workflow-state.yaml — live FSM state (runtime; gitignored)
-# TRON's per-session memory: the FSM cursor + counters + ledger mirror.
+# TRON's per-session memory: the FSM cursor + counters + pipeline mirror.
 # Written atomically every tick (tmp + mv). Do NOT hand-edit — TRON manages it
 # via skill-edit-self Mode B. Reconciled against live processes on session start.
 # Seeded from this template with counters at 0 and placeholders untouched.
@@ -37,9 +37,9 @@ live_config:
 # ── Reviewer scope (blocks accumulated since last reviewer pass) ──
 reviewer_scope: []
 
-# ── Ledger mirror (normalized; for pipeline.mode host, parsed once at start) ──
+# ── Pipeline mirror (normalized; for pipeline.mode host, parsed once at start) ──
 # list of {order, id, owner, status, notes}
-ledger: []
+pipeline: []
 
 # ── Last sweep ──
 last_sweep:

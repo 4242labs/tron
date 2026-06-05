@@ -16,7 +16,7 @@ agents:
     file: meta/agents/reviewer.md
 
 pipeline:
-  mode: internal              # host had none -> ledger at <agents>/tron/pipeline.md
+  mode: internal              # host had none -> pipeline at <agents>/tron/pipeline.md
   # mode: host                # -> host keeps its own doc
   # path: PIPELINE.md
 

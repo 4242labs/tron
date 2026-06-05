@@ -30,7 +30,7 @@ After every engineer session-end, before dispatching the next block, TRON sends 
 
 ### R6 — Fresh engineer per block
 
-Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Blocks are drawn from the pipeline ledger in `Order`, gated by each spec's `Dependencies`; worker IDs follow the project's pattern from `project.md`.
+Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Blocks are drawn from the pipeline in `Order`, gated by each spec's `Dependencies`; worker IDs follow the project's pattern from `project.md`.
 
 ### R7 — Workers never self-terminate
 

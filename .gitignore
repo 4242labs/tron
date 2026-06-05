@@ -55,6 +55,13 @@ logs/backups/
 meta/smoke-test-reports/artifacts/*.log
 
 # =============================================================================
+# Canon-repo dev artifacts (runtime instance state is the seeder's gitignore,
+# in <agents>/tron/ — never here; see contracts §8)
+# =============================================================================
+.sandbox/
+/prototype/
+
+# =============================================================================
 # OS
 # =============================================================================
 .DS_Store

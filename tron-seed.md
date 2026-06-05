@@ -52,7 +52,7 @@ Everything else TRON brings (canon, skills, scripts, state) or detects (branch, 
   messages.yaml                  # canon, copied verbatim
   skills/  scripts/              # canon, copied (scripts chmod +x)
   workflow-state.yaml            # runtime FSM state (gitignored)
-  pipeline.md                    # internal ledger, if host has none (gitignored)
+  pipeline.md                    # internal pipeline, if host has none (gitignored)
   state.md current-id dispatched.log tg-inbox.jsonl .tg-offset .env logs/   # runtime (gitignored)
   seed-trace.md  .gitignore
 ```
@@ -122,7 +122,7 @@ workflow-state.yaml
 pipeline.md
 ```
 
-(`pipeline.md` line only if the ledger is internal — see Step 5.)
+(`pipeline.md` line only if the pipeline is internal — see Step 5.)
 
 With skills now in place, **apply the Step 1 knob/toggle changes to `workflow.yaml` via `skill-edit-self`** (this also exercises the skill on first use). If none were requested, the canon default stands.
 
@@ -131,14 +131,14 @@ With skills now in place, **apply the Step 1 knob/toggle changes to `workflow.ya
 - **Agents** (against the composition): enumerate `<role>.md` in `<agents>`. If `workflow.yaml` names a role with no file: stop. *"Composition keeps a reviewer step, but there's no `reviewer.md`. Add the agent or drop the step?"* Never create agent files. Record the role→file map for `project.yaml`.
 - **Specs** (against the contract): explain it (`spec.example.md` — ID, goal, acceptance criteria, scope, dependencies, owner; no status). Read the specs, check compliance, ask the operator to fill gaps. Never rewrite host specs.
 
-## Step 5 — Pipeline (status ledger)
+## Step 5 — Pipeline (pipeline)
 
-See `pipeline.example.md`. First decide the branch: detect a likely status/pipeline doc, or ask — *"Do you already track block status in a doc, or should I keep the ledger myself?"*
+See `pipeline.example.md`. First decide the branch: detect a likely status/pipeline doc, or ask — *"Do you already track block status in a doc, or should I keep the pipeline myself?"*
 
-- **Host keeps a pipeline doc:** ask its path, validate it meets the accepted format (a single MD table with Order, ID, Owner, Status ∈ {todo,in-progress,blocked,review,done}; notes optional), fill gaps, use it as the live ledger → `pipeline.mode: host` + `pipeline.path`. Drop the `pipeline.md` line from `.gitignore`. (TRON keeps a normalized mirror and writes back only on status changes — never a per-tick rewrite.)
+- **Host keeps a pipeline doc:** ask its path, validate it meets the accepted format (a single MD table with Order, ID, Owner, Status ∈ {todo,in-progress,blocked,review,done}; notes optional), fill gaps, use it as the live pipeline → `pipeline.mode: host` + `pipeline.path`. Drop the `pipeline.md` line from `.gitignore`. (TRON keeps a normalized mirror and writes back only on status changes — never a per-tick rewrite.)
 - **Host has none:** interview the operator — per spec: order, owner, current status. Captures what's already done in a mid-project repo. Write `<agents>/tron/pipeline.md` from `templates/pipeline.md` → `pipeline.mode: internal`.
 
-In sessions, TRON's ledger is authoritative; spec dependencies are hard gates, pipeline order is preference.
+In sessions, TRON's pipeline is authoritative; spec dependencies are hard gates, pipeline order is preference.
 
 ## Step 6 — Write project.yaml
 
@@ -158,7 +158,7 @@ Effective heartbeat = `telegram == on` OR `cron == on`. If on: run `bash <agents
 - Both pointers resolve (`<specs>` readable; `<agents>` has ≥1 usable role).
 - `workflow.yaml` references only roles that exist.
 - Specs meet the contract (or gaps explicitly accepted).
-- Pipeline ledger present and valid.
+- Pipeline present and valid.
 - All instance files in place.
 - **Blueprint-lint passes** — run `skill-validate` (which runs the blueprint-lint over `routing.yaml` + this project's `workflow.yaml`): every step's exit edges land, no orphan steps, a terminal is reachable, every named role exists, every knob reference resolves. A malformed composition fails here, not at runtime.
 

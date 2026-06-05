@@ -68,7 +68,7 @@ steps:
   - id: triage
     primitive: findings-triage
     edges:
-      fixes: dispatch_engineer      # insert fix blocks into the ledger, dispatch a fresh engineer
+      fixes: dispatch_engineer      # insert fix blocks into the pipeline, dispatch a fresh engineer
       none:  next                   # no agreed fixes -> next block
 
   # R3 / unclassified — operator escalation. `unclassified` hardwires here (L12).

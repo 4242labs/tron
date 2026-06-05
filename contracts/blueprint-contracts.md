@@ -3,7 +3,7 @@
 **Status:** canon · **Block:** B0 (Phase 0, Foundations) · **Date:** 2026-06-04
 **Implements:** `42agents/super-m/plans/tron-adr-001-deterministic-rebuild.md`
 
-This is the authoritative contract set the rest of TRON is built against. It is **design only** — no executable engine, no real copy. It locks: the step-primitive library, the closed situation-tag enum, the judgment-tool contracts, the invalid-output policy, the tick model, copy scope, the `pipeline: host` accepted format, the ledger-tracking decision, and the blueprint-lint rules.
+This is the authoritative contract set the rest of TRON is built against. It is **design only** — no executable engine, no real copy. It locks: the step-primitive library, the closed situation-tag enum, the judgment-tool contracts, the invalid-output policy, the tick model, copy scope, the `pipeline: host` accepted format, the pipeline-tracking decision, and the blueprint-lint rules.
 
 Schema stubs live in `contracts/schema/` (`project`, `workflow`, `routing`, `messages`).
 
@@ -48,7 +48,7 @@ Each primitive declares: its parameters, the judgment tool(s) it may call, and a
 Notes grounded in v1 (`tron-scripts.md`):
 - `dispatch(engineer)` = "Spawn an engineer for a block"; `done` ← `worker.done`; `wall` ← `worker.wall`; `stalled` ← `assess_stall` past `silence_escalate_min`.
 - `review(architect)` with no cadence = the **R5** post-block architect review; `review(reviewer)` with `cadence: every_n_blocks: reviewer_threshold` = the **R4** periodic reviewer.
-- `findings-triage` is where the architect's judgment turns reviewer findings into fix blocks (R4→R6 path): `fixes` inserts fresh blocks into the ledger and loops to `dispatch`; `none` advances.
+- `findings-triage` is where the architect's judgment turns reviewer findings into fix blocks (R4→R6 path): `fixes` inserts fresh blocks into the pipeline and loops to `dispatch`; `none` advances.
 - `escalate` covers **R3** (wall → operator) and `WORKER_UNRESPONSIVE` (stall). `resolved` resumes per the operator's `operator.decision`; `abort` ends the block/session per `operator.abort`.
 
 **Persistent architect (R1)** is not a composed step — it is a session-lifecycle action `run.sh` performs at session start (`dispatch(architect)` once, stays alive in BG until session-end). The composition's `dispatch` steps are per-block workers.
@@ -69,7 +69,7 @@ Notes grounded in v1 (`tron-scripts.md`):
 | `worker.findings` | reviewer/architect reporting findings | step edge `findings` |
 | `worker.question_peer` | technical question for a declared peer (architect) | side: observe, no transition |
 | `worker.question_tron` | question/decision directed at TRON | side: TRON answers from context, no transition |
-| `worker.blocked_dep` | blocked on another block/dependency | side: mark block `blocked` in ledger, no transition |
+| `worker.blocked_dep` | blocked on another block/dependency | side: mark block `blocked` in pipeline, no transition |
 | `worker.progress` | status/heartbeat | side: none |
 
 ### Operator-origin (session or TG)
@@ -77,7 +77,7 @@ Notes grounded in v1 (`tron-scripts.md`):
 |:--|:--|:--|
 | `operator.decision` | answer to an open escalation | step edge `resolved` (in `escalate`) |
 | `operator.abort` | stop this block / the session | step edge `abort` |
-| `operator.bug_report` | a defect to fix | side: scope a fix block into the ledger |
+| `operator.bug_report` | a defect to fix | side: scope a fix block into the pipeline |
 | `operator.status_query` | asking for state | side: reply with digest |
 | `operator.workflow_change` | change a rule/knob | side: `skill-edit-self` |
 | `operator.directive` | general instruction | side: best-effort, may scope a block |
@@ -133,7 +133,7 @@ Turn-based, no daemon. **One wake = one bounded tick.**
 
 - **Trigger:** cron → `sweep.sh` → `claude --resume {TRON_ID} -p "[SWEEP] tick …"` (this exact path already exists in `scripts/sweep.sh`). Operator messages and TG inbound are drained within the same tick.
 - **A tick:**
-  1. **Load** `workflow-state.yaml` (the FSM cursor + counters + ledger mirror).
+  1. **Load** `workflow-state.yaml` (the FSM cursor + counters + pipeline mirror).
   2. **One bounded pass:** poll TG inbox; sweep active workers (liveness probe, `assess_stall`); drain inbound messages → `classify_message` → map each to a step outcome edge or a side action; advance the FSM **at most as far as the available signals allow**.
   3. **Persist atomically.**
   4. **Exit.**
@@ -166,11 +166,11 @@ When `pipeline: host`, TRON accepts the host doc **only** in this constrained sh
 - Each `Status` cell ∈ `{todo, in-progress, blocked, review, done}` (case-insensitive).
 - One block per row.
 
-Determinism guard: TRON parses the host table **once at session start** into a **normalized internal mirror** (`workflow-state.yaml › ledger`), reads the mirror every tick, and **writes back to the host file only on status-change events** (done / blocked / review) — never a full rewrite every tick. If the host doc deviates from this shape, the **seeder** flags it and offers: reformat (operator) or switch to `pipeline: internal`. The rails never parse free-form prose.
+Determinism guard: TRON parses the host table **once at session start** into a **normalized internal mirror** (`workflow-state.yaml › pipeline`), reads the mirror every tick, and **writes back to the host file only on status-change events** (done / blocked / review) — never a full rewrite every tick. If the host doc deviates from this shape, the **seeder** flags it and offers: reformat (operator) or switch to `pipeline: internal`. The rails never parse free-form prose.
 
 ---
 
-## 8. Ledger-tracking decision (R-3)
+## 8. Pipeline-tracking decision (R-3)
 
 Internal `pipeline.md` **stays gitignored** (runtime state). Rationale: it mutates on every status change; tracking it would create churny commits and merge friction, and host-owned **specs** (tracked) already encode intent. **Accepted trade-off:** block-status *history* is not version-controlled. End-of-session status is captured in the session log (`logs/`). If history later matters, revisit by committing periodic snapshots — out of scope for the rebuild. A later block must not silently reverse this.
 

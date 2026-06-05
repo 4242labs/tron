@@ -17,11 +17,11 @@ agents:                     # REQUIRED, >=1 entry
   - role: <name>            # e.g. engineer | architect | reviewer | <custom>
     file: <path>            # e.g. meta/agents/engineer.md
 
-# ── Pipeline ledger mode ────────────────────────────────────────────
+# ── Pipeline mode ────────────────────────────────────────────
 pipeline:
   mode: host | internal     # REQUIRED
   path: <path>              # REQUIRED iff mode == host (the host doc; must meet contracts §7)
-  # mode: internal -> ledger lives at <agents>/tron/pipeline.md (gitignored, see contracts §8)
+  # mode: internal -> pipeline lives at <agents>/tron/pipeline.md (gitignored, see contracts §8)
 
 # ── Detected repo facts (auto; only matter to workflows that use them) ──
 repo:                       # OPTIONAL block; present when a git workflow is used
