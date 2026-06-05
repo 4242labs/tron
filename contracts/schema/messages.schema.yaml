@@ -5,7 +5,7 @@
 # Seeder voice (tron-seed.md) is SEPARATE and never shares keys (contracts §6).
 #
 # RULES enforced by review/lint:
-# - Tone = landing-page persona (dark, dry, sardonic). No host-runtime names, ever.
+# - Tone = the TRON persona (dark, dry, sardonic). No host-runtime names, ever.
 # - Every routing action that emits text references a template id that exists here.
 # - Placeholder copy keyed to the tag vocabulary is acceptable for B3 testing (R-4).
 
@@ -13,6 +13,7 @@
 slots:
   worker_id: <str>      # e.g. ENG-06-19   (NEVER a host-runtime name)
   role: <str>
+  type: <str>           # reviewer lens: code | security | data | …
   block: <str>
   branch: <str>
   pr: <str>
@@ -31,11 +32,13 @@ templates:
   spawn.engineer:   {channel: worker,   slots: [worker_id, block, branch], text: "<canned>"}
   spawn.architect:  {channel: worker,   slots: [],                          text: "<canned>"}
   spawn.reviewer:   {channel: worker,   slots: [worker_id, count],          text: "<canned>"}
+  arch.forward:     {channel: worker,   slots: [block],                     text: "<canned>"}  # architect forward-review job
+  arch.log:         {channel: worker,   slots: [type, block],               text: "<canned>"}  # architect log-review job
   release.worker:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
   heartbeat.ping:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
   sv01.query:       {channel: worker,   slots: [worker_id, block],          text: "<canned>"}
 
-  # between-task / terminal feedback (terminal channel; seeded from landing-page)
+  # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched: {channel: terminal, slots: [worker_id, block], text: "<canned>"}
   terminal.block_done: {channel: terminal, slots: [block],            text: "<canned>"}
   terminal.review:     {channel: terminal, slots: [count],            text: "<canned>"}

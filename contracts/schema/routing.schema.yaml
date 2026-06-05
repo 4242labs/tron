@@ -1,76 +1,45 @@
-# routing.yaml — schema (B0)
-# CANON. The step-primitive library (edges + judgment tool per primitive) and
-# the message-tag -> action map. Ships with TRON, copied verbatim at seed.
-# The seeder NEVER writes this. B2 authors the instance from this shape.
-# Validated by blueprint-lint canon-level rules (contracts §9, L1–L5).
+# routing.yaml — schema (B0 / D1). CANON shape.
+# routing.yaml carries the TRIGGER GRAMMAR (closed vocabulary) + the INBOUND
+# message-tag -> trigger map. The behaviour table lives in workflow.yaml; the old
+# primitive library is gone (the table states every edge directly).
+# Ships with TRON, copied verbatim at seed. The seeder NEVER writes this.
+# Validated by blueprint-lint canon-level rules (grammar + closed-enum + coverage).
 
-# ── Primitive library ──────────────────────────────────────────────
-# Each primitive declares its FIXED outcome-edge set and which judgment
-# tool(s) it may call. The composition (workflow.yaml) binds the edges.
-primitives:
-  dispatch:
-    params: [role, concurrency?]
-    tools:  [classify_message, assess_stall]
-    edges:  [done, wall, stalled]      # FIXED — lint L1
-  review:
-    params: [role, cadence?]
-    tools:  [classify_message]
-    edges:  [clean, findings]
-  gate:
-    params: [kind]
-    tools:  []                         # deterministic; classify only if a kind needs it
-    edges:  [pass, fail]
-  escalate:
-    params: [reason]
-    tools:  [classify_message]
-    edges:  [resolved, abort]
-  findings-triage:
-    params: []
-    tools:  [triage, scope_fix]
-    edges:  [fixes, none]
+# ── Trigger grammar (closed) ───────────────────────────────────────
+grammar:                       # REQUIRED
+  notation: <str>              # human note on the token format
+  forms: [<form>, ...]         # REQUIRED, >=1. allowed trigger shapes
+  subjects: [<name>, ...]      # REQUIRED. legal leading segment
+  events:   [<name>, ...]      # REQUIRED. legal event/qualifier segment
+  params:                      # REQUIRED. placeholder tokens and their meaning
+    "<type>":  <str>
+    "<block>": <str>
+  reserved:                    # OPTIONAL. literal segments that never bind a param
+    <literal>: <str>
+  wildcard: <str>              # REQUIRED. the fallback token (e.g. "*")
+  alternatives: <str>          # REQUIRED. in-cell alternation token (e.g. "|")
+  terminals: [<token>, ...]    # REQUIRED. non-trigger endpoints (e.g. end, "-")
+  control: <token>             # REQUIRED. dispatch-loop signal; NOT a table-listener trigger
+  match: <str>                 # REQUIRED. resolution rule (e.g. most-specific-wins)
 
-# ── Message-tag enum (closed) + action map ─────────────────────────
-# Every tag classify_message can return maps to exactly one action:
-#   edge:<name>   -> the active step's outcome edge
-#   side:<handler>-> a global handler; FSM does not advance, step re-entered
-#   tick          -> run one bounded tick
-#   hardwired:escalate -> canon, not composable
-# Total coverage required (lint L3). Enum is closed (lint L2).
-tags:
-  # worker-origin
-  worker.done:           edge:done
-  worker.wall:           edge:wall
-  worker.findings:       edge:findings
-  worker.question_peer:  side:observe
-  worker.question_tron:  side:answer_from_context
-  worker.blocked_dep:    side:mark_blocked
-  worker.progress:       side:none
-  # operator-origin
-  operator.decision:     edge:resolved
-  operator.abort:        edge:abort
-  operator.bug_report:   side:scope_fix_block
-  operator.status_query: side:reply_digest
-  operator.workflow_change: side:edit_self
-  operator.directive:    side:best_effort
-  # system (produced deterministically, not by classify)
-  sweep.tick:            tick
-  worker.stalled:        edge:stalled
-  worker.dead:           side:purge_recover
-  gate.pass:             edge:pass
-  gate.fail:             edge:fail
-  # reserved
-  unclassified:          hardwired:escalate   # reason=unclassified | invalid_output
+# ── Inbound tag map (closed enum -> action) ────────────────────────
+# Every tag classify_message can return maps to EXACTLY ONE of:
+#   { trigger: <t> }  -> emit a workflow trigger (must satisfy grammar)
+#   { side: <h> }     -> a global handler; FSM does not advance
+#   { tick: true }    -> run one bounded tick
+# Enum is closed; coverage is total (blueprint-lint).
+tags:                          # REQUIRED, map of <tag> -> action
+  <tag>: { trigger: <t> } | { side: <handler> } | { tick: true }
 
-# ── Invalid-output policy (contracts §4) ───────────────────────────
-invalid_output:
-  max_retries: 2
-  on_exhaustion: unclassified   # -> hardwired escalate
+# ── Invalid-output policy (a judgment tool that won't validate) ─────
+invalid_output:                # REQUIRED
+  max_retries: <int>           # bounded retries before giving up
+  on_exhaustion: <trigger>     # what fires when retries are spent (e.g. escalate via wall:raised:<block>)
 
-# ── Judgment-tool reference (contracts defined in §3; schemas drive validation) ──
-tools:
-  classify_message: {in: [text, sender, current_step, open_escalation?], out: [tag, slots, confidence]}
-  triage:           {in: [findings, block_ctx], out: [verdicts, fix_needed]}
-  scope_fix:        {in: [finding], out: [goal, acceptance_criteria, scope_bounds, owner_role, deps]}
-  assess_wall:      {in: [situation, block_ctx, project_operator_only], out: [wall, kind, rationale]}
-  assess_stall:     {in: [activity, transcript_tail], out: [stalled, rationale]}
-  # tiering: classify_message, scope_fix -> cheap; triage, assess_wall, assess_stall -> strong
+# ── Judgment tools (the only LLM calls; schema-in / schema-out) ────
+# Output is always a tag + structured slots, never free prose to the flow.
+tools:                         # REQUIRED, map of <tool> -> { in: [...], out: [...] }
+  <tool>: { in: [<field>, ...], out: [<field>, ...] }
+  # canon set: classify_message (cheap), assess_wall (strong).
+  # NOT tools by design: review verdicts (milestone), findings-triage (architect skill),
+  # stall detection (engine liveness side-system).

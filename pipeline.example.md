@@ -19,7 +19,7 @@ Each row/entry must carry:
 | **ID** | The spec ID this block builds. Joins pipeline ↔ spec. |
 | **Order** | Intended sequence (the operator's plan). A preference, not a hard gate — spec **dependencies** are the hard gates. |
 | **Owner** | Worker role that builds it (default from the spec). |
-| **Status** | One of: `todo`, `in-progress`, `blocked`, `review`, `done`. |
+| **Status** | One of: `pending`, `cleared`, `in-progress`, `blocked`, `done`, `abandoned`. (`pending` = needs architect clearing · `cleared` = ready to dispatch, the only dispatchable status · `blocked` = walled, awaiting an operator decision · `abandoned` = operator-dropped.) |
 | **Notes** | Optional — free text (why blocked, links, decisions). |
 
 When validating a host's existing pipeline doc, TRON checks these fields are present (by name or obvious equivalent) and asks the operator to fill any gap. It does not force the operator to reformat.
@@ -33,8 +33,9 @@ When validating a host's existing pipeline doc, TRON checks these fields are pre
 |:------|:---------|:----------|:------------|:--------------------------|
 | 1     | AUTH-01  | engineer  | done        |                           |
 | 2     | AUTH-02  | engineer  | in-progress |                           |
-| 3     | AUTH-03  | engineer  | blocked     | waits on AUTH-02          |
-| 4     | UI-01    | engineer  | todo        | operator-only DNS step    |
+| 3     | AUTH-03  | engineer  | cleared     | architect-cleared, ready  |
+| 4     | AUTH-04  | engineer  | blocked     | walled, awaiting operator |
+| 5     | UI-01    | engineer  | pending     | not yet cleared           |
 ```
 
 ---

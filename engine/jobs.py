@@ -88,9 +88,10 @@ def timeline_tail(worker_id, n=20, idx=None):
 
 
 def activity_signals(worker_id, worktree=None, since_iso=None, idx=None):
-    """The deterministic pre-filter inputs for assess_stall (contracts §3).
+    """Liveness signals for the engine's deterministic stall sweep (contracts §5).
 
-    Any positive signal => the worker is alive; the LLM is never asked.
+    Any positive signal => the worker is alive. Stall detection is engine-side and
+    never asks the LLM (the old assess_stall tool was removed).
     """
     rec = find(worker_id, idx) or {}
     updated = _parse_iso(rec.get("updated_at"))

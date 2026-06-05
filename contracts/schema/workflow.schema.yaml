@@ -1,60 +1,34 @@
-# workflow.yaml — schema (B0)
-# The per-project COMPOSITION: ordered steps (instances of canon primitives)
-# + roles/checks + knobs. Written by the seeder (B1) from the R1–R8 walk.
-# Lives at <agents>/tron/workflow.yaml. Tracked + PR'd. Re-read every session start.
-# Validated against routing.yaml + project.yaml by blueprint-lint (contracts §9, L6–L13).
+# workflow.yaml — schema (B0 / event-table model)
+# The per-project KNOBS. TRON's behaviour is the fixed event table (PULSE +
+# SWITCHBOARD, encoded in the engine + the workflow CSV) and is NOT composed
+# per project — there are no `steps`/`primitives` here. The seeder (B1) writes
+# only the knobs below. Lives at <agents>/tron/workflow.yaml. Tracked + PR'd.
+# Re-read every session start. Validated by blueprint-lint (contracts §9, L10–L13).
 #
-# The seeder writes THIS. It never writes routing.yaml (canon primitives).
+# The seeder writes THIS. It never writes routing.yaml or the event table (canon).
 
-# ── Knobs (the per-project tunables; referenced by steps via name) ──
-knobs:
-  reviewer_threshold: 3          # REQUIRED if a review step uses cadence.every_n_blocks
-  max_concurrent_engineers: <n>  # REQUIRED. Per-session cap; hard ceiling.
-  silence_ping_min: 6            # multiple of cron cadence
-  silence_escalate_min: 8        # multiple of cron cadence; > silence_ping_min
-  git: on | off                  # whether the workflow commits (drives R8 + gate(ci) availability)
+# ── Knobs (the per-project tunables the engine reads by name) ──
+knobs:                             # REQUIRED
+  worker_count: <n>                # REQUIRED key; value may be null -> asked at every session start.
+                                   # The worker pool (engineers + reviewers); architect EXCLUDED.
+  architect_count: 1               # persistent architect queue drainers (throughput knob)
+  git: on | off                    # whether the workflow commits (R8)
+  silence_ping_min: 6              # worker silent this long (min) -> heartbeat ping; multiple of cron cadence
+  silence_escalate_min: 8          # silent past this -> engine emits worker:stalled; > silence_ping_min
+
+# ── Reviewer cadence (PULL) — <type> -> blocks between reviews ──
+cadence:                           # REQUIRED (may be empty {}). Types are open.
+  <type>: <n>                      # e.g. code: 3  — a <type> reviewer every n completed blocks (n>0)
 
 # ── Peer-consult pairs (R2; canon ships none — seeder sets per project) ──
-peer_consults:                   # OPTIONAL list; empty by default
-  - worker: <role>               # e.g. engineer
-    may_consult: <role>          # e.g. architect
-    for: <str>                   # e.g. "technical/design questions"
+peer_consults:                     # OPTIONAL list; empty by default
+  - worker: <role>                 # e.g. engineer
+    may_consult: <role>            # e.g. architect
+    for: <str>                     # e.g. "technical/design questions"
 
-# ── Session-lifecycle (not composed steps) ─────────────────────────
-session:
+# ── Session lifecycle ──
+session:                           # REQUIRED
   persistent_architect: true | false   # R1: spawn one architect at start, alive until session-end
 
-# ── The composition: ordered steps ─────────────────────────────────
-# entry: the runner starts here at SELECT_BLOCK->first step. Each step is one
-# primitive instance. Every outcome edge the primitive exposes (routing.yaml)
-# MUST be bound here (lint L7). Targets: a step `id`, or reserved `next` | `end` | `escalate`.
-entry: <step-id>                 # REQUIRED
-steps:                           # REQUIRED, >=1
-  - id: <step-id>                # REQUIRED, unique
-    primitive: dispatch | review | gate | escalate | findings-triage  # REQUIRED (∈ routing.yaml)
-    # ── primitive-specific params ──
-    role: <role>                 # dispatch/review: ∈ project.yaml agents
-    kind: <str>                  # gate: ci | lint | <custom>
-    cadence:                     # review (OPTIONAL): omit => runs once on triggering block
-      every_n_blocks: <knob>     # e.g. reviewer_threshold  -> periodic reviewer (R4)
-    reason: <slot>               # escalate: which canned reason
-    # ── edge bindings (must cover the primitive's exposed edges exactly) ──
-    # KEY IS `edges:` (NOT `on:`) — bare `on` coerces to boolean true under
-    # YAML 1.1 parsers (PyYAML, yaml.v2). `edges:` sidesteps that footgun.
-    edges:
-      done:     <target>         # dispatch
-      wall:     <target>
-      stalled:  <target>
-      clean:    <target>         # review
-      findings: <target>
-      pass:     <target>         # gate
-      fail:     <target>
-      resolved: <target>         # escalate
-      abort:    <target>
-      fixes:    <target>         # findings-triage
-      none:     <target>
-
-# ── Embedded default composition is authored in B2, not here. ──
-# This file is the SHAPE. B2 ships the default instance that maps the
-# v1 workflow (R1 persistent architect, R5 per-block arch review,
-# R4 periodic reviewer -> findings-triage -> fix blocks, R3 wall->escalate).
+# ── Embedded default is authored in workflow.yaml (B2), not here. ──
+# This file is the SHAPE; the canon default instance ships in workflow.yaml.

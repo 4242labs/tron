@@ -1,96 +1,97 @@
 # workflow.md — Example (embedded default)
 
-The orchestration rules for this project. TRON ships with this **embedded default workflow already in place** — it works out of the box. During seeding TRON explains it and asks whether it fits; the operator changes any rule or knob in natural language and TRON applies the edit via `skill-edit-self`. TRON re-reads on session start and updates `workflow-state.md` accordingly.
+The per-project **knobs** for this project. TRON ships with this default already in place — it works
+out of the box. During seeding TRON explains it and asks whether it fits; the operator changes any
+knob in natural language and TRON applies the edit (it owns `workflow.yaml`). TRON re-reads on
+session start.
 
-This file is the source of truth for rules + tunable knobs. The live counters TRON tracks (current block, blocks-since-review, etc.) live in `workflow-state.md`.
-
----
-
-## Rules
-
-### R1 — Architect runs persistent in background
-
-One architect is spawned at session start and stays alive in BG for the whole session, regardless of how many engineers run. The architect is the standing consultant — not bound to a block.
-
-### R2 — Engineer technical question → architect (peer-consult)
-
-If an engineer hits a technical/design question (architecture, library choice, schema, API shape), the engineer consults the architect **directly** via `claude --resume {ARCH_SESSION_ID} -p "[ENG-{ID} → ARCH] <q>"` per Premise 18. Architect replies **directly** via `claude --resume {ENG_SESSION_ID} -p "[ARCH-PERSIST → ENG-{ID}] <a>"`. TRON does not relay; TRON observes the exchange on its next sweep. Operator is not interrupted for in-domain questions.
-
-### R3 — Wall hits involving UI / user journey → operator
-
-If the work hits a wall outside backend (UI rendering, copy, end-to-end user flow, third-party dashboard config, DNS, anything in `project.md` "Operator-only tasks"), TRON escalates to the operator. Engineer pauses; operator decides next step.
-
-### R4 — Reviewer cadence
-
-Every N engineer blocks completed, TRON spawns a reviewer over the merged work. If the reviewer reports findings, TRON routes remediation back to a fresh engineer (per R6).
-
-### R5 — Architect mid-session review
-
-After every engineer session-end, before dispatching the next block, TRON sends the just-completed execute-phase logs to the architect. Architect reviews for consistency with prior blocks and may recommend adjustments to upcoming blocks. TRON applies adjustments to `workflow-state.md` and the next dispatch.
-
-### R6 — Fresh engineer per block
-
-Each new block gets a freshly spawned engineer. No re-use of prior engineer sessions across blocks. Blocks are drawn from the pipeline in `Order`, gated by each spec's `Dependencies`; worker IDs follow the project's pattern from `project.md`.
-
-### R7 — Workers never self-terminate
-
-Engineers, architects, and reviewers do not call `claude stop` on themselves. Their session-end skills write closeout logs, then idle. Only TRON kills processes, and only after sending explicit RELEASE.
-
-### R8 — Protected branches (no direct commits)
-
-The per-repo protected default branches are listed in `project.md` § Protected branches. **No agent — including TRON itself — may commit directly to a protected branch.** All edits go through a feature branch (`feat|fix|chore/<slug>`) in a worktree → PR → CI green → manual merge. Workers (engineer / architect / reviewer / data-architect) follow the project's worktree-and-branching skill. TRON's own *config* edits follow `skill-edit-self` Mode A; TRON's *runtime state* (gitignored files like `workflow-state.md`, `state.md`, `dispatched.log`, `current-id`, `tg-inbox.jsonl`, `logs/`) is edited in place via Mode B and is not subject to this rule.
+**What this file is — and isn't.** TRON's *behaviour* is a fixed **event table** (the canon flow:
+`trigger → step → on-complete`, driven by PULSE + SWITCHBOARD). That table is the same for every
+project and is **not** edited here — see `contracts/blueprint-contracts.md` and the workflow CSV.
+This file holds only the **per-project knobs** the engine reads. The live counters TRON tracks
+(pipeline statuses, cadence, architect queue, active workers) live in `workflow-state.yaml`.
 
 ---
 
-## Per-session knobs (TRON asks at session start; no defaults)
+## Standing rules (the invariants the flow runs under)
 
-TRON asks the operator for this at the start of every session. No default — TRON does not proceed until it is answered. Live value lands in `workflow-state.md`.
+These are canon — true on every project. They are not knobs.
+
+- **R1 — Architect is persistent and forward-only.** One architect is spawned at start and stays
+  alive until session-end. It is **excluded from the worker pool** and drains a FIFO queue. It
+  **clears the next block** (forward-review) and turns reviewer findings into **upcoming** adhoc
+  blocks (log-review); it never reopens a done block. It is also the standing peer-consult.
+- **R2 — Workers consult workers.** Declared peer pairs (engineer ↔ architect, …) address each
+  other directly. TRON observes; it does not relay or transition.
+- **R3 — A wall goes to the operator.** A blocker no worker can clear (operator-only task, external
+  blocker, human-eyes-on-a-journey, true impasse after the architect was consulted) parks the block
+  `blocked`, frees the slot, and contacts the operator. `operator:decision` resumes / amends / abandons it.
+- **R4 — Reviewer cadence is PULL.** A per-type counter increments on every completed block; when
+  it reaches that type's threshold, SWITCHBOARD dispatches a reviewer and resets the counter.
+  **Review is a milestone, not a verdict** — the reviewer delivers a findings log; the architect's
+  log-review decides what becomes work.
+- **R6 — Fresh worker per block.** Each block gets a freshly spawned worker. Only a `cleared` block
+  is dispatchable; the architect clears blocks forward. Pipeline `Order` is preference; spec
+  `Dependencies` are the hard gates.
+- **R7 — Workers never self-terminate.** Only the engine releases a worker, after an explicit RELEASE.
+- **R8 — Protected branches.** No agent commits directly to a protected branch; work lands on a
+  feature branch through review.
+
+---
+
+## Per-session knob (TRON asks at start; no default)
+
+TRON asks for this at the start of every session and will not proceed until it's answered. Live
+value lands in `workflow-state.yaml`.
 
 | Knob | Notes |
 |:--|:--|
-| `max_concurrent_engineers` | Hard cap. Actual concurrency = min(this value, dispatchable blocks) — TRON never spawns more engineers than there are blocks ready to run. |
+| `worker_count` | Size of the worker pool — **engineers + reviewers share it**. The architect is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
 
-## Fixed config (set once; never asked)
-
-Project-stable values. Operator edits this file (or asks TRON to edit) to change them.
+## Fixed knobs (set once; edit `workflow.yaml` to change)
 
 | Knob | Default | Notes |
 |:--|:--|:--|
-| `reviewer_threshold` | 3 | R4 N value — every N blocks triggers a reviewer |
-| `silence_ping_min` | 6 | Worker silent this long (no `lastActivityAt` growth, no uncommitted worktree changes) → TRON pings `[TRON] HEARTBEAT?`. Must be a multiple of the cron sweep cadence (default `*/2` → 6 is the 3rd tick). |
-| `silence_escalate_min` | 8 | Worker silent past this with no ping response → TRON escalates to operator. Must be a multiple of cron cadence; difference from `silence_ping_min` defines the response window (2 min = one tick by default). |
+| `architect_count` | 1 | Persistent architect queue drainers — the throughput bottleneck knob. |
+| `git` | on | Workflow commits (feature branch + review). |
+| `silence_ping_min` | 6 | Worker silent this many minutes → heartbeat ping. Multiple of the cron cadence. |
+| `silence_escalate_min` | 8 | Silent past this → engine emits `worker:stalled` (> ping). |
 
-## Peer consults (Premise 18)
+## Reviewer cadence (PULL)
 
-Workers may consult declared peers without going through TRON, only on the project-defined list. The list is set by the seeder per project (Step 3 of `tron-seed.md`) — **canon ships no defaults**. Pairs may be added or removed during the project's life via `skill-edit-self`. Consultation is logged; TRON picks it up on next sweep.
+`cadence` maps each reviewer **type** to the number of completed blocks between its reviews. Types
+are open (`code`, `security`, `data`, …). Default ships one:
 
-Format: a markdown table with columns `Worker | May consult | For`. Each row declares a peer pair the project allows.
-
-Example (illustrative; not seeded by default):
-
-```
-| Worker | May consult | For |
-|:--|:--|:--|
-| engineer | architect | technical/design questions |
-| reviewer | architect | architectural concerns during review |
+```yaml
+cadence:
+  code: 3        # a code reviewer every 3 completed blocks
 ```
 
-Anything outside the project's list goes through TRON. Enforcement is by construction: TRON only shares peer session IDs in handovers per this table; workers cannot reach undeclared peers because they don't know the IDs.
+Add a type to schedule another lens; drop one to stop that cadence.
+
+## Peer consults
+
+Workers may consult declared peers without going through TRON — only on the project's list (canon
+ships none; the seeder sets them per project). A markdown/`yaml` list of `worker → may-consult → for`
+pairs. Enforcement is by construction: TRON only shares a peer's session in handovers per this list.
+
+```yaml
+peer_consults:
+  - { worker: engineer, may_consult: architect, for: "technical/design questions" }
+```
 
 ---
 
-## Counters (live in `workflow-state.md`)
+## Counters (live in `workflow-state.yaml` — do not hand-edit)
 
-TRON updates these every turn — do not hand-edit:
+TRON updates these every tick:
 
-- `current_block` — block ID currently in progress
-- `active_workers` — list of currently-spawned worker IDs with roles + statuses
-- `blocks_since_review` — increments on engineer DONE; resets when reviewer dispatched
-- `reviewer_findings_open` — count of unresolved findings
-- `paused_for_operator` — worker ID (or `TRON`) currently awaiting operator
-- `session_started_at`, `tron_session_id` — set on cold start
-- Live values of the per-session knobs above
+- `pipeline` — the normalized block mirror (id, order, owner, status, kind)
+- `active_workers` — spawned workers (id, role, status, block) + the architect (status, current_job)
+- `architect_queue` — pending forward/log jobs
+- `cadence` — per-type count since last review
+- `counters` — stall counts, paused-for-operator, etc.
+- `session.started_at`, `last_sweep` — set on cold start / each tick
 
----
-
-**Changing a rule or knob:** describe the change to TRON in natural language. TRON owns `workflow.md`, `workflow-state.md`, and `scripts.md` edits — it keeps all three in sync atomically. Hand-editing one risks drift; `skill-validate` will flag mismatches on next session start.
+**Changing a knob:** describe it to TRON in natural language; TRON edits `workflow.yaml`.
+`validate` flags any mismatch on next session start.

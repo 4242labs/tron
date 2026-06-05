@@ -11,7 +11,13 @@ import os
 
 import util
 
-PIPELINE_STATUSES = {"todo", "in-progress", "blocked", "review", "done"}
+# pending  = needs clearing (the architect has not cleared it yet)
+# cleared  = architect-cleared, ready to dispatch (the ONLY dispatchable status)
+# in-progress = a worker is building it
+# blocked  = walled, parked awaiting an operator:decision
+# done     = built + released
+# abandoned = operator dropped it (out of the sequence)
+PIPELINE_STATUSES = {"pending", "cleared", "in-progress", "blocked", "done", "abandoned"}
 
 
 class State:
@@ -44,6 +50,16 @@ class State:
     def live_config(self):
         return self.data.setdefault("live_config", {})
 
+    @property
+    def architect_queue(self):
+        """FIFO of architect jobs ({kind: forward|log, block, type}). No slot limit."""
+        return self.data.setdefault("architect_queue", [])
+
+    @property
+    def cadence(self):
+        """Per-type pull counter: <type> -> blocks completed since its last review."""
+        return self.data.setdefault("cadence", {})
+
     def worker(self, wid):
         for w in self.workers:
             if w.get("id", "").lower() == wid.lower():
@@ -57,17 +73,6 @@ class State:
                 if role is None or w.get("role") == role:
                     return True
         return False
-
-    def is_paused_for_operator(self):
-        return self.counters.get("paused_for_operator") not in (None, "")
-
-    def already_dispatched(self, block_id, attempt):
-        """dispatched.log keyed by block_id+attempt — spawn guard across ticks."""
-        key = f"block={block_id} attempt={attempt}"
-        if not os.path.exists(self.ctx.dispatched_log):
-            return False
-        with open(self.ctx.dispatched_log) as fh:
-            return any(key in line for line in fh)
 
     def record_dispatch(self, worker_id, session_id, block_id, branch, attempt):
         line = (f"{util.now_iso()} | spawn | {worker_id} | {session_id} | "
@@ -83,21 +88,23 @@ class State:
                 return True
         return False
 
-    def next_dispatchable_block(self):
-        """Lowest-order block whose status is todo (deps are spec-enforced upstream)."""
-        candidates = [r for r in self.pipeline if r.get("status") == "todo"]
-        if not candidates:
-            return None
-        return sorted(candidates, key=lambda r: (r.get("order") or 1e9))[0]
+    def clear_block(self, block_id):
+        """Architect forward-review result: pending -> cleared (dispatchable)."""
+        for row in self.pipeline:
+            if row.get("id") == block_id and row.get("status") == "pending":
+                row["status"] = "cleared"
+                return True
+        return False
 
-    def insert_fix_blocks(self, blocks):
-        """Append scoped fix blocks to the pipeline (findings-triage -> fixes)."""
+    def insert_adhoc_blocks(self, blocks):
+        """Append adhoc fix blocks (architect log-review). Born `cleared` — ready to dispatch."""
         base = max((r.get("order") or 0) for r in self.pipeline) if self.pipeline else 0
         for i, b in enumerate(blocks, 1):
             self.pipeline.append({
                 "order": base + i,
                 "id": b["id"],
                 "owner": b.get("owner_role", "engineer"),
-                "status": "todo",
+                "status": "cleared",
+                "kind": "adhoc",
                 "notes": b.get("goal", ""),
             })
