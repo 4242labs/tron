@@ -34,8 +34,9 @@ A genuinely new *shape* of control is a bigger conversation: open an issue first
 
 - **Canon purity.** This repo carries zero project- or machine-specific traces. No absolute paths,
   no host repo assumptions. Per-project values live only in a seeded instance.
-- **Keep it deterministic.** Flow is decided by code and a closed grammar, never by an LLM. The model
-  is called only for the two bounded, schema-checked judgments.
+- **Blueprint first, model second.** TRON's founding principle. Flow is decided by code and a closed
+  grammar — the blueprint — never by an LLM. The model is second: only the two bounded, schema-checked
+  judgments. Keep contributions on that side of the line.
 - **Never name the host runtime** in any TRON-facing copy (operator/worker/seeder text).
 - **Lint stays green.** `./tron validate` must pass; the closed vocabulary stays closed.
 

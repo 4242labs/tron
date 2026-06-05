@@ -155,6 +155,11 @@ To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No othe
 
 ## Design principles
 
+> **Blueprint first, model second.** TRON's founding principle. The flow is a deterministic
+> *blueprint* — a closed trigger grammar and an explicit event table, lint-validated before it ever
+> runs. The *model* comes second: called only to do the building and to answer two bounded,
+> schema-checked judgments — never to choose a step. Everything below follows from this.
+
 - **Deterministic spine.** Flow is decided by code and a closed trigger grammar — lint-validated at
   seed time, so a malformed workflow fails before it runs, not during.
 - **Two bounded judgments.** The only LLM calls into the flow are typed and schema-checked; the model
