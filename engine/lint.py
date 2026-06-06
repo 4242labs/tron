@@ -28,8 +28,9 @@ CANON_TAGS = {
     "unclassified",
 }
 CANON_TOOLS = {"classify_message", "assess_wall"}
-# The worker roles the engine spawns by name — every instance must supply a file for each.
-REQUIRED_ROLES = {"architect", "engineer", "reviewer"}
+# The worker roles the engine always spawns — every instance must supply a file for each.
+# (reviewer is required only when a cadence runs; see L13.)
+BASE_ROLES = {"architect", "engineer"}
 
 GRAMMAR_KEYS = {"forms", "subjects", "events", "params", "wildcard",
                 "alternatives", "terminals", "control", "match"}
@@ -195,9 +196,11 @@ def _composition(workflow, project):
                     "" if isinstance(pa, bool) else f"persistent_architect={pa!r}"))
 
     # L13 — project.agents covers every role the flow names (skipped if no project.yaml).
-    # Real check: the canon worker roles the engine spawns must each have an agent file,
-    # and every role referenced by peer_consults must exist. (Cadence types are reviewer
-    # lenses, not roles — they dispatch as `reviewer` and are intentionally open.)
+    # Real check: the always-spawned roles (architect, engineer) must each have an agent
+    # file; reviewer is required only when a cadence runs (a no-reviewer project with an
+    # empty cadence is valid — the seeder offers "drop the cadence"); and every role
+    # referenced by peer_consults must exist. (Cadence types are reviewer lenses, not
+    # roles — they dispatch as `reviewer` and are intentionally open.)
     agents = project.get("agents")
     if not agents:
         r.append(Result("L13 project roles", True, "(no project.yaml agents — skipped)"))
@@ -205,7 +208,8 @@ def _composition(workflow, project):
     roles = {a.get("role") for a in agents}
     pc = workflow.get("peer_consults") or []
     pc_roles = {p.get(k) for p in pc for k in ("worker", "may_consult") if p.get(k)}
-    missing = sorted(REQUIRED_ROLES - roles)
+    required = BASE_ROLES | ({"reviewer"} if cadence else set())
+    missing = sorted(required - roles)
     unknown = sorted(pc_roles - roles)
     bad = []
     if missing:

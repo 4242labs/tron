@@ -11,8 +11,9 @@ pointers:
   specs:  <path>            # REQUIRED. Where host spec files live (local MD).
 
 # ── Agents available (roles found at pointers.agents) ───────────────
-# Seeder enumerates files present; never creates them. workflow.yaml may
-# reference only roles listed here (lint L13).
+# Seeder enumerates files present; never creates them. lint L13: architect +
+# engineer must be listed here (reviewer too when a cadence runs), and any role
+# named in peer_consults must be one of these.
 agents:                     # REQUIRED, >=1 entry
   - role: <name>            # e.g. engineer | architect | reviewer | <custom>
     file: <path>            # e.g. meta/agents/engineer.md

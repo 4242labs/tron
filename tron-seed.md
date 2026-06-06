@@ -139,7 +139,7 @@ With canon in place, **apply the Step 1 knob changes to `workflow.yaml`** (worke
 
 ## Step 4 — Validate agents + specs
 
-- **Agents** (against the knobs + pipeline): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) or by a pipeline block `Owner` has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`.
+- **Agents** (against the knobs + pipeline): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) or by a pipeline block `Owner` has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`. (This is a **seeder-time** check — lint sees `workflow.yaml`/`project.yaml` but not the pipeline, so the `Owner`-has-a-file part is enforced here, not by `tron validate`.)
 - **Specs** (against the contract): explain it (`spec.example.md` — ID, goal, acceptance criteria, scope, dependencies, owner; no status). Read the specs, check compliance, ask the operator to fill gaps. Never rewrite host specs.
 
 ## Step 5 — Pipeline
