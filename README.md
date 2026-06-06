@@ -56,8 +56,6 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 
 ![TRON supervisor workflow — BPMN](diagrams/flow-bpm.svg)
 
-<sub>[Interactive version](diagrams/flow-bpm.html) (light/dark toggle).</sub>
-
 ---
 
 ## Requirements
@@ -169,7 +167,4 @@ Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/i
 
 ## License
 
-TRON is dual-licensed:
-
-- **Open source** — [AGPL-3.0](LICENSE).
-- **Commercial** — contact **ahoy[at]42labs.io**.
+Open source — [AGPL-3.0](LICENSE). | Commercial — contact **ahoy[at]42labs.io**.
