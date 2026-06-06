@@ -10,7 +10,7 @@ TG_POLL_PATH="$SCRIPT_DIR/tg-poll.sh"
 TAG="# tron-cron:$TRON_DIR"
 SWEEP_LINE="*/2 * * * * bash $SWEEP_PATH $TAG"
 EXISTING="$(crontab -l 2>/dev/null || true)"
-FILTERED="$(echo "$EXISTING" | grep -v "$TAG" || true)"
+FILTERED="$(echo "$EXISTING" | grep -Fv "$TAG" || true)"   # -F: $TAG is a path, not a regex
 
 # TG polling only when the connector + .env exist (telegram enabled).
 TG_LINE=""

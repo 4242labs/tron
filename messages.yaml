@@ -37,8 +37,8 @@ templates:
     text: "[TRON]  Architect — clear {block}. Review the work ahead of it, shape it, then report it cleared. Forward only — never reopen what's done."
   arch.log:
     channel: worker
-    slots: [type, block]
-    text: "[TRON]  Architect — a {type} review landed on {block}. Turn its findings into upcoming work. Forward only — never reopen what's done."
+    slots: [type]
+    text: "[TRON]  Architect — a {type} review just completed. Turn its findings into upcoming work. Forward only — never reopen what's done."
   spawn.reviewer:
     channel: worker
     slots: [worker_id, count]

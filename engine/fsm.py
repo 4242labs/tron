@@ -107,32 +107,43 @@ class Engine:
         self._sweep()                                   # engine liveness -> worker:stalled
         consumed, msgs = self._read_inboxes()           # read, but DON'T truncate yet
         for msg in msgs:
-            tag, slots = self._classify(msg)
-            self._ingest(tag, slots, msg.get("sender", {}))
+            # One malformed message must not abort the tick: that would leave it in the inbox
+            # (consume runs only after a clean save) and re-fire it every sweep — a poison pill.
+            # Drop the offender, keep going; the rest of the batch still gets processed.
+            try:
+                tag, slots = self._classify(msg)
+                self._ingest(tag, slots, msg.get("sender", {}))
+            except Exception as e:
+                self.log("flow", f"ingest dropped a message: {e}")
         self._drain_triggers()
         last = self.st.data.setdefault("last_sweep", {})
         last["at"] = util.now_iso()
         last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
-        self._host_writeback()                          # host pipeline mode: mirror status changes back
+        self._pipeline_writeback()                       # mirror status changes back to the pipeline doc
         self.st.save()                                  # persist effects FIRST
         self._consume_inboxes(consumed)                 # then drop consumed lines (at-least-once)
         return self.ended
 
-    def _host_writeback(self):
-        """pipeline.mode host: write the normalized mirror back to the operator's doc,
-        but only when a block status actually changed (contracts §7 — never a per-tick rewrite)."""
+    def _pipeline_writeback(self):
+        """Mirror status changes back to the pipeline doc — the operator's host file or our
+        internal pipeline.md — but only when a block status actually changed (contracts §7, §8:
+        never a per-tick rewrite)."""
         pl = self.project.get("pipeline") or {}
-        if pl.get("mode") != "host" or not pl.get("path"):
+        mode = pl.get("mode", "internal")
+        if mode == "host" and not pl.get("path"):
             return
         sig = [(r.get("id"), r.get("status")) for r in self.st.pipeline]
-        if sig == self.st.data.get("_host_sig"):
+        if sig == self.st.data.get("_pipe_sig"):
             return
         import hostpipe
         try:
-            hostpipe.write_back(os.path.expanduser(pl["path"]), self.st.pipeline)
-            self.st.data["_host_sig"] = sig
+            if mode == "host":
+                hostpipe.write_back(os.path.expanduser(pl["path"]), self.st.pipeline)
+            else:
+                hostpipe.write_internal(self.ctx, self.st.pipeline)
+            self.st.data["_pipe_sig"] = sig
         except Exception as e:
-            self.log("pipeline", f"host write-back failed: {e}")
+            self.log("pipeline", f"{mode} write-back failed: {e}")
 
     # ── trigger queue + routing ──
     def _emit(self, trigger, slots=None):
@@ -151,7 +162,12 @@ class Engine:
             if trig == "pulse":
                 self._switchboard()
                 continue
-            self._route(trig, slots)
+            # A handler that raises must not abort the whole tick (see tick(): that strands the
+            # triggering message in the inbox and re-fires it forever). Log and move on.
+            try:
+                self._route(trig, slots)
+            except Exception as e:
+                self.log("flow", f"handler for '{trig}' raised: {e}")
 
     def _route(self, trig, slots):
         handler, caps = self._match(trig)
@@ -509,8 +525,9 @@ class Engine:
         if job["kind"] == "forward":
             self.emit("arch.forward", {"block": job["block"]}, worker_session=sess)
         else:
-            self.emit("arch.log", {"type": job.get("type", "code"),
-                                   "block": job.get("block") or "?"}, worker_session=sess)
+            # A review is a milestone over the cleared range, not a single block — the copy
+            # names no block, so don't pass one (it would only ever render as a placeholder).
+            self.emit("arch.log", {"type": job.get("type", "code")}, worker_session=sess)
         self.log("architect", f"dispatch {job}")
 
     def _architect_advance(self):
@@ -717,14 +734,26 @@ class Engine:
 
     # ── small helpers ──
     def _load_pipeline(self):
-        mode = (self.project.get("pipeline") or {}).get("mode", "internal")
-        if mode == "host":
-            import hostpipe
-            path = (self.project.get("pipeline") or {}).get("path")
-            try:
-                self.st.data["pipeline"] = hostpipe.parse(path)
-            except Exception as e:
-                self.log("pipeline", f"host parse failed: {e}")
+        # Seed the state mirror from the pipeline doc at session start (contracts §7, §8).
+        # host: the operator owns the doc and may hand-edit it between sessions -> always
+        #   reparse. internal: TRON owns pipeline.md, but the mirror is saved BEFORE write-back
+        #   each tick (see tick()), so a populated mirror is the crash-authority -> only seed
+        #   from pipeline.md when the mirror is empty (first start after a seed). Skipping
+        #   internal mode entirely left the mirror empty, so a by-the-book internal seed ended
+        #   instantly — this is the H1 fix.
+        pl = self.project.get("pipeline") or {}
+        mode = pl.get("mode", "internal")
+        if mode != "host" and self.st.data.get("pipeline"):
+            return
+        path = pl.get("path") if mode == "host" else self.ctx.pipeline_internal
+        if not path:
+            self.log("pipeline", f"{mode} pipeline: no path")
+            return
+        import hostpipe
+        try:
+            self.st.data["pipeline"] = hostpipe.parse(os.path.expanduser(path))
+        except Exception as e:
+            self.log("pipeline", f"{mode} parse failed: {e}")
 
     def _worker_id(self, role, ref):
         ref = (ref or "").replace("block-", "")
