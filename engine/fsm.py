@@ -98,6 +98,11 @@ class Engine:
 
     # ── the tick (contracts §5) ──
     def tick(self):
+        # No session has started -> nothing to do. The heartbeat may fire (cron is
+        # installed at start), but a tick before `tron start` must never sweep,
+        # classify, or consume inbox messages into a phantom session.
+        if not (self.st.data.get("session") or {}).get("started_at"):
+            return self.ended
         self._tq = []
         self._sweep()                                   # engine liveness -> worker:stalled
         consumed, msgs = self._read_inboxes()           # read, but DON'T truncate yet

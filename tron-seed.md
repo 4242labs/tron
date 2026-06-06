@@ -142,7 +142,7 @@ With canon in place, **apply the Step 1 knob changes to `workflow.yaml`** (worke
 - **Agents** (against the knobs + pipeline): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) or by a pipeline block `Owner` has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`.
 - **Specs** (against the contract): explain it (`spec.example.md` — ID, goal, acceptance criteria, scope, dependencies, owner; no status). Read the specs, check compliance, ask the operator to fill gaps. Never rewrite host specs.
 
-## Step 5 — Pipeline (pipeline)
+## Step 5 — Pipeline
 
 See `pipeline.example.md`. First decide the branch: detect a likely status/pipeline doc, or ask — *"Do you already track block status in a doc, or should I keep the pipeline myself?"*
 
@@ -162,7 +162,7 @@ Read these from `project.yaml` and **follow them silently** — no prompts, no c
 - `notifications.telegram: off` — `on` routes escalations through Telegram (keys in `<agents>/tron/.env`, which the operator fills; missing keys → degrade gracefully). `telegram: on` **implies the heartbeat is on** — cron is what polls TG.
 - `notifications.cron: auto` — `auto` = on whenever `telegram` is on; the operator may force `on` (stall-sweeps without TG) or `off`.
 
-Effective heartbeat = `telegram == on` OR `cron == on`. If on: run `bash <agents>/tron/scripts/cron-install.sh` (idempotent; verify `crontab -l | grep tron`). If off: skip. Never inline or log key values.
+Effective heartbeat = `telegram == on` OR `cron == on`. **Record this in `project.yaml`; do not install cron at seed.** `tron start` installs the heartbeat when effective — that way the engine never ticks before a session exists. Never inline or log key values.
 
 ## Step 8 — Verify, fail fast
 

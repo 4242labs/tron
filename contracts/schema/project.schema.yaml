@@ -1,7 +1,7 @@
 # project.yaml — schema (B0)
 # Per-project config record. Written by the seeder (B1) by detecting + asking.
 # Lives at <agents>/tron/project.yaml. Tracked + PR'd. Re-read every session start.
-# Supersedes the prose project.example.md; field meanings carry over verbatim.
+# The annotated example lives at project.example.yaml; field meanings carry over verbatim.
 #
 # Annotations:  # REQUIRED | # OPTIONAL | <placeholder>  | a | b  (enum)
 

@@ -36,10 +36,13 @@ def _arg(flag, default=None):
 
 
 def cmd_validate(ctx):
-    project = None
+    # Default to the instance's own project.yaml so role-consistency (L13) is checked;
+    # --project overrides (e.g. linting a candidate file). Absent project -> L13 skips.
     pf = _arg("--project")
     if pf:
         project = util.load_yaml(pf)
+    else:
+        project = ctx.load_project() or None
     ok, results = lint.run(ctx, project)
     print("blueprint-lint:")
     for r in results:
@@ -51,8 +54,9 @@ def cmd_validate(ctx):
 def cmd_doctor(ctx):
     import shutil
     print("doctor — environment:")
-    for tool in ("claude", "jq", "python3"):
-        print(f"  [{'PASS' if shutil.which(tool) else 'FAIL'}] {tool} on PATH")
+    # (binary, label) — label never names the host runtime in operator-facing output.
+    for binary, label in (("claude", "agent runtime"), ("jq", "jq"), ("python3", "python3")):
+        print(f"  [{'PASS' if shutil.which(binary) else 'FAIL'}] {label} on PATH")
     try:
         import yaml  # noqa: F401
         print("  [PASS] pyyaml importable")
@@ -74,12 +78,25 @@ def cmd_start(ctx):
         return 2
     eng = Engine(ctx)
     eng.start(int(max_c))
-    # install cron heartbeat (idempotent); skipped in dry runs
-    if not os.environ.get("TRON_DRY"):
+    # Install the cron heartbeat (idempotent) — start owns it, so the engine never
+    # ticks before a session exists. Only when the config makes it effective:
+    # heartbeat = telegram==on OR cron==on; cron==auto follows telegram; cron==off wins.
+    if not os.environ.get("TRON_DRY") and _heartbeat_effective(ctx):
         ci = os.path.join(ctx.scripts_dir, "cron-install.sh")
         if os.path.exists(ci):
             os.system(f"bash {ci} >/dev/null 2>&1 || true")
     return 0
+
+
+def _heartbeat_effective(ctx):
+    notif = (ctx.load_project().get("notifications") or {})
+    tg = str(notif.get("telegram", "off")).lower() == "on"
+    cron = str(notif.get("cron", "auto")).lower()
+    if cron == "off":
+        return False
+    if cron == "on":
+        return True
+    return tg  # auto
 
 
 def cmd_tick(ctx):

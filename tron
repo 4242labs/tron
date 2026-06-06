@@ -28,6 +28,12 @@ cmd="${1:-}"; [ $# -gt 0 ] && shift || true
 case "$cmd" in
   seeder)
     # Interactive seeding: drive the agent runtime through the seed protocol.
+    # The protocol ships only with the canon clone; a seeded instance carries no
+    # tron-seed.md. Fail clearly rather than asking the agent to read a missing file.
+    [ -f "$TRON_DIR/tron-seed.md" ] || {
+      echo "tron seeder: run this from a TRON canon clone (no tron-seed.md here — this looks like a seeded instance)." >&2
+      exit 5
+    }
     command -v claude >/dev/null 2>&1 || { echo "tron seeder: the agent runtime is not on PATH" >&2; exit 4; }
     exec claude "Read $TRON_DIR/tron-seed.md in full and seed TRON into this project, following it step by step."
     ;;

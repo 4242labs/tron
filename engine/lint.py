@@ -28,6 +28,8 @@ CANON_TAGS = {
     "unclassified",
 }
 CANON_TOOLS = {"classify_message", "assess_wall"}
+# The worker roles the engine spawns by name — every instance must supply a file for each.
+REQUIRED_ROLES = {"architect", "engineer", "reviewer"}
 
 GRAMMAR_KEYS = {"forms", "subjects", "events", "params", "wildcard",
                 "alternatives", "terminals", "control", "match"}
@@ -192,10 +194,25 @@ def _composition(workflow, project):
     r.append(Result("L12 session shape", isinstance(pa, bool),
                     "" if isinstance(pa, bool) else f"persistent_architect={pa!r}"))
 
-    # L13 — roles named in project.agents are sane (skipped if no project.yaml).
-    roles = {a.get("role") for a in (project.get("agents") or [])}
-    note = "" if roles else "(no project.yaml agents — skipped)"
-    r.append(Result("L13 project roles", True, note))
+    # L13 — project.agents covers every role the flow names (skipped if no project.yaml).
+    # Real check: the canon worker roles the engine spawns must each have an agent file,
+    # and every role referenced by peer_consults must exist. (Cadence types are reviewer
+    # lenses, not roles — they dispatch as `reviewer` and are intentionally open.)
+    agents = project.get("agents")
+    if not agents:
+        r.append(Result("L13 project roles", True, "(no project.yaml agents — skipped)"))
+        return r
+    roles = {a.get("role") for a in agents}
+    pc = workflow.get("peer_consults") or []
+    pc_roles = {p.get(k) for p in pc for k in ("worker", "may_consult") if p.get(k)}
+    missing = sorted(REQUIRED_ROLES - roles)
+    unknown = sorted(pc_roles - roles)
+    bad = []
+    if missing:
+        bad.append(f"missing required role(s): {missing}")
+    if unknown:
+        bad.append(f"peer_consults names undeclared role(s): {unknown}")
+    r.append(Result("L13 project roles", not bad, "; ".join(bad)))
     return r
 
 
