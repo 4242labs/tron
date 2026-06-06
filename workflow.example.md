@@ -26,13 +26,14 @@ These are canon — true on every project. They are not knobs.
 - **R3 — A wall goes to the operator.** A blocker no worker can clear (operator-only task, external
   blocker, human-eyes-on-a-journey, true impasse after the architect was consulted) parks the block
   `blocked`, frees the slot, and contacts the operator. `operator:decision` resumes / amends / abandons it.
-- **R4 — Reviewer cadence is PULL.** A per-type counter increments on every completed block; when
-  it reaches that type's threshold, SWITCHBOARD dispatches a reviewer and resets the counter.
-  **Review is a milestone, not a verdict** — the reviewer delivers a findings log; the architect's
-  log-review decides what becomes work.
-- **R6 — Fresh worker per block.** Each block gets a freshly spawned worker. Only a `cleared` block
-  is dispatchable; the architect clears blocks forward. Pipeline `Order` is preference; spec
-  `Dependencies` are the hard gates.
+- **R4 — Reviewer cadence is PULL.** A per-type counter increments on every block that lands `✅`
+  on trunk; when it reaches that type's threshold, SWITCHBOARD dispatches a reviewer and resets the
+  counter. **Review is a milestone, not a verdict** — the reviewer delivers a findings log; the
+  architect's log-review decides what becomes work.
+- **R6 — Fresh worker per block.** Each block gets a freshly spawned worker. A block is dispatchable
+  only when its block file is `📋` with every `Depends on` already `✅` on trunk; the architect clears
+  the path forward by authoring block files. Pipeline order is preference; block `Depends on` are the
+  hard gates.
 - **R7 — Workers never self-terminate.** Only the engine releases a worker, after an explicit RELEASE.
 - **R8 — Protected branches.** No agent commits directly to a protected branch; work lands on a
   feature branch through review.
@@ -86,10 +87,11 @@ peer_consults:
 
 TRON updates these every tick:
 
-- `pipeline` — the normalized block mirror (id, order, owner, status, kind)
+- `pipeline` — the read-only trunk view, rebuilt each wake (id, order, status, deps, gates); never authority
 - `active_workers` — spawned workers (id, role, status, block) + the architect (status, current_job)
-- `architect_queue` — pending forward/log jobs
-- `cadence` — per-type count since last review
+- `architect_queue` — queued forward/log jobs
+- `gate` — per-block DONE-gate progress; `seen_done` — ✅ blocks already counted for cadence
+- `cadence` — per-type count of ✅-on-trunk blocks since last review
 - `counters` — stall counts, paused-for-operator, etc.
 - `session.started_at`, `last_sweep` — set on cold start / each tick
 

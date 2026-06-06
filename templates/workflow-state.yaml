@@ -1,8 +1,12 @@
 # workflow-state.yaml — live FSM state (runtime; gitignored)
 # TRON's per-session memory: workers, counters, cadence, the architect queue, and
-# the pipeline mirror. Written atomically every tick (tmp + mv). Do NOT hand-edit —
-# the engine manages it. Seeded from this template; the engine fills it via setdefault,
-# so missing keys are created on first run.
+# the disposable trunk-read caches. Written atomically every tick (tmp + mv). Do
+# NOT hand-edit — the engine manages it. Seeded from this template; the engine
+# fills it via setdefault, so missing keys are created on first run.
+#
+# TRON owns no pipeline: `pipeline` below is a READ-ONLY cache of the project's
+# canon trunk (pipeline.md + blocks/*.md), rebuilt every wake. Status lives on
+# trunk and only agents write it (via PR).
 
 session:
   started_at: null            # set at bootup; cleared at session-end
@@ -10,6 +14,11 @@ session:
 
 # ── FSM context (passed to judgment tools as block_ctx) ──
 fsm: {}
+
+# ── Run scoping chosen at bootup (session.scope): mode in all | phase | range ──
+scope:
+  mode: all
+  value: null
 
 # ── Active workers (source of truth for "what's running now") ──
 # list of {id, role, session_id, shortid, spawned_at, status, block, [rtype], [current_job]}
@@ -19,18 +28,34 @@ active_workers: []
 # ── Counters (stall counts, etc.) ──
 counters: {}
 
-# ── Reviewer cadence (PULL): <type> -> completed blocks since its last review ──
+# ── Reviewer cadence (PULL): <type> -> merged-✅ blocks since its last review ──
 cadence: {}
+seen_done: []                 # block IDs already counted toward cadence (trunk dedup)
 
-# ── Architect FIFO queue: pending {kind: forward|log, block, [type]} jobs ──
+# ── Architect FIFO queue: queued {kind: forward|log, block, [type]} jobs ──
 architect_queue: []
+
+# ── DONE-gate progress per block: {block_id: {stage, pr, detail}} (runtime only) ──
+gate: {}
+
+# ── In-flight PRs keyed by head branch (trunk.open_prs cache) ──
+open_prs: {}
+
+# ── Blocks parked on an operator decision (runtime escalation; never git) ──
+blocked: []
+
+# ── Per-session merge knob (realign §8): APPROVED | ASK. Reset each session. ──
+approvals:
+  merge_staging: APPROVED
+  promote_main: ASK
 
 # ── Live config (this session) ──
 live_config:
   worker_count: null          # set at session start (engineers + reviewers; architect excluded)
 
-# ── Pipeline mirror (normalized) ──
-# list of {order, id, owner, status, kind, [notes]}
+# ── Pipeline (READ-ONLY trunk cache; rebuilt every wake — never authority) ──
+# list of merged rows: {id, task, status, phase, section, order, depends_on,
+#                       reviewer_class, merge, deploy, has_block_file}
 pipeline: []
 
 # ── Last sweep ──

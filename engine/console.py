@@ -56,20 +56,22 @@ class Console:
                   f"{w.get('status',''):<14} {block}")
         q = st.architect_queue
         if q:
-            print(f"  │  {DIM}architect queue: {len(q)} pending{RST}")
+            print(f"  │  {DIM}architect queue: {len(q)} queued{RST}")
         print(f"  {BOLD}└────────────────────────────────────────────────────{RST}")
 
     def show_pipeline(self):
+        # Reads the trunk cache the engine rebuilt last tick — TRON owns no pipeline,
+        # so this is a view of the project's canon (pipeline.md + blocks/*.md), not state.
         st = self._state()
         rows = sorted(st.pipeline, key=lambda r: (r.get("order") or 1e9))
-        print(f"  {BOLD}┌─ PIPELINE ────────────────────────────────────────{RST}")
+        print(f"  {BOLD}┌─ PIPELINE (trunk) ────────────────────────────────{RST}")
         if not rows:
-            print("  │  (empty)")
+            print("  │  (empty — no canon pipeline read yet)")
         for r in rows:
-            kind = r.get("kind", "block")
-            mark = "★" if kind == "adhoc" else " "
-            print(f"  │ {mark} {str(r.get('id','')):<12} {r.get('status',''):<14} "
-                  f"{r.get('owner','')}")
+            mark = "★" if r.get("section", "").lower().startswith("ad") else " "
+            flag = "" if r.get("has_block_file") else f" {DIM}(unscoped){RST}"
+            print(f"  │ {mark} {str(r.get('id','')):<12} {r.get('status',''):<13} "
+                  f"{(r.get('phase') or r.get('section') or ''):<22}{flag}")
         cad = st.cadence
         if cad:
             print(f"  │  {DIM}cadence: " +
@@ -78,19 +80,14 @@ class Console:
 
     # ── bootup (protocols/bootup.md steps 1–2) ──
     def _already_running(self):
-        st = self._state()
-        return bool(st.data.get("session", {}).get("started_at")) and bool(st.pipeline)
+        return bool(self._state().data.get("session", {}).get("started_at"))
 
     def bootup(self):
         print(f"{BOLD}== TRON bootup =={RST}")
-        st = self._state()
-        n_blocks = len([r for r in st.pipeline
-                        if r.get("status") not in ("done", "abandoned")])
-        # 1. start point — default whole pipeline.
-        ans = input(f"Start the whole pipeline ({n_blocks} open blocks)? [Y/n] ").strip().lower()
-        if ans in ("n", "no"):
-            print(f"{DIM}  (subset/resume scoping is operator-driven; edit pipeline statuses "
-                  f"to pending/done before start, then re-run){RST}")
+        eng = Engine(self.ctx)
+        # 1. run scoping — the session.scope three-way prompt (TRON voice; never status edits).
+        print(self.renderer.render("session.scope", {}))
+        self._ask_scope(eng)
         # 2. worker_count.
         worker_count = None
         while worker_count is None:
@@ -100,10 +97,24 @@ class Console:
             else:
                 print(f"{DIM}  (a positive integer){RST}")
         print()
-        Engine(self.ctx).start(worker_count)        # 3–4: spawn architect + first pulse (emits live)
+        eng.start(worker_count)                      # 3–4: read trunk, spawn architect + first pulse
         self._install_cron()                         # autonomous heartbeat (idempotent; skipped in dry)
         print()
         self._banner()
+
+    def _ask_scope(self, eng):
+        """Resolve the operator's run scope into state. TRON then dispatches only in-scope,
+        still-open blocks (done stays invisible). It NEVER edits status to scope a run."""
+        choice = input("  [1] all  ·  [2] a phase  ·  [3] a range of blocks  → ").strip()
+        if choice == "2":
+            phase = input("  Which phase (name or number, e.g. 'Phase 2' or '2')? ").strip()
+            eng.set_scope("phase", phase)
+        elif choice == "3":
+            lo = input("  First block ID? ").strip()
+            hi = input("  Last block ID? ").strip()
+            eng.set_scope("range", [lo, hi])
+        else:
+            eng.set_scope("all")
 
     def _install_cron(self):
         if os.environ.get("TRON_DRY"):

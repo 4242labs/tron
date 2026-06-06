@@ -16,7 +16,7 @@
 
 ## What this is
 
-You hand TRON a pipeline of spec'd work. TRON dispatches and supervises a fleet of worker agents —
+You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents —
 an architect, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
 everyone else.**
 
@@ -34,15 +34,20 @@ before it ever runs.
 
 ## How it works
 
-- **Pipeline.** Your work is a list of blocks, each tied to a spec, each with a status:
-  `pending · cleared · in-progress · blocked · done · abandoned`.
-- **The architect clears the way.** A single persistent architect — *forward-looking only* — reviews
-  the work ahead and marks the next block `cleared`. Only a `cleared` block is dispatchable. It never
-  reopens finished work; remediation is always a new block ahead.
+- **Pipeline.** Your work is your project's own git-tracked pipeline — a living doc plus one file per
+  block, each with an emoji status (`📋 to-do · 🔄 in-progress · ✅ done`, and a few non-active states).
+  TRON only **reads** it; your agents write it via PR. TRON owns no pipeline, no agents, no work-unit format.
+- **The architect clears the way.** A single persistent architect — *forward-looking only* — scopes the
+  work ahead by **authoring the next block's file**. A block is dispatchable once its file is `📋` with
+  every dependency already `✅` on trunk. It never reopens finished work; remediation is always a new block ahead.
 - **Engineers build; reviewers check.** Engineers and reviewers share a worker pool (you set its size).
-  An engineer takes one cleared block, validates against its acceptance criteria, and reports done.
-- **Review is a milestone, not a verdict.** On a cadence you set (every N completed blocks), a reviewer
-  delivers a findings log; the architect turns real findings into upcoming blocks.
+  An engineer takes one block, validates against its acceptance criteria, and reports done.
+- **Done means done.** "Reports done" is just a trigger. TRON runs the canon definition-of-done on the
+  *evidence* — local checks, then PR + green CI, merge, post-merge re-validation on trunk, deploy-clean
+  + verify — and a block counts as done only when it shows `✅` on trunk. A merged branch that fails to
+  deploy is not-done, and gets fixed.
+- **Review is a milestone, not a verdict.** On a cadence you set (every N blocks that land `✅`), a
+  reviewer delivers a findings log; the architect turns real findings into upcoming blocks.
 - **Walls go to you.** Anything no worker can clear — an operator-only task, an external blocker, a
   call only you can make — parks the block and asks you. Everything short of that stays in the fleet.
 - **It runs on its own.** A cron heartbeat wakes the engine on a fixed cadence; each wake is one
@@ -55,6 +60,26 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 ## The flow
 
 ![TRON supervisor workflow — BPMN](diagrams/flow-bpm.svg)
+
+---
+
+## What TRON needs from your project
+
+TRON reads your project's structure — it never scaffolds it. Before you seed, the project must
+provide three things, all git-tracked and written by your agents via PR:
+
+- **Agents.** Your own worker personas — an architect, engineers, reviewers, whatever roles the work
+  calls for — as `agents/<role>.md`. TRON dispatches them; it ships none and imposes none.
+- **Blocks.** Your work, specified and broken into right-sized units. One file per block
+  (`blocks/<id>.md`) carrying a fixed header — status, dependencies, reviewer class, and the merge and
+  deploy gates — plus its acceptance criteria. A block is the unit TRON dispatches, gates, and drives
+  to done.
+- **A pipeline.** A living document (`pipeline.md`) that orders the blocks into phases and tracks each
+  one's status. Its shape is fixed enough for TRON to read deterministically, loose enough to stay
+  human-authored.
+
+TRON only reads these; your agents own and write them. The 42labs `new-project-template` ships this
+structure ready-made — adopt it for a new project, or bring an existing one up to it before seeding.
 
 ---
 
@@ -99,17 +124,17 @@ tron/
 ├── routing.yaml            # the trigger grammar + inbound-message map (canon, never per-project)
 ├── workflow.yaml           # the default knobs (worker/architect counts, cadence, git)
 ├── messages.yaml           # every line TRON says, by template
-├── engine/                 # the deterministic engine (dispatch loop, selector, judgment, lint)
-├── skills/                 # how a worker behaves: engineer · reviewer · architect
-├── protocols/              # lifecycle: bootup · session-end
+├── engine/                 # the deterministic engine (dispatch loop, selector, trunk reader, judgment, lint)
+├── protocols/              # lifecycle: bootup · run-teardown
 ├── scripts/                # thin shell connectors (heartbeat, worker→engine report, notifications)
 ├── templates/              # runtime-state seeds
 ├── contracts/              # design contracts + schemas
-├── spec.example.md         # the spec contract a block is built from
 ├── project.example.yaml    # the project-profile shape the seeder fills
-├── workflow.example.md     # the knobs, explained
-└── pipeline.example.md     # the pipeline format + statuses
+└── workflow.example.md     # the knobs, explained
 ```
+
+TRON ships no agents and no pipeline of its own: it reads the project's `agents/*.md` and its
+git-tracked canon pipeline (`pipeline.md` + `blocks/`), which the `new-project-template` defines.
 
 ## File layout — your project (after `tron seeder`)
 
@@ -119,8 +144,7 @@ tron/
 ├── tron · engine/          # the entrypoint + the deterministic engine (canon, copied)
 ├── project.yaml            # this project's pointers, agents, repo facts
 ├── workflow.yaml           # this project's knobs
-├── routing.yaml · messages.yaml · skills/ · protocols/ · scripts/   # canon, copied verbatim
-├── pipeline.md             # the live pipeline (if the host keeps none)
+├── routing.yaml · messages.yaml · protocols/ · scripts/   # canon, copied verbatim
 └── …runtime state…         # workflow-state, logs, inboxes (gitignored, edited in place)
 ```
 

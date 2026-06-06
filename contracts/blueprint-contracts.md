@@ -65,23 +65,25 @@ trigger → step (actor, skill) → outputs → on-complete (== a trigger)
 ### Standing layer
 - **PULSE** — runs at `tron:start` and on every `pulse` return. It keeps every worker slot busy and
   hands off to SWITCHBOARD; any unexpected input → SCRIPTS (the `*` catch-all). It is the loop, not a row.
-- **SWITCHBOARD** — per free worker slot, in priority: (a) oldest open **cleared adhoc** block →
-  (b) a **due cadence** reviewer (consume its counter) → (c) next **cleared** block by sequential ID.
-  Then **clear-ahead**: enqueue the architect (`review:next:<block>`) for every *pending* block not yet
-  queued. Then **wait** or **session:end**. A block is dispatchable **iff `cleared`**; dispatch flips
-  it `cleared → in-progress` (idempotent against concurrent passes).
+- **SWITCHBOARD** — per free worker slot, in priority: (a) oldest available **adhoc** block →
+  (b) a **due cadence** reviewer (consume its counter) → (c) next available block by pipeline order.
+  Then **clear-ahead**: enqueue the architect (`review:next:<block>`) to author the block file for every
+  in-scope roadmap row that has none yet. Then **wait** or **session:end**. A block is dispatchable
+  **iff** its file is `📋` with every `Depends on` already `✅` on trunk and it isn't already in flight
+  (no live worker, no open PR). Dispatch writes **no status** — TRON owns no pipeline; the spawned
+  worker record is the in-flight marker (idempotent against concurrent passes).
 
 ### Roles
 - **Architect** — a **persistent, dedicated** agent, **excluded from the worker slot pool**, with a FIFO
   queue. Architect rows ENQUEUE (never need a free slot, never contend with workers). The architect is
-  **forward-looking only**: it clears the next block (`forward-review`) and turns reviewer findings into
-  **upcoming** adhoc blocks (`log-review`); it never reopens a done block. `architect-count` is the knob
-  that drains the queue faster (the throughput bottleneck).
+  **forward-looking only**: it clears the path ahead by **authoring** the next block file (`forward-review`,
+  PR'd to trunk) and turns reviewer findings into **upcoming** adhoc block files (`log-review`); it never
+  reopens a done block. `architect-count` is the knob that drains the queue faster (the throughput bottleneck).
 - **Engineers + reviewers** share the worker slot pool. Reviewer types are open (code / security / data / …).
 - **Review is a milestone, not a verdict.** A reviewer delivers a log + "done"; the architect's
   log-review decides what becomes work.
-- **Cadence is PULL** — SWITCHBOARD checks the clock; a `<type>` counter increments on every
-  `block:next:done` and is reset on dispatch. Never auto-fired.
+- **Cadence is PULL** — SWITCHBOARD checks the clock; a `<type>` counter increments on every block that
+  lands `✅` on trunk (deduped via `seen_done`) and is reset on dispatch. Never auto-fired.
 - **Wall → operator.** A wall parks its block `blocked` + frees the slot; `operator:decision:<block>`
   resumes / amends / abandons it. Liveness (stall / dead worker) is the engine's side-system; it feeds a
   single `worker:stalled` trigger into the table.
@@ -112,8 +114,8 @@ grammar) is the only thing that is a canon change here.
 ### Architect-origin (the persistent, forward-only consultant)
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `architect.cleared` | forward-review done — block cleared | `block:<block>:clear` |
-| `architect.logged` | log-review done — findings shaped into adhoc | `block:adhoc:clear` |
+| `architect.cleared` | forward-review done — block file authored on trunk | `block:<block>:clear` |
+| `architect.logged` | log-review done — findings shaped into adhoc block files | `block:adhoc:clear` |
 
 ### Operator-origin (session or TG)
 | Tag | Meaning | Maps to |
@@ -178,18 +180,19 @@ Turn-based, no daemon. **One wake = one bounded tick.**
 - **Trigger:** cron → `sweep.sh` → resume the TRON session with `[SWEEP] tick`. Operator/TG inbound is
   drained in the same tick.
 - **A tick:**
-  1. **Load** `workflow-state.yaml` (the FSM cursor, counters, pipeline mirror, worker/architect-queue state).
-  2. **One bounded pass:** poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck);
-     drain inbound → `classify_message` → trigger or side; then run **PULSE** (which calls SWITCHBOARD) to
-     fill free slots, clear ahead, wait, or end — advancing the FSM as far as the available signals allow.
+  1. **Load** `workflow-state.yaml` (the FSM cursor, counters, trunk-read cache, worker/architect-queue state).
+  2. **One bounded pass:** refresh from trunk (`git` ff + read `pipeline.md`/`blocks/*.md` + `gh pr list`,
+     best-effort); poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck);
+     drain inbound → `classify_message` → trigger or side; drive in-flight DONE gates; then run **PULSE**
+     (which calls SWITCHBOARD) to fill free slots, clear ahead, wait, or end.
   3. **Persist atomically.**
   4. **Exit.**
 - **Atomic writes:** write `*.tmp`, then `mv` over the live file (atomic rename). Never half-written.
 - **Idempotency:** state persists only *after* the pass completes, so a crashed tick re-runs safely.
   World-mutating actions are state-guarded:
-  - spawn — guarded by `active_workers` + the `cleared → in-progress` flip (no double-dispatch);
+  - spawn — guarded by `active_workers` + open-PR check (no double-dispatch); TRON writes no status;
   - clear-ahead enqueue — guarded by "already queued for review";
-  - escalate — guarded by block `blocked` status;
+  - escalate — guarded by the runtime `blocked` list;
   - release/kill — guarded by worker `status`;
   - dispatch history — `dispatched.log` keyed by `block_id + attempt`.
 - A tick with no actionable signal persists `last_sweep_at` and exits — no transition.
@@ -210,29 +213,31 @@ Atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
 
 ---
 
-## 7. `pipeline: host` accepted format
+## 7. Canon pipeline format (what TRON reads)
 
-When `pipeline: host`, TRON accepts the host doc **only** in this shape:
+TRON owns no pipeline. It **reads** the project's git-tracked canon — the format the
+`new-project-template` defines — and parses it deterministically (no LLM):
 
-- A single GitHub-flavored Markdown table.
-- A header row mapping (by name or obvious equivalent) to **Order, ID, Owner, Status** (Notes optional).
-- Each `Status` cell ∈ `{pending, cleared, in-progress, blocked, done, abandoned}` (case-insensitive).
-- One block per row.
+- **Living doc** (`pipeline.md`): `## ` sections (Roadmap, Technical Debt, Ad-hoc Blocks, Backlog),
+  `### Phase N: <Title>` headers, and `ID | Task | Status | Notes` tables. The Status cell is **exactly
+  one emoji** from `📋 🔄 ✅ 📌 🔧 ❌ 📦 ✂️`; a row with a block file names it in Notes as `Block `blocks/<id>.md``.
+- **Block files** (`blocks/<id>.md`): fixed `**Key:** value` headers — `Status`, `Depends on`,
+  `Reviewer class`, `Merge`, `Deploy`, `Phase`. The block file is **dispatch truth**; the living doc gives order.
 
-Determinism guard: TRON parses the host table **once at session start** into a **normalized internal
-mirror** (`workflow-state.yaml › pipeline`), reads the mirror every tick, and **writes back to the host
-file only on status-change events** — never a full rewrite every tick. `cleared` and `abandoned` are
-TRON-managed statuses; using a host doc means TRON writes them there too. If the host doc deviates from
-this shape, the **seeder** flags it and offers: reformat (operator) or switch to `pipeline: internal`.
+Emoji → status: `📋`→to-do (dispatchable when deps `✅`), `🔄`→in-progress, `✅`→done; the rest
+(`📌 🔧 ❌ 📦 ✂️`) are not dispatchable. The seeder confirms the project complies; it never rewrites the
+project's pipeline or blocks.
 
 ---
 
-## 8. Pipeline-tracking decision
+## 8. Truth model: canon is authority, TRON reads
 
-Internal `pipeline.md` **stays gitignored** (runtime state): it mutates on every status change; tracking
-it would create churny commits, and host-owned **specs** (tracked) already encode intent. **Accepted
-trade-off:** block-status *history* is not version-controlled; end-of-session status is captured in the
-session log (`logs/`). A later block must not silently reverse this.
+The pipeline is the project's **git-tracked** canon, written by agents via PR — not TRON state. TRON
+holds only a **disposable read cache** (`workflow-state.yaml › pipeline`), rebuilt every wake from trunk
++ open PRs + alive workers, so a crash, an off-session, or tron→no-tron→tron leaves **no drift**. TRON
+writes **nothing** to git: it never sets status. A block is done only when it shows `✅` on trunk
+(merged, re-validated, deployed-clean — all landed by an agent). Status *history* is version-controlled
+in the project repo, as it should be.
 
 ---
 

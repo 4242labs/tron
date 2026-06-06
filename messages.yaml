@@ -34,7 +34,7 @@ templates:
   arch.forward:
     channel: worker
     slots: [block]
-    text: "[TRON]  Architect — clear {block}. Review the work ahead of it, shape it, then report it cleared. Forward only — never reopen what's done."
+    text: "[TRON]  Architect — clear the path to {block}. Scope it: author its block file (PR it to trunk), then report it. Forward only — never reopen what's done."
   arch.log:
     channel: worker
     slots: [type]
@@ -51,6 +51,10 @@ templates:
     channel: worker
     slots: [worker_id]
     text: "[TRON]  {worker_id}? You've gone quiet. Still building, or stuck? Answer before I assume the worst."
+  gate.step:
+    channel: worker
+    slots: [worker_id, block, detail]
+    text: "[TRON]  {worker_id}, {block} isn't done till the evidence says so. {detail}"
 
   # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched:
@@ -75,6 +79,10 @@ templates:
     channel: operator
     slots: [detail]
     text: "[TRON]  Got something I can't parse: {detail}. I don't guess on flow decisions. Tell me what to do with it."
+  escalate.merge:
+    channel: operator
+    slots: [block, pr, detail]
+    text: "[TRON]  {block} (PR {pr}) is at the merge gate. {detail}. Approve and I'll let it land — say the word."
   tg.escalate:
     channel: tg
     slots: [worker_id, detail]
@@ -89,6 +97,15 @@ templates:
     text: "[TRON]  Status, since you asked: {detail}. Routine: handled. End of line."
 
   # session lifecycle (operator channel)
+  session.scope:
+    channel: operator
+    slots: []
+    text: |
+      [TRON]  Online. Before I take the fleet — how far do I run? Should I proceed with:
+        1) All open phases and blocks
+        2) A specific phase
+        3) A range of blocks
+      Your call. End of line.
   session.start:
     channel: operator
     slots: []

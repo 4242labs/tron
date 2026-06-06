@@ -81,14 +81,14 @@ Read the sender first, then the intent.
 - `worker.progress` — a heartbeat with nothing to act on.
 
 **From the architect** (its own reports, not a worker's):
-- `architect.cleared` — it finished a forward-review and reports a block **cleared**. Pull `block`.
+- `architect.cleared` — it finished a forward-review: it **authored the block file** (PR'd to trunk), clearing the path ahead. Pull `block`.
 - `architect.logged` — it finished a log-review. Pull `adhoc`: a list of `{id, goal}` parsed from
   its `adhoc <id>: <goal>` lines. A report of "log done" / "nothing" is this tag with an **empty**
   `adhoc` list — still `architect.logged`, never a different tag.
 
 **From the operator** (session or Telegram):
-- `operator.decision` — answers an open wall. Pull `block` and `decision` ∈ `resume | amend |
-  abandon`.
+- `operator.decision` — answers an open wall, or signs off a held merge. Pull `block` and
+  `decision` ∈ `resume | amend | abandon | approve` (approve = let the held merge land).
 - `operator.status_query` — wants the current state.
 - `operator.workflow_change` — change a rule or a knob.
 - `operator.directive` — a general instruction that isn't any of the above.

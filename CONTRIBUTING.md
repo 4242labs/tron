@@ -20,10 +20,9 @@ There's no build step — the engine is plain Python (`python3`), the connectors
 
 | Surface | Where | Adds |
 |:--|:--|:--|
-| **Worker skill** | `skills/<role>.md` | how an agent behaves (a new role, or a sharper method) |
-| **Reviewer lens** | `workflow.yaml › cadence` + a reviewer skill | a review pass (security, data, a11y, …) |
-| **Protocol** | `protocols/<name>.md` | a lifecycle flow (bootup / session-end / …) |
-| **Engine** | `engine/` | the dispatch loop, selector, judgment, lint — keep it deterministic |
+| **Reviewer lens** | `workflow.yaml › cadence` | a review pass (security, data, a11y, …); the persona is the project's own `agents/` file |
+| **Protocol** | `protocols/<name>.md` | a lifecycle flow (bootup / run-teardown / …) |
+| **Engine** | `engine/` | the dispatch loop, selector, trunk reader, judgment, lint — keep it deterministic |
 | **Copy** | `messages.yaml` | TRON's voice (dark, dry, sardonic; never name the host runtime) |
 | **Docs** | `README.md`, the [wiki](https://github.com/42piratas/tron/wiki), `contracts/` | guides, references |
 

@@ -1,23 +1,18 @@
 """state — load / mutate / atomically persist workflow-state.yaml.
 
-The FSM cursor, counters, active workers and the pipeline mirror. Every tick
-loads it, mutates in memory, and persists once at the end (contracts §5):
-state is written only after the bounded pass completes, so a crashed tick
-leaves the pre-tick state intact and the next wake safely re-runs.
+The FSM cursor, counters, active workers, the architect queue, and the disposable
+trunk-read caches. Every tick loads it, mutates in memory, and persists once at
+the end (contracts §5): state is written only after the bounded pass completes,
+so a crashed tick leaves the pre-tick state intact and the next wake safely
+re-runs.
+
+TRON owns no pipeline (realign §A): the `pipeline` here is a READ-ONLY cache of
+the project's canon trunk (pipeline.md + blocks/*.md), rebuilt every wake. Status
+lives on trunk and only agents write it (via PR). TRON never sets it.
 
 World-mutating actions are state-guarded here so a retried tick can't double-fire.
 """
-import os
-
 import util
-
-# pending  = needs clearing (the architect has not cleared it yet)
-# cleared  = architect-cleared, ready to dispatch (the ONLY dispatchable status)
-# in-progress = a worker is building it
-# blocked  = walled, parked awaiting an operator:decision
-# done     = built + released
-# abandoned = operator dropped it (out of the sequence)
-PIPELINE_STATUSES = {"pending", "cleared", "in-progress", "blocked", "done", "abandoned"}
 
 
 class State:
@@ -44,11 +39,20 @@ class State:
 
     @property
     def pipeline(self):
+        """Read-only cache of the merged trunk view (reader.load). Rebuilt each wake
+        from trunk; never authority. Rows: id, task, status, phase, section, order,
+        depends_on, reviewer_class, merge, deploy, has_block_file."""
         return self.data.setdefault("pipeline", [])
 
     @property
     def live_config(self):
         return self.data.setdefault("live_config", {})
+
+    @property
+    def scope(self):
+        """Run scoping chosen at bootup (session.scope). {mode: all|phase|range, value}.
+        TRON dispatches only in-scope, still-open blocks; done (✅) stays invisible."""
+        return self.data.setdefault("scope", {"mode": "all"})
 
     @property
     def architect_queue(self):
@@ -57,8 +61,35 @@ class State:
 
     @property
     def cadence(self):
-        """Per-type pull counter: <type> -> blocks completed since its last review."""
+        """Per-type pull counter: <type> -> merged-✅ blocks seen since its last review."""
         return self.data.setdefault("cadence", {})
+
+    @property
+    def seen_done(self):
+        """Block IDs already counted toward cadence (dedup against trunk re-reads)."""
+        return self.data.setdefault("seen_done", [])
+
+    @property
+    def gate(self):
+        """DONE-gate progress per block: {block_id: {stage, pr, detail}}. Runtime only —
+        the gate drives an agent through the canon 6-stage flow; trunk-✅ is the verdict."""
+        return self.data.setdefault("gate", {})
+
+    @property
+    def open_prs(self):
+        """Last-read in-flight PRs keyed by head branch (trunk.open_prs cache)."""
+        return self.data.setdefault("open_prs", {})
+
+    @property
+    def blocked(self):
+        """Blocks parked on an operator decision (runtime escalation state, never git)."""
+        return self.data.setdefault("blocked", [])
+
+    @property
+    def approvals(self):
+        """Per-session merge knob (realign §8). merge_staging/promote_main: APPROVED|ASK.
+        Held in runtime, reset each session; TRON never writes it to git."""
+        return self.data.setdefault("approvals", {})
 
     # ── idempotency guards (contracts §5) ──
     def has_active_worker_for_block(self, block_id, role=None):
@@ -74,32 +105,16 @@ class State:
         with open(self.ctx.dispatched_log, "a") as fh:
             fh.write(line)
 
-    # ── pipeline helpers ──
-    def set_block_status(self, block_id, status):
-        for row in self.pipeline:
-            if row.get("id") == block_id:
-                row["status"] = status
-                return True
-        return False
+    # ── trunk-read cache (set by the engine's _refresh_from_trunk; never authority) ──
+    def set_pipeline(self, view):
+        self.data["pipeline"] = view
 
-    def clear_block(self, block_id):
-        """Architect forward-review result: pending -> cleared (dispatchable)."""
-        for row in self.pipeline:
-            if row.get("id") == block_id and row.get("status") == "pending":
-                row["status"] = "cleared"
-                return True
-        return False
+    def row(self, block_id):
+        return next((r for r in self.pipeline if r.get("id") == block_id), None)
 
-    def insert_adhoc_blocks(self, blocks):
-        """Append adhoc fix blocks (architect log-review). Born `cleared` — ready to dispatch."""
-        base = max((r.get("order") or 0) for r in self.pipeline) if self.pipeline else 0
-        adhoc = [b for b in blocks if b.get("id")]   # an entry with no id can't be tracked — skip it
-        for i, b in enumerate(adhoc, 1):
-            self.pipeline.append({
-                "order": base + i,
-                "id": b["id"],
-                "owner": b.get("owner_role", "engineer"),
-                "status": "cleared",
-                "kind": "adhoc",
-                "notes": b.get("goal", ""),
-            })
+    def mark_counted(self, block_id):
+        """Count a freshly-✅ block toward cadence exactly once."""
+        if block_id in self.seen_done:
+            return False
+        self.seen_done.append(block_id)
+        return True

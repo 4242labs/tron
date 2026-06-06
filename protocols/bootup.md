@@ -13,10 +13,11 @@ runs on its own until session-end.
 The **interactive** steps (1–2) belong to the console; the **deterministic** steps (3–4) are the
 engine (`engine.start`). They are one continuous flow.
 
-## 1. Confirm the start point *(console)*
-Default is the **whole pipeline**, from the first uncleared block. The operator may instead pick a
-specific block, a subset, or a resume point. Confirm one, then proceed — TRON dispatches only what's
-in scope.
+## 1. Confirm the run scope *(console)*
+The `session.scope` prompt offers three choices: **(1) all open phases and blocks · (2) a specific
+phase · (3) a range of blocks**. The operator picks one; TRON dispatches only in-scope, still-open
+blocks (`📋` with deps `✅`). Scope is never set by editing block status — `✅` always stays invisible
+to dispatch.
 
 ## 2. Worker count *(console)*
 Ask the **worker_count**: the size of the worker pool (engineers + reviewers share it). State the
@@ -27,8 +28,9 @@ dedicated, persistent agent on top of the pool (`architect_count`, default 1).
 Spawn the persistent architect (out of the worker pool) and leave it idle, ready to drain its queue.
 
 ## 4. First dispatch *(engine)*
-Emit `pulse`. PULSE runs SWITCHBOARD: with nothing cleared yet, CLEAR AHEAD enqueues the architect
-to clear the pipeline forward; the first cleared block dispatches on the next pulse. The loop is live.
+Read the canon trunk (pipeline.md + blocks/*.md), then emit `pulse`. PULSE runs SWITCHBOARD: any
+in-scope `📋` block with deps `✅` dispatches; CLEAR AHEAD enqueues the architect to author the block
+files for roadmap rows not yet scoped. The loop is live.
 
 > Liveness, Telegram, and cron are config-driven (`project.yaml`) and start silently if enabled —
 > bootup does not ask about them.

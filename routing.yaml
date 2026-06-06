@@ -41,8 +41,8 @@ tags:
   worker.question_peer:     { side: observe }            # peer consult; logged, no advance
   worker.question_tron:     { side: answer_from_context }
   # architect-origin (the persistent, forward-only consultant's reports)
-  architect.cleared:        { trigger: "block:<block>:clear" }   # forward-review done -> block cleared
-  architect.logged:         { trigger: "block:adhoc:clear" }     # log-review done -> adhoc shaped
+  architect.cleared:        { trigger: "block:<block>:clear" }   # forward-review done -> block file authored on trunk
+  architect.logged:         { trigger: "block:adhoc:clear" }     # log-review done -> adhoc block files authored
   # operator-origin
   operator.decision:        { trigger: "operator:decision:<block>" }
   operator.status_query:    { side: reply_digest }

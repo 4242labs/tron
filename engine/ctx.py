@@ -44,10 +44,6 @@ class Ctx:
         return self.p("workflow-state.yaml")
 
     @property
-    def pipeline_internal(self):
-        return self.p("pipeline.md")
-
-    @property
     def current_id(self):
         return self.p("current-id")
 
@@ -90,3 +86,24 @@ class Ctx:
 
     def load_project(self):
         return util.load_yaml(self.project) if os.path.exists(self.project) else {}
+
+    # ── canon paths in the target repo (TRON reads these; never writes them) ──
+    def repo_paths(self, project):
+        """Resolve the trunk checkout + canon file paths from project.yaml.
+
+        repo.root is the trunk checkout; pipeline/blocks/archive are relative to it.
+        Returns {root, pipeline, blocks, archive, main_branch, staging}."""
+        repo = (project or {}).get("repo") or {}
+        root = os.path.expanduser(repo.get("root") or self.dir)
+
+        def under(rel, default):
+            return os.path.join(root, (project or {}).get(rel) or default)
+
+        return {
+            "root": root,
+            "main_branch": repo.get("main_branch", "main"),
+            "staging": repo.get("staging", "none"),
+            "pipeline": under("pipeline_path", "meta/pipeline.md"),
+            "blocks": under("blocks_dir", "meta/blocks/"),
+            "archive": under("archive_dir", "meta/blocks/archive/"),
+        }

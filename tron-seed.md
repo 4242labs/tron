@@ -4,7 +4,7 @@ Read by the runtime on the operator's machine to seed TRON into a target project
 
 > Run from a clone of canon kept **outside** the project. Never clone canon into the project tree.
 
-TRON is a deterministic FSM: the engine runs a **fixed event table** (the PULSE dispatch loop + SWITCHBOARD work-selector) over the canon grammar (`routing.yaml`), driven by the project's **knobs** (`workflow.yaml`), and calls the model only for two bounded judgment tools (`classify_message`, `assess_wall`). The seeder's job is to lay that instance down and fill the **per-project** parts — the knobs, pointers, and pipeline. It never authors the canon (`routing.yaml`, `messages.yaml`, `tron.md`, `skills/`, `protocols/`, `scripts/`).
+TRON is a deterministic FSM: the engine runs a **fixed event table** (the PULSE dispatch loop + SWITCHBOARD work-selector) over the canon grammar (`routing.yaml`), driven by the project's **knobs** (`workflow.yaml`), and calls the model only for two bounded judgment tools (`classify_message`, `assess_wall`). The seeder's job is to lay that instance down and fill the **per-project** parts — the knobs and the pointers to the project's own canon (agents + pipeline). TRON owns no pipeline, no work-unit format, and no agents: it **reads** the project's git-tracked pipeline and blocks (agents write those via PR) and adapts to whatever agents the project defines. It never authors the TRON canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`, `scripts/`).
 
 ---
 
@@ -28,18 +28,18 @@ Obey the constraints in **What the seeder must NOT do** (bottom of this file). C
 TRON lives **next to the crew it dispatches.** The operator names the **agents directory** `<agents>`; TRON installs:
 
 - `<agents>/tron.md` — the judgment-tool prompt context (canon)
-- `<agents>/tron/` — TRON's folder (config, canon, skills, scripts, state)
+- `<agents>/tron/` — TRON's folder (config, canon, scripts, state)
 
 Deleting those two removes TRON cleanly. `<agents>` is project-specific — never hardcode it.
 
 ## What TRON needs from the host
 
-Two locations, recorded as pointers in `project.yaml`:
+Two things, recorded in `project.yaml`. TRON only ever **reads** them:
 
-1. **`<agents>`** — where the worker definitions live (TRON installs here too).
-2. **`<specs>`** — where the spec files live (local MD; see `spec.example.md`).
+1. **`<agents>`** — the project's worker personas (`<role>.md`). TRON ships none; it dispatches whatever lives here.
+2. **The canon pipeline** — the git-tracked `pipeline.md` (the living doc; order) plus the `blocks/` directory (one file per work unit; dispatch truth). Agents already write these via PR. TRON records their paths and reads them every wake; it never writes them.
 
-Everything else TRON brings (canon, skills, scripts, state) or detects (branch, remote, conventions). Git belongs to the *workflow*, not to TRON.
+Everything else TRON brings (its canon, scripts, state) or detects (branch, remote, staging, conventions). Git belongs to the *project*, not to TRON.
 
 ## The instance layout (what the seeder writes)
 
@@ -52,15 +52,16 @@ Everything else TRON brings (canon, skills, scripts, state) or detects (branch, 
   workflow.yaml                  # seeder writes — the KNOBS (worker/architect counts, cadence, git, silence), from the canon default
   routing.yaml                   # canon, copied verbatim — NEVER edited by the seeder
   messages.yaml                  # canon, copied verbatim
-  skills/  protocols/  scripts/  templates/   # canon, copied (scripts chmod +x)
+  protocols/  scripts/  templates/   # canon, copied (scripts chmod +x)
   workflow-state.yaml            # runtime FSM state (gitignored)
-  pipeline.md                    # internal pipeline, if host has none (gitignored)
   current-id dispatched.log .tg-offset .env logs/                       # runtime (gitignored)
   worker-inbox.jsonl operator-inbox.jsonl tg-inbox.jsonl home-events.jsonl   # runtime (gitignored)
   seed-trace.md  .gitignore
 ```
 
-**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `project.yaml`, `workflow.yaml`, `routing.yaml`, `messages.yaml`, `skills/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
+The project's canon pipeline (`pipeline.md` + `blocks/`) lives in the project tree, not here — TRON only points at it.
+
+**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `project.yaml`, `workflow.yaml`, `routing.yaml`, `messages.yaml`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
 
 ---
 
@@ -92,7 +93,7 @@ Check silently; **report only problems.**
 Detect candidates; confirm one at a time. Suspect, don't interrogate.
 
 - **`<agents>`** — find a directory of `<role>.md` worker files. *"Where does your crew live? Suspecting `meta/agents/` — confirm or redirect."*
-- **`<specs>`** — find a directory of spec MD files. *"And the specs? Looks like `specs/` — yes?"*
+- **The canon pipeline** — find the living `pipeline.md` and its `blocks/` directory. *"Your pipeline — `meta/pipeline.md` with `meta/blocks/`, yes?"* Also note whether the repo runs a staging branch (`repo.staging`).
 
 ## Step 3 — Lay down TRON's folder
 
@@ -105,7 +106,6 @@ Copy canon (verbatim — never edit):
 - all of `engine/` → `<agents>/tron/engine/` (the deterministic engine)
 - `routing.yaml`, `messages.yaml` → `<agents>/tron/`
 - the canon default `workflow.yaml` → `<agents>/tron/workflow.yaml` (the knobs the operator just tuned)
-- all of `skills/` → `<agents>/tron/skills/`
 - all of `protocols/` → `<agents>/tron/protocols/`
 - all of `scripts/` → `<agents>/tron/scripts/` (`chmod +x` each)
 - all of `templates/` → `<agents>/tron/templates/` (runtime-state seeds the engine reads on first start)
@@ -129,31 +129,32 @@ operator-inbox.jsonl
 home-events.jsonl
 logs/
 workflow-state.yaml
-pipeline.md
 engine/__pycache__/
 ```
 
-(`pipeline.md` line only if the pipeline is internal — see Step 5.)
+(No `pipeline.md` here — the pipeline is the project's git-tracked canon, not TRON's.)
 
 With canon in place, **apply the Step 1 knob changes to `workflow.yaml`** (worker/architect counts, cadence map, git, peer-consults). If none were requested, the canon default stands.
 
-## Step 4 — Validate agents + specs
+## Step 4 — Validate agents + the canon pipeline
 
-- **Agents** (against the knobs + pipeline): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) or by a pipeline block `Owner` has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`. (This is a **seeder-time** check — lint sees `workflow.yaml`/`project.yaml` but not the pipeline, so the `Owner`-has-a-file part is enforced here, not by `tron validate`.)
-- **Specs** (against the contract): explain it (`spec.example.md` — ID, goal, acceptance criteria, scope, dependencies, owner; no status). Read the specs, check compliance, ask the operator to fill gaps. Never rewrite host specs.
+- **Agents** (against the knobs): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer-code.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`.
+- **Canon pipeline** (against the format the reader needs): confirm `pipeline.md` follows the canon contract — `### Phase N:` headers, `ID | Task | Status | Notes` tables, an emoji-only Status cell, and a block-file ref in Notes — and that `blocks/*.md` carry the fixed headers (`Status`, `Depends on`, `Reviewer class`, `Merge`, `Deploy`). This is what the deterministic reader parses; a project on the current `new-project-template` already complies. Never rewrite the project's pipeline or blocks — flag drift to the operator and let an agent fix it via PR.
 
-## Step 5 — Pipeline
+## Step 5 — Point at the pipeline
 
-See `pipeline.example.md`. First decide the branch: detect a likely status/pipeline doc, or ask — *"Do you already track block status in a doc, or should I keep the pipeline myself?"*
+TRON owns no pipeline. The project's git-tracked **living doc** (`pipeline.md`, order) plus its **block files** (`blocks/*.md`, dispatch truth) are the pipeline — written by agents via PR, read by TRON every wake. The seeder only records where they are and how the repo merges.
 
-- **Host keeps a pipeline doc:** ask its path, validate it meets the accepted format (a single MD table with Order, ID, Owner, Status ∈ {pending, cleared, in-progress, blocked, done, abandoned}; notes optional), fill gaps, use it as the live pipeline → `pipeline.mode: host` + `pipeline.path`. Drop the `pipeline.md` line from `.gitignore`. (TRON keeps a normalized mirror and writes back only on status changes — never a per-tick rewrite. `cleared`/`abandoned` are TRON-managed; using a host doc means TRON writes them there too.)
-- **Host has none:** interview the operator — per spec: order, owner, current status. Captures what's already done in a mid-project repo. Write `<agents>/tron/pipeline.md` from `templates/pipeline.md` → `pipeline.mode: internal`.
+Record in `project.yaml` (paths relative to `repo.root`):
 
-In sessions, TRON's pipeline is authoritative; spec dependencies are hard gates, pipeline order is preference.
+- `pipeline_path` (e.g. `meta/pipeline.md`), `blocks_dir` (e.g. `meta/blocks/`), `archive_dir` (e.g. `meta/blocks/archive/`).
+- `repo.staging` — `staging` (two-gate: staging then main) or `none` (single gate). Sets the merge model.
+
+In sessions: a block is dispatchable only when its file is `📋` with every `Depends on` already `✅` on trunk; pipeline order is preference, block dependencies are the hard gates. TRON never writes status — agents land `✅` (merged, re-validated, deployed-clean) via PR, and TRON reads it on the next refresh.
 
 ## Step 6 — Write project.yaml
 
-Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): the two pointers, agents map, pipeline mode/path, detected repo facts (name, repo root, main branch, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the workflow commits), notifications/heartbeat config (`telegram`, `cron` — default `off`/`auto`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy, notes — may be blank).
+Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): the `agents` pointer + the scanned role→file map, the canon pipeline paths (`pipeline_path`, `blocks_dir`, `archive_dir`), detected repo facts (name, repo root, main branch, `staging`, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the workflow commits), notifications/heartbeat config (`telegram`, `cron` — default `off`/`auto`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy success check, notes — may be blank).
 
 ## Step 7 — Notifications + heartbeat (config-driven — do not ask)
 
@@ -166,10 +167,9 @@ Effective heartbeat = `telegram == on` OR `cron == on`. **Record this in `projec
 
 ## Step 8 — Verify, fail fast
 
-- Both pointers resolve (`<specs>` readable; `<agents>` has ≥1 usable role).
+- Pointers resolve: `<agents>` has ≥1 usable role; `pipeline_path` + `blocks_dir` exist and are readable.
 - `workflow.yaml` references only roles that exist.
-- Specs meet the contract (or gaps explicitly accepted).
-- Pipeline present and valid.
+- The canon pipeline + blocks meet the format the reader needs (or drift flagged to the operator).
 - All instance files in place.
 - **Blueprint-lint passes** — the seeder runs it (blueprint-lint over `routing.yaml` + the engine's event table + this project's `workflow.yaml`): the grammar is complete, the tag enum is closed and total, every trigger satisfies the grammar and resolves to a table row, every table handler binds to an engine method, the canon tools are present, and `worker_count`/cadence/session knobs are well-formed. A malformed instance fails here, not at runtime.
 
@@ -184,26 +184,26 @@ Sign off in persona, with a terse summary — **project-relative paths only** (n
 ```
 - Project: {NAME}
 - Agents: <agents>/      TRON: <agents>/tron/
-- Specs: {SPECS}
-- Pipeline: {host <path> | internal}
+- Pipeline: {pipeline_path} + {blocks_dir}   (read-only; agents write it)
+- Merge model: {staging | single-gate}
 - Telegram: {on | off}   Cron: {on | off}
 - Lint: pass
 - Trace: <agents>/tron/seed-trace.md
 ```
 
-TRON now sleeps in `<agents>/tron/`. It wakes when you start it — not before. Start it with `<agents>/tron/tron start` (the bootup Q&A asks the start point + `worker_count`, spawns the architect, and dispatches). Starting it is out of scope here; the operator wakes TRON manually.
+TRON now sleeps in `<agents>/tron/`. It wakes when you start it — not before. Start it with `<agents>/tron/tron start` (the bootup Q&A asks the run scope + `worker_count`, spawns the architect, and dispatches). Starting it is out of scope here; the operator wakes TRON manually.
 
 ---
 
 ## Re-seeding / updates
 
-Safely re-runnable: show current values before overwriting; diff file-by-file for anything the operator may have customized (`workflow.yaml`); never touch canon (`routing.yaml`, `messages.yaml`, `tron.md`, `skills/`, `protocols/`) except to update it wholesale; cron install is idempotent; append a dated section to `seed-trace.md`. For a canon update, re-run the seeder from a fresh canon clone — it re-copies canon verbatim and leaves the per-project `workflow.yaml`/`project.yaml`/pipeline intact.
+Safely re-runnable: show current values before overwriting; diff file-by-file for anything the operator may have customized (`workflow.yaml`); never touch canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`) except to update it wholesale; cron install is idempotent; append a dated section to `seed-trace.md`. For a canon update, re-run the seeder from a fresh canon clone — it re-copies canon verbatim and leaves the per-project `workflow.yaml`/`project.yaml` intact.
 
 ## What the seeder must NOT do
 
 - Modify any file in the canon `tron/` repo.
 - Author or edit `routing.yaml` or `messages.yaml` (canon — copied verbatim only).
-- Create spec or agent files in the host.
+- Create or edit agent files, the pipeline, or block files in the project (TRON only reads them; agents write them via PR).
 - Scaffold any host structure — write only inside `<agents>/tron/` and `<agents>/tron.md`.
 - Spawn TRON itself (the operator does that post-seed).
 - Inline secrets anywhere but `.env`.

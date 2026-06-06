@@ -5,32 +5,34 @@
 #
 # Annotations:  # REQUIRED | # OPTIONAL | <placeholder>  | a | b  (enum)
 
-# ── Pointers (the heart of the config) ──────────────────────────────
+# ── Pointers ─────────────────────────────────────────────────────────
 pointers:
-  agents: <path>            # REQUIRED. Where worker agent defs live; TRON installs here too. e.g. meta/agents/
-  specs:  <path>            # REQUIRED. Where host spec files live (local MD).
+  agents: <path>            # REQUIRED. The project's worker personas (TRON reads; ships none). e.g. meta/agents/
+
+# ── Canon pipeline (git-tracked; agents write via PR, TRON only reads) ──
+# Paths relative to repo.root. pipeline.md = living doc (order);
+# block files = dispatch truth (status, deps, gates). TRON never writes these.
+pipeline_path: <path>       # REQUIRED. e.g. meta/pipeline.md
+blocks_dir:    <path>       # REQUIRED. e.g. meta/blocks/
+archive_dir:   <path>       # REQUIRED. e.g. meta/blocks/archive/
 
 # ── Agents available (roles found at pointers.agents) ───────────────
-# Seeder enumerates files present; never creates them. lint L13: architect +
-# engineer must be listed here (reviewer too when a cadence runs), and any role
-# named in peer_consults must be one of these.
-agents:                     # REQUIRED, >=1 entry
+# Seeder enumerates files present by scanning pointers.agents; it never creates
+# them and TRON ships none. lint L13: when present, architect + engineer must be
+# listed (reviewer too when a cadence runs), and any role named in peer_consults
+# must be one of these. Omit entirely and L13 skips.
+agents:                     # OPTIONAL (seeder-populated by scanning pointers.agents)
   - role: <name>            # e.g. engineer | architect | reviewer | <custom>
     file: <path>            # e.g. meta/agents/engineer.md
-
-# ── Pipeline mode ────────────────────────────────────────────
-pipeline:
-  mode: host | internal     # REQUIRED
-  path: <path>              # REQUIRED iff mode == host (the host doc; must meet contracts §7)
-  # mode: internal -> pipeline lives at <agents>/tron/pipeline.md (gitignored, see contracts §8)
 
 # ── Detected repo facts (auto; only matter to workflows that use them) ──
 repo:                       # OPTIONAL block; present when a git workflow is used
   name: <str>
-  root: <path>
+  root: <path>              # the trunk checkout TRON reads; agents build in worktrees off it
   main_branch: <str>        # e.g. main
+  staging: staging | none   # two-gate (staging+main) vs single-gate merge model
   remote: <org/repo>        # OPTIONAL
-  worktrees_dir: <path>     # default .worktrees/
+  worktrees_dir: <path>     # default ../worktrees/  (<workspace>/worktrees/<repo>--<branch>/)
   logs_dir: <path>
 
 # ── Conventions (spawn scripts read these instead of hardcoding) ────
@@ -56,7 +58,8 @@ protected_branches:         # OPTIONAL
 operator_only_tasks: []     # tasks TRON escalates, never dispatches (DNS, dashboards, billing…)
 local_validation_gaps: []   # work engineers do but can't fully verify (mobile, paid 3rd-party UAT…)
 ci: {}                      # runner / duration / stall-threshold override
-deploy: {}                  # trigger / target / preview URL / what TRON watches past merge
+deploy: {}                  # success check for the canon DoD deploy gate; inherited by blocks,
+                            # overridable per block via the block's `Deploy:` field
 notes: <str>                # OPTIONAL free text (monorepo boundaries, migration rules…)
 
 # env keys are NOT here — they live in <agents>/tron/.env (gitignored), read by scripts only.
