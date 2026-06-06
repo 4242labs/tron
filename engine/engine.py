@@ -82,22 +82,11 @@ def cmd_start(ctx):
     # Install the cron heartbeat (idempotent) — start owns it, so the engine never
     # ticks before a session exists. Only when the config makes it effective:
     # heartbeat = telegram==on OR cron==on; cron==auto follows telegram; cron==off wins.
-    if not os.environ.get("TRON_DRY") and _heartbeat_effective(ctx):
+    if not os.environ.get("TRON_DRY") and ctx.heartbeat_effective():
         ci = os.path.join(ctx.scripts_dir, "cron-install.sh")
         if os.path.exists(ci):
             os.system(f"bash {ci} >/dev/null 2>&1 || true")
     return 0
-
-
-def _heartbeat_effective(ctx):
-    notif = (ctx.load_project().get("notifications") or {})
-    tg = str(notif.get("telegram", "off")).lower() == "on"
-    cron = str(notif.get("cron", "auto")).lower()
-    if cron == "off":
-        return False
-    if cron == "on":
-        return True
-    return tg  # auto
 
 
 def cmd_tick(ctx):

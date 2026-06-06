@@ -117,7 +117,9 @@ class Console:
             eng.set_scope("all")
 
     def _install_cron(self):
-        if os.environ.get("TRON_DRY"):
+        # Same gate as the non-console start path (engine.cmd_start): only install the
+        # heartbeat when it's effective, so `cron: off` is honored from the console too.
+        if os.environ.get("TRON_DRY") or not self.ctx.heartbeat_effective():
             return
         ci = os.path.join(self.ctx.scripts_dir, "cron-install.sh")
         if os.path.exists(ci):

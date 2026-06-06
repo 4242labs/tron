@@ -87,6 +87,18 @@ class Ctx:
     def load_project(self):
         return util.load_yaml(self.project) if os.path.exists(self.project) else {}
 
+    def heartbeat_effective(self):
+        """Is the autonomous heartbeat (cron) effective? telegram==on OR cron==on;
+        cron==auto follows telegram; cron==off wins. Single source for every start path."""
+        notif = (self.load_project().get("notifications") or {})
+        tg = str(notif.get("telegram", "off")).lower() == "on"
+        cron = str(notif.get("cron", "auto")).lower()
+        if cron == "off":
+            return False
+        if cron == "on":
+            return True
+        return tg
+
     # ── canon paths in the target repo (TRON reads these; never writes them) ──
     def repo_paths(self, project):
         """Resolve the trunk checkout + canon file paths from project.yaml.

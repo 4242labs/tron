@@ -42,14 +42,18 @@ from render import Renderer
 # pattern -> handler method name; None = worker-activity row (no engine action).
 # Module-level so blueprint-lint validates it against the grammar without
 # instantiating the Engine (contracts §9).
+# SWITCHBOARD dispatches engineers/reviewers/forward-reviews by calling the methods
+# directly, so build:block:next, cadence:<type>, and review:next:<block> are not emitted
+# in normal flow; their rows declare the grammar edges (so lint L7/L9 see complete
+# coverage) and handle the trigger form if one ever arrives generically.
 TABLE = [
     ("tron:start",                 "_h_bootup"),
-    ("build:block:next",           "_h_dispatch_engineer"),
+    ("build:block:next",           "_h_dispatch_engineer"),  # see note above: not emitted in normal flow
     ("block:next:build",           None),               # engineer building
     ("block:next:done",            "_h_worker_done"),   # done is a trigger -> DONE gate (§F)
-    ("review:next:<block>",        "_h_forward_review"),
+    ("review:next:<block>",        "_h_forward_review"),     # not emitted in normal flow (SWITCHBOARD calls directly)
     ("block:*:clear",              "_h_checkpoint"),
-    ("cadence:<type>",             "_h_dispatch_reviewer"),
+    ("cadence:<type>",             "_h_dispatch_reviewer"),   # not emitted in normal flow (SWITCHBOARD calls directly)
     ("review:<type>",              None),               # reviewer reviewing
     ("review:<type>:done",         "_h_release_reviewer"),
     ("wall:raised:<block>",        "_h_escalate"),
@@ -136,10 +140,12 @@ class Engine:
         return self.ended
 
     # ── trunk read (realign §5): canon is truth; TRON reads, agents write ──
-    def _refresh_from_trunk(self):
+    def _refresh_from_trunk(self, count=True):
         """Fast-forward the trunk checkout, rebuild the pipeline view + PR cache, and
         recognise newly-✅ blocks (count cadence, release their workers). Best-effort:
-        a failed fetch reuses the last on-disk snapshot — never block the loop."""
+        a failed fetch reuses the last on-disk snapshot — never block the loop.
+        `count=False` (the initial load at start) skips the done-counting so pre-existing
+        ✅ history is NOT mistaken for fresh completions — _seed_seen_done primes it instead."""
         ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry)
         if not ok:
             self.log("trunk", f"refresh degraded: {detail}")
@@ -149,6 +155,8 @@ class Engine:
         except Exception as e:
             self.log("trunk", f"read failed (reusing snapshot): {e}")
         self.st.data["open_prs"] = trunk.open_prs(self.paths["root"], self.dry)
+        if not count:
+            return
         # Newly-done blocks: count toward cadence once, finalize any worker still on them.
         for r in self.st.pipeline:
             if r.get("status") == "done" and self.st.mark_counted(r["id"]):
@@ -838,15 +846,29 @@ class Engine:
         return out["tag"], out.get("slots", {})
 
     # ── lifecycle ──
+    def _reset_session_runtime(self):
+        """A fresh `tron start` (started_at was None — not a reconnect) begins a clean run:
+        drop the disposable per-session state (stale worker records from the prior run, gates,
+        parks, drops, approvals, cadence) and keep only `seen_done`, so already-✅ blocks never
+        re-trigger a review. The pipeline cache is rebuilt by the refresh that follows."""
+        self.st.data["active_workers"] = []
+        self.st.data["architect_queue"] = []
+        self.st.data["gate"] = {}
+        self.st.data["blocked"] = []
+        self.st.data["dropped"] = []
+        self.st.data["cadence"] = {}
+        self.st.data["approvals"] = {"merge_staging": "APPROVED", "promote_main": "ASK"}
+
     def start(self, worker_count):
         self.st.data.setdefault("session", {})["started_at"] = util.now_iso()
         self.st.live_config["worker_count"] = worker_count
         self.knobs["worker_count"] = worker_count
-        self._refresh_from_trunk()           # read canon truth before the first pulse
-        self._seed_seen_done()               # pre-existing ✅ must not trigger a cadence review
+        self._reset_session_runtime()        # clean slate; no stale architect/approvals carry over
+        self._refresh_from_trunk(count=False)  # load the view + PRs WITHOUT counting ✅ history
+        self._seed_seen_done()               # pre-existing ✅ are already-counted, never re-reviewed
         self._tq = []
         self.emit("session.start", {})
-        self._emit("tron:start")
+        self._emit("tron:start")             # _h_bootup now spawns a live architect (no stale record)
         self._drain_triggers()
         self.st.save()
 
