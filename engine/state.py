@@ -93,7 +93,8 @@ class State:
     def insert_adhoc_blocks(self, blocks):
         """Append adhoc fix blocks (architect log-review). Born `cleared` — ready to dispatch."""
         base = max((r.get("order") or 0) for r in self.pipeline) if self.pipeline else 0
-        for i, b in enumerate(blocks, 1):
+        adhoc = [b for b in blocks if b.get("id")]   # an entry with no id can't be tracked — skip it
+        for i, b in enumerate(adhoc, 1):
             self.pipeline.append({
                 "order": base + i,
                 "id": b["id"],
