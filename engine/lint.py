@@ -28,9 +28,9 @@ CANON_TAGS = {
     "unclassified",
 }
 CANON_TOOLS = {"classify_message", "assess_wall"}
-# The worker roles the engine always spawns — every instance must supply a file for each.
-# (reviewer is required only when a cadence runs; see L13.)
-BASE_ROLES = {"architect", "engineer"}
+# TRON ships and requires NO agents — they are the project's (realign decision #11).
+# L13 therefore hardcodes no roster; it only checks that the roles TRON's OWN config
+# (cadence lenses, peer-consults) references resolve to a persona the project provides.
 
 GRAMMAR_KEYS = {"forms", "subjects", "events", "params", "wildcard",
                 "alternatives", "terminals", "control", "match"}
@@ -195,28 +195,28 @@ def _composition(workflow, project):
     r.append(Result("L12 session shape", isinstance(pa, bool),
                     "" if isinstance(pa, bool) else f"persistent_architect={pa!r}"))
 
-    # L13 — project.agents covers every role the flow names (skipped if no project.yaml).
-    # Real check: the always-spawned roles (architect, engineer) must each have an agent
-    # file; reviewer is required only when a cadence runs (a no-reviewer project with an
-    # empty cadence is valid — the seeder offers "drop the cadence"); and every role
-    # referenced by peer_consults must exist. (Cadence types are reviewer lenses, not
-    # roles — they dispatch as `reviewer` and are intentionally open.)
+    # L13 — TRON's config resolves against the project's agents (skipped if no project.yaml).
+    # TRON hardcodes no roster (it ships zero agents — realign #11). It only checks the roles
+    # its OWN config references against what the project supplies: each cadence lens must have a
+    # reviewer persona the engine can resolve (`reviewer-<lens>` OR a generic `reviewer`, mirroring
+    # fsm._handover), and every peer-consult role must exist. It does NOT require architect/engineer/
+    # reviewer by name — those are the project's personas, validated by the seeder at seed time.
     agents = project.get("agents")
     if not agents:
-        r.append(Result("L13 project roles", True, "(no project.yaml agents — skipped)"))
+        r.append(Result("L13 config resolves to project agents", True, "(no project.yaml agents — skipped)"))
         return r
     roles = {a.get("role") for a in agents}
     pc = workflow.get("peer_consults") or []
     pc_roles = {p.get(k) for p in pc for k in ("worker", "may_consult") if p.get(k)}
-    required = BASE_ROLES | ({"reviewer"} if cadence else set())
-    missing = sorted(required - roles)
+    cadence_unresolved = sorted(t for t in cadence
+                                if f"reviewer-{t}" not in roles and "reviewer" not in roles)
     unknown = sorted(pc_roles - roles)
     bad = []
-    if missing:
-        bad.append(f"missing required role(s): {missing}")
+    if cadence_unresolved:
+        bad.append(f"cadence lens(es) with no reviewer persona (reviewer-<lens> or reviewer): {cadence_unresolved}")
     if unknown:
         bad.append(f"peer_consults names undeclared role(s): {unknown}")
-    r.append(Result("L13 project roles", not bad, "; ".join(bad)))
+    r.append(Result("L13 config resolves to project agents", not bad, "; ".join(bad)))
     return r
 
 

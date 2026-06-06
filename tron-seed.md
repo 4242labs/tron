@@ -114,7 +114,8 @@ Init runtime state (gitignored, edited in place, never committed):
 
 - `<agents>/tron/workflow-state.yaml` ← from `templates/workflow-state.yaml` (the engine also
   self-seeds this from `templates/` on first start, so this is belt-and-suspenders)
-- empty: `current-id`, `dispatched.log`, `tg-inbox.jsonl`, `.tg-offset`, `logs/`
+- empty: `current-id`, `dispatched.log`, `.tg-offset`, `logs/`
+- the inboxes + event log (`worker-inbox.jsonl`, `operator-inbox.jsonl`, `tg-inbox.jsonl`, `home-events.jsonl`) are created on first write — no need to pre-touch them
 
 Write `<agents>/tron/.gitignore`:
 
@@ -138,8 +139,8 @@ With canon in place, **apply the Step 1 knob changes to `workflow.yaml`** (worke
 
 ## Step 4 — Validate agents + the canon pipeline
 
-- **Agents** (against the knobs): enumerate `<role>.md` in `<agents>`. If a role referenced by `workflow.yaml` (a cadence reviewer type, a peer-consult pair) has no file: stop. *"Cadence runs a `code` reviewer, but there's no `reviewer-code.md`. Add the agent or drop the cadence?"* Never create agent files. Record the role→file map for `project.yaml`.
-- **Canon pipeline** (against the format the reader needs): confirm `pipeline.md` follows the canon contract — `### Phase N:` headers, `ID | Task | Status | Notes` tables, an emoji-only Status cell, and a block-file ref in Notes — and that `blocks/*.md` carry the fixed headers (`Status`, `Depends on`, `Reviewer class`, `Merge`, `Deploy`). This is what the deterministic reader parses; a project on the current `new-project-template` already complies. Never rewrite the project's pipeline or blocks — flag drift to the operator and let an agent fix it via PR.
+- **Agents** (TRON ships none — it dispatches whatever the project provides): enumerate `<role>.md` in `<agents>` and record the role→file map (role = the file's stem, e.g. `reviewer-code`) for `project.yaml`. TRON requires no specific agent. The only check is that the roles **TRON's own `workflow.yaml` references** resolve to a persona the project ships: each cadence lens `<type>` needs a reviewer persona the engine can resolve (a `reviewer-<type>.md`, or a generic `reviewer.md` it falls back to), and every peer-consult role must exist. If one doesn't: stop. *"Cadence runs a `code` review, but no `reviewer-code.md` or `reviewer.md` is here. Add a reviewer persona or drop the `code` cadence?"* Never create agent files.
+- **Canon pipeline** (against the format the reader needs): confirm `pipeline.md` follows the canon contract — `### Phase N:` headers, `ID | Task | Status | Notes` tables, an emoji-only Status cell, and a block-file ref in Notes — and that `blocks/*.md` carry the fixed headers (`Status`, `Depends on`, `Reviewer class`, `Merge`, `Deploy`; `Phase` optional). This is what the deterministic reader parses. Never rewrite the project's pipeline or blocks — flag drift to the operator and let an agent fix it via PR.
 
 ## Step 5 — Point at the pipeline
 
