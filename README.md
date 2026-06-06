@@ -56,7 +56,7 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 
 ![TRON supervisor workflow — BPMN](diagrams/flow-bpm.svg)
 
-<sub>The Dispatcher (**PULSE**) fans work to the engineer, architect, and reviewer tracks. A **⚙** marks where a deterministic script runs — *that* one runs is the point; which, and how many, is project-dynamic. Workers build, review, and scope; a **wall** parks the block and asks the **operator**; every track returns to **PULSE** (`↻`). · [Interactive version](diagrams/flow-bpm.html) (light/dark toggle).</sub>
+<sub>[Interactive version](diagrams/flow-bpm.html) (light/dark toggle).</sub>
 
 ---
 
