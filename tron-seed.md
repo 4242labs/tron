@@ -172,7 +172,7 @@ Effective heartbeat = `telegram == on` OR `cron == on`. **Record this in `projec
 - `workflow.yaml` references only roles that exist.
 - The canon pipeline + blocks meet the format the reader needs (or drift flagged to the operator).
 - All instance files in place.
-- **Blueprint-lint passes** — the seeder runs it (blueprint-lint over `routing.yaml` + the engine's event table + this project's `workflow.yaml`): the grammar is complete, the tag enum is closed and total, every trigger satisfies the grammar and resolves to a table row, every table handler binds to an engine method, the canon tools are present, and `worker_count`/cadence/session knobs are well-formed. A malformed instance fails here, not at runtime.
+- **Blueprint-lint passes** — the seeder runs it (blueprint-lint over `routing.yaml` + the engine's event table + this project's `workflow.yaml`/`project.yaml`): the grammar is complete, the tag enum is closed and total, every trigger satisfies the grammar and resolves to a table row, every table handler binds to an engine method, the canon tools are present, `worker_count`/cadence/session knobs are well-formed, and every role `workflow.yaml` references resolves to a project persona (L13 — each cadence lens to a `reviewer-<lens>` or generic `reviewer`, peer-consults to declared roles). A malformed instance fails here, not at runtime.
 
 On any unresolved failure: surface it, stop. (Live-loop dry-run belongs to the orchestration phase, not seeding.)
 
