@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 
 JOBS_DIR = os.path.expanduser("~/.claude/jobs")
 
+# The worker-agent runtime, resolved once. Override with TRON_RUNTIME; the literal
+# default is the only place the host runtime is named in code (never in TRON-facing copy).
+RUNTIME = os.environ.get("TRON_RUNTIME", "claude")
+
 
 def _parse_iso(s):
     if not s:
@@ -147,7 +151,7 @@ def spawn_detached(worker_id, prompt, cwd=None, settle_s=2.0):
     console. Returns {shortid, session_id} once the host registers the job,
     or {} if it could not be confirmed within settle_s.
     """
-    cmd = ["claude", "--bg", "-n", worker_id, prompt]
+    cmd = [RUNTIME, "--bg", "-n", worker_id, prompt]
     try:
         subprocess.Popen(
             cmd, cwd=cwd, start_new_session=True,
@@ -171,7 +175,7 @@ def send(session_id, text):
     Workers reach back via report.sh -> worker-inbox.jsonl (engine polls).
     """
     try:
-        subprocess.run(["claude", "--resume", session_id, "-p", text],
+        subprocess.run([RUNTIME, "--resume", session_id, "-p", text],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         return True
     except (subprocess.SubprocessError, OSError):
@@ -181,7 +185,7 @@ def send(session_id, text):
 def release(session_id):
     """Stop a worker process. Only the spine releases workers (R7)."""
     try:
-        subprocess.run(["claude", "stop", session_id],
+        subprocess.run([RUNTIME, "stop", session_id],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         return True
     except (subprocess.SubprocessError, OSError):

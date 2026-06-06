@@ -116,7 +116,8 @@ def _call_llm(tool, payload, ctx, correction=None):
              "\n\nReturn ONLY the JSON object. No prose, no fences."]
     if correction:
         parts.append(f"\n\nYour previous output failed validation: {correction}")
-    cmd = ["claude", "-p", "--model", TIER[tool], "".join(parts)]
+    from jobs import RUNTIME
+    cmd = [RUNTIME, "-p", "--model", TIER[tool], "".join(parts)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         return r.stdout or ""

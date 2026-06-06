@@ -12,6 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRON_DIR="$SCRIPT_DIR"
 export TRON_DIR
 ENGINE="$TRON_DIR/engine/engine.py"
+# The worker-agent runtime, resolved once. Override with TRON_RUNTIME; the literal
+# default is the only place the host runtime is named (never in operator-facing copy).
+RUNTIME="${TRON_RUNTIME:-claude}"
 
 usage() {
   cat <<'EOF'
@@ -34,8 +37,8 @@ case "$cmd" in
       echo "tron seeder: run this from a TRON canon clone (no tron-seed.md here — this looks like a seeded instance)." >&2
       exit 5
     }
-    command -v claude >/dev/null 2>&1 || { echo "tron seeder: the agent runtime is not on PATH" >&2; exit 4; }
-    exec claude "Read $TRON_DIR/tron-seed.md in full and seed TRON into this project, following it step by step."
+    command -v "$RUNTIME" >/dev/null 2>&1 || { echo "tron seeder: the agent runtime is not on PATH" >&2; exit 4; }
+    exec "$RUNTIME" "Read $TRON_DIR/tron-seed.md in full and seed TRON into this project, following it step by step."
     ;;
   start)
     exec python3 "$ENGINE" console "$@"

@@ -53,9 +53,10 @@ def cmd_validate(ctx):
 
 def cmd_doctor(ctx):
     import shutil
+    from jobs import RUNTIME
     print("doctor — environment:")
     # (binary, label) — label never names the host runtime in operator-facing output.
-    for binary, label in (("claude", "agent runtime"), ("jq", "jq"), ("python3", "python3")):
+    for binary, label in ((RUNTIME, "agent runtime"), ("jq", "jq"), ("python3", "python3")):
         print(f"  [{'PASS' if shutil.which(binary) else 'FAIL'}] {label} on PATH")
     try:
         import yaml  # noqa: F401
