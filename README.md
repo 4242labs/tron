@@ -187,6 +187,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/i
 
 <!-- contributors:start -->
 <a href="https://github.com/42piratas" title="42piratas"><img src="https://avatars.githubusercontent.com/u/18232600?v=4&s=64" width="64" height="64" alt="42piratas" /></a>
+Pink elephant was here
 <!-- contributors:end -->
 
 ## License
