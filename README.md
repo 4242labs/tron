@@ -16,7 +16,7 @@
 
 ## What this is
 
-You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents —
+You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents:
 an architect, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
 everyone else.**
 
