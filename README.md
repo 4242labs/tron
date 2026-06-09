@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A deterministic supervisor that builds software from specs — one agent you talk to; it runs the fleet.
+  A deterministic, spec-driven supervisor that builds software from specs (blocks) — one agent you talk to; it runs the fleet.
 </p>
 
 <p align="center">
@@ -16,13 +16,13 @@
 
 ## What this is
 
-You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents - 
-an architect, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
+You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents —
+architects, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
 everyone else.**
 
 The core is a **deterministic engine**, not a chatbot improvising. A fixed dispatch loop decides what
-happens next by lookup, never by guesswork; the language model is called only for the actual building
-and for two narrow, typed judgments. That makes the flow predictable, inspectable, and lint-checked
+happens next by lookup, never by guesswork; the language model does the actual building and a few
+narrow, well-scoped judgments. That makes the flow predictable, inspectable, and lint-checked
 before it ever runs.
 
 ## What this isn't
@@ -68,7 +68,7 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 TRON reads your project's structure — it never scaffolds it. Before you seed, the project must
 provide three things, all git-tracked and written by your agents via PR:
 
-- **Agents.** Your own worker personas — an architect, engineers, reviewers, whatever roles the work
+- **Agents.** Your own worker personas — architects, engineers, reviewers, whatever roles the work
   calls for — as `agents/<role>.md`. TRON dispatches them; it ships none and imposes none.
 - **Blocks.** Your work, specified and broken into right-sized units. One file per block
   (`blocks/<id>.md`) carrying a fixed header — status, dependencies, reviewer class, and the merge and
