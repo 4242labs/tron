@@ -49,4 +49,5 @@ Procedural skills in `<META_REPO_NAME>/skills/`. Agents read and follow these du
 - `<META_REPO_NAME>/principles.md` — Agent behavior rules (includes Skills registry and Core Docs list)
 - `<APP_REPO_NAME>/app/CLAUDE.md` — App technical spec
 - **42labs Design System (canon, cross-app)** — <https://42labs.io/design> (repo `github.com/42piratas/42labs`; optional offline mirror at `<DESIGN_SYSTEM_LOCAL_PATH>` if the contributor keeps one — never hardcode a machine-specific absolute path here per `principles-base.md §14`). Color, typography, radius, spacing, base components — shared by all Labs apps. Project-local design guidelines extend but never contradict this canon.
+- `<APP_REPO_NAME>/docs/guidelines-coding.md` — Durable code standards + secure-coding baseline (anyone touching `app/`)
 - `<APP_REPO_NAME>/docs/playbook-infra.md` — Infrastructure operational guide (secrets, services, rotation)

@@ -112,4 +112,13 @@ After stage 5 validation completes clean on trunk:
 
 ---
 
-**Last Updated:** 2026-05-07 — initial extraction. Project extension of `{shared_knowledge_path}/skills/skill-validate.md`.
+## Constraints
+
+These bind every validate invocation (stages 2 and 5) and are the single project-level home for the two rules below — other docs reference this section rather than restating it. Canonical source: `{shared_knowledge_path}/principles-base.md §11` and `§13`.
+
+- **No silent scope downgrade / legal moves.** "Cannot verify → I'll explain why and substitute alternative evidence" is forbidden. `UNVERIFIED` is a hard stop. When a contracted Verification method cannot run, the only legal moves are: (a) complete as specified, (b) negotiate the spec with the user, or (c) escalate and STOP. (`principles-base.md §11`)
+- **No capitulation on a verified PASS.** If the user pushes back on a criterion that passed without producing new evidence, do not flip it or soften the report — re-state the evidence. Re-open a criterion only when the user supplies new evidence. (`principles-base.md §13`)
+
+---
+
+**Last Updated:** 2026-05-07 — initial extraction. Project extension of `{shared_knowledge_path}/skills/skill-validate.md`. §Constraints added 2026-06-16 (single-home legal-moves + anti-sycophancy).

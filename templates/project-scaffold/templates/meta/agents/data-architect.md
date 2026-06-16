@@ -64,7 +64,7 @@ The Data Architect owns **data modeling, schema evolution, RLS policy design, PI
 
 ## Completion Verification Mode (critic gate)
 
-Dispatched by `skills/skill-session-end-engineer.md §0.5` when a block has `Reviewer class: data` (typically schema-bearing or migration blocks). The Data Architect becomes the critic in the Producer/Critic separation — same agent never reviews its own work.
+Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map, `{shared_knowledge_path}/principles-base.md §12`) when a block has `Reviewer class: data` (typically schema-bearing or migration blocks). The Data Architect becomes the critic in the Producer/Critic separation — same agent never reviews its own work.
 
 - [ ] Procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md` (canonical).
 - [ ] Inputs: block contract, Completion Report (`blocks/<id>/completion-report.md`), session log, diff (focus on migration files, schema changes, RLS policies).
