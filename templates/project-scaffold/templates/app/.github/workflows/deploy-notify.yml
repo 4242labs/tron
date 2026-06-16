@@ -1,0 +1,37 @@
+# [Vercel + Slack only] Post deploy events to Slack channels
+name: Deploy Notifications
+
+on:
+  repository_dispatch:
+    types: ['vercel.deployment.success']
+
+jobs:
+  notify-slack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack
+        env:
+          ENVIRONMENT: ${{ github.event.client_payload.environment }}
+          GIT_REF: ${{ github.event.client_payload.git.ref }}
+          DEPLOY_URL: ${{ github.event.client_payload.url }}
+          PROJECT: ${{ github.event.client_payload.project.name }}
+          SLACK_WEBHOOK_DEPLOYS_STAGING: ${{ secrets.SLACK_WEBHOOK_DEPLOYS_STAGING }}
+          SLACK_WEBHOOK_DEPLOYS_PROD: ${{ secrets.SLACK_WEBHOOK_DEPLOYS_PROD }}
+        run: |
+          if [ "$ENVIRONMENT" = "production" ]; then
+            WEBHOOK="$SLACK_WEBHOOK_DEPLOYS_PROD"
+            COLOR="#36a64f"
+            TITLE="Deployed to production — $PROJECT"
+          elif [ "$GIT_REF" = "staging" ] || [ "$GIT_REF" = "refs/heads/staging" ]; then
+            WEBHOOK="$SLACK_WEBHOOK_DEPLOYS_STAGING"
+            COLOR="#439FE0"
+            TITLE="Deployed to staging — $PROJECT"
+          else
+            exit 0
+          fi
+
+          if [ -z "$WEBHOOK" ]; then exit 0; fi
+
+          curl -s -X POST "$WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{\"attachments\":[{\"color\":\"$COLOR\",\"title\":\"$TITLE\",\"fields\":[{\"title\":\"URL\",\"value\":\"$DEPLOY_URL\",\"short\":true}]}]}"

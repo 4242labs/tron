@@ -1,0 +1,28 @@
+# LiteLLM Proxy Configuration — <PROJECT_NAME>
+# Deploy this file to the LiteLLM proxy host (e.g. via Railway Docker deployment).
+# Virtual model aliases let the app call stable names; model swaps happen here.
+#
+# IMPORTANT: Do NOT add tag_budget_config — it is Enterprise-only and causes a fatal startup crash.
+# Per-user budget is enforced via max_user_budget + user_budget_duration in general_settings.
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  max_user_budget: <MONTHLY_SPEND_CAP_USD>
+  user_budget_duration: monthly
+
+model_list:
+  - model_name: <alias-1>
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: <alias-2>
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Add more aliases as needed. Each alias maps a stable app-side name to a provider model.
+
+litellm_settings:
+  drop_params: true

@@ -1,0 +1,6 @@
+FROM docker.litellm.ai/berriai/litellm:main-v1.63.14-stable
+COPY infra/litellm_config.yaml /app/config.yaml
+COPY infra/litellm-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["--config", "/app/config.yaml", "--port", "4000"]

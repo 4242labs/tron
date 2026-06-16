@@ -1,0 +1,89 @@
+name: canon-drift
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # nightly at 08:00 UTC
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'agents/**'
+      - 'principles.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  detect-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout meta repo
+        uses: actions/checkout@v4
+        with:
+          path: meta
+
+      - name: Checkout canon (42hq)
+        uses: actions/checkout@v4
+        with:
+          repository: 42piratas/42hq
+          path: canon
+          fetch-depth: 0
+          token: ${{ secrets.CANON_READ_TOKEN }}
+
+      - name: Run drift check
+        id: drift
+        run: |
+          chmod +x meta/scripts/canon-drift-check.sh
+          meta/scripts/canon-drift-check.sh meta canon | tee drift-report.txt
+          if grep -q "^DRIFT:" drift-report.txt; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report
+          path: drift-report.txt
+
+      - name: Open / update drift issue
+        if: steps.drift.outputs.drift_detected == 'true' && github.event_name != 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('drift-report.txt', 'utf8');
+            const title = 'Canon drift detected';
+            const body = `Drift CI detected canon-derived skills falling out of sync with \`42hq\` HEAD.\n\n\`\`\`\n${report}\n\`\`\`\n\nResolution: review each flagged skill, sync changes from canon, update \`canon_version\` frontmatter, commit.`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'canon-drift'
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                body: body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['canon-drift']
+              });
+            }
+
+      - name: Fail PR on drift
+        if: steps.drift.outputs.drift_detected == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "::error::Canon drift detected — see drift-report.txt artifact for details"
+          cat drift-report.txt
+          exit 1

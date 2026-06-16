@@ -1,0 +1,18 @@
+{
+  "enabledPlugins": {
+    "vercel@claude-plugins-official": true
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd <ABSOLUTE_PATH_TO_APP_SUBDIR> && npm test 2>&1 | tail -30"
+          }
+        ]
+      }
+    ]
+  }
+}

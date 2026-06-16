@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app-ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect app changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED=$(git diff --name-only HEAD~1)
+          fi
+          if echo "$CHANGED" | grep -qvE '^(meta|docs)/'; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: 'app/package-lock.json'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        if: steps.changes.outputs.run == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.changes.outputs.run == 'true'
+        run: npx tsc --noEmit
+
+      - name: Test
+        if: steps.changes.outputs.run == 'true'
+        run: npm test
+
+      - name: Lint commit messages
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
+        run: npx --yes commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+      - name: Build
+        if: steps.changes.outputs.run == 'true'
+        run: npm run build

@@ -1,0 +1,58 @@
+# [Supabase only] Auto-apply migrations to staging on PR
+name: staging-db
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'app/supabase/migrations/**'
+      - 'app/supabase/seed.sql'
+      - '.github/workflows/staging-db.yml'
+concurrency:
+  group: staging-db-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  staging-db-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: changes
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          MIGRATIONS=$(git diff --name-only "$BASE" "$HEAD" -- 'app/supabase/migrations/**' | wc -l | tr -d ' ')
+          SEED=$(git diff --name-only "$BASE" "$HEAD" -- 'app/supabase/seed.sql' | wc -l | tr -d ' ')
+          echo "migrations=$MIGRATIONS" >> "$GITHUB_OUTPUT"
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link staging project
+        run: supabase link --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_REF }} --workdir app
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
+      - name: Apply migrations
+        if: steps.changes.outputs.migrations != '0'
+        run: supabase db push --linked --include-all --workdir app
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.STAGING_SUPABASE_DB_PASSWORD }}
+
+      - name: Lint database schema
+        run: supabase db lint --linked --fail-on error
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_WORKDIR: app
+
+      - name: Apply seed
+        if: steps.changes.outputs.seed != '0'
+        run: psql "$STAGING_DB_URL" -v ON_ERROR_STOP=1 -f app/supabase/seed.sql
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}

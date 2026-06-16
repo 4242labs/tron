@@ -1,0 +1,22 @@
+commit-msg:
+  commands:
+    commitlint:
+      root: "app/"
+      run: npx commitlint --edit {1}
+      fail_text: "Commit message does not follow Conventional Commits"
+
+pre-commit:
+  commands:
+    canon-pre-commit:
+      run: bash .githooks/pre-commit
+      fail_text: "Canon pre-commit failed (see principles-base.md §14)"
+
+pre-push:
+  commands:
+    canon-pre-push:
+      run: bash .githooks/pre-push "$1" "$2"
+      fail_text: "Canon pre-push failed (see principles-base.md §14)"
+    typecheck:
+      root: "app/"
+      run: npx tsc --noEmit
+      fail_text: "TypeScript errors — fix before pushing"

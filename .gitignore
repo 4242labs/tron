@@ -2,6 +2,9 @@
 # Claude Code local settings
 # =============================================================================
 .claude/
+# ...except the scaffold payload template, which ships a settings.json for new projects
+!templates/project-scaffold/templates/.claude/
+!templates/project-scaffold/templates/.claude/settings.json
 
 # =============================================================================
 # Secrets & Environment

@@ -1,0 +1,50 @@
+# [optional] End-to-end test suite (Playwright)
+name: E2E Tests
+
+on:
+  pull_request:
+    branches:
+      - staging
+    paths-ignore:
+      - 'docs/**'
+
+jobs:
+  e2e:
+    name: E2E Suite (API + UI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E API tests
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          GMAIL_E2E_MODE: "1"
+          ANTHROPIC_E2E_MODE: "1"
+          ADZUNA_E2E_MODE: "1"
+        run: npm test -- src/test/e2e/pipeline.e2e.ts src/test/e2e/payments.e2e.ts
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright UI tests
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx playwright test src/test/e2e/ui.spec.ts

@@ -1,0 +1,24 @@
+name: pr-base-guard
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce base branch rules
+        run: |
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          echo "base=$BASE head=$HEAD"
+          if [ "$BASE" = "main" ]; then
+            if [ "$HEAD" = "staging" ] || [[ "$HEAD" == hotfix/* ]]; then
+              echo "OK: $HEAD → main is allowed"
+              exit 0
+            fi
+            echo "::error::PRs to main must originate from 'staging' or 'hotfix/*'. Got: $HEAD"
+            exit 1
+          fi
+          echo "OK: base=$BASE is unrestricted"

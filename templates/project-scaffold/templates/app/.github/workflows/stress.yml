@@ -1,0 +1,63 @@
+# [optional] Stress/load tests
+name: Stress Tests
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  stress:
+    name: k6 Stress Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app/stress
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: 0.50.0
+
+      - name: S1 — Concurrent batch (10 VU)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
+        run: k6 run scenarios/s1-concurrent-batch.js
+
+      - name: S2 — Chat concurrency (20 VU)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
+        run: k6 run scenarios/s2-chat-concurrency.js
+
+      - name: S3 — Rate limit TOCTOU (25 VU)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SHARED_SESSION_TOKEN: ${{ secrets.STRESS_SHARED_SESSION_TOKEN }}
+        run: k6 run scenarios/s3-rate-limit-race.js
+
+      - name: S4 — DB connection spike (50 VU)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
+        run: k6 run scenarios/s4-db-connection-spike.js
+
+      - name: S5 — Heavy batch timeout validation
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          HEAVY_SESSION_TOKEN: ${{ secrets.STRESS_HEAVY_SESSION_TOKEN }}
+        run: k6 run scenarios/s5-heavy-batch-timeout.js
+        continue-on-error: true  # Log TIMEOUT_RISK but don't block
+
+      - name: S6 — Polar webhook idempotency (10 replays)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          POLAR_WEBHOOK_SECRET_STAGING: ${{ secrets.POLAR_WEBHOOK_SECRET_STAGING }}
+          TEST_SUBSCRIPTION_ID: ${{ secrets.STRESS_TEST_SUBSCRIPTION_ID }}
+          TEST_CUSTOMER_ID: ${{ secrets.STRESS_TEST_CUSTOMER_ID }}
+          TEST_PRODUCT_ID: ${{ secrets.STRESS_TEST_PRODUCT_ID }}
+        run: k6 run scenarios/s6-polar-webhook-idempotency.js
