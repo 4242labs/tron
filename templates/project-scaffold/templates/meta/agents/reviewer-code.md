@@ -73,7 +73,7 @@ The Code Reviewer performs lightweight security checks only. For deeper investig
 
 ## Completion Verification Mode (critic gate)
 
-Dispatched by `skills/skill-session-end-engineer.md §0.5` when a block has `Reviewer class: code` and ≥2 acceptance criteria. The Code Reviewer becomes the critic in the Producer/Critic separation — same agent never reviews its own work (`{shared_knowledge_path}/principles-base.md §12`; Gulli ch. 4).
+Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map) when a block has `Reviewer class: code` and ≥2 acceptance criteria. The Code Reviewer becomes the critic in the Producer/Critic separation — same agent never reviews its own work (`{shared_knowledge_path}/principles-base.md §12`; Gulli ch. 4).
 
 - [ ] Procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md` (canonical).
 - [ ] Inputs: block contract (with `Verification method` per AC), Completion Report (`blocks/<id>/completion-report.md`), session log, diff.
