@@ -54,7 +54,7 @@ Both scripts are idempotent (safe to re-run). Implements `42hq/knowledge-base/pr
 - **Always rebase on `staging` before pushing.** Run `git fetch origin && git rebase origin/staging` before every push. Skipping causes out-of-date rejections and integration conflicts — no exceptions.
 - **Monitor CI after every push. Do not proceed until all checks are green.** Run `gh pr checks {PR} --watch` immediately after opening a PR. Fix failures before any next step.
 - **One agent per branch.** Two agents must not share a worktree. If a branch carries WIP into a later session, the next agent **resumes the same worktree** rather than creating a new one on the same branch.
-- **Cleanup is mandatory.** Run the session-start hygiene scan (below) every session. Remove any worktree whose remote branch is gone and which has no open PR.
+- **Session start is read-only; tear down your own at session end.** Run the session-start scan (inspect + conflict check) every session — but never remove another agent's worktree there. Remove the worktree *you* created once *your* PR merges (block 6). Orphaned worktrees (remote gone + no open PR) are garbage-collected by SUPER-M's health check, not at session start — see `42hq/knowledge-base/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`.
 
 ---
 
@@ -130,13 +130,15 @@ git worktree list
 git branch -vv
 ```
 
-Any branch tagged `[gone]` in `git branch -vv` has no remote counterpart — it is stale. Remove it in step 3.
+Any branch tagged `[gone]` in `git branch -vv` has no remote counterpart — it is orphaned. **Note it; do not remove it here** — orphan GC is SUPER-M's job, not a session-start chore.
 
-**Step 3 — Stale worktree cleanup.**
-For each worktree shown (excluding the main checkout):
+**Step 3 — Note orphans (read-only).**
+Session start is read-only — you never remove another agent's worktree here. For each worktree shown (excluding the main checkout):
 - Branch still exists on `origin` → leave it alone.
-- Branch shows `[gone]` in `git branch -vv` **and** no open PR exists for it → remove it (see block 4 below).
+- Branch shows `[gone]` **and** no open PR → orphaned. Leave it for SUPER-M's orphan GC (`42hq/knowledge-base/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`).
 - Has an open PR → leave it; the next agent resumes it.
+
+You only ever remove the worktree **you** created, and only at session end once **your** PR merges (block 6).
 
 **Step 4 — Parallel conflict check.**
 
@@ -249,4 +251,4 @@ If a directory was deleted manually but git still thinks the worktree exists, `g
 
 ## Session-Start Hygiene
 
-Every agent doc's `## Session Start` checklist points here. Run block 1 (all four steps: staging verification, fetch + inspect, stale cleanup, conflict check) before any read steps. Then create your worktree if needed (block 2 or 3). **Never edit files in the main checkout. The main checkout must always be on `staging`.**
+Every agent doc's `## Session Start` checklist points here. Run block 1 (all four steps: staging verification, fetch + inspect, note orphans read-only, conflict check) before any read steps. Then create your worktree if needed (block 2 or 3). **Never edit files in the main checkout. The main checkout must always be on `staging`.**

@@ -15,10 +15,9 @@ Before any work, read and internalize:
 
 ## Session Start
 
-- [ ] **Worktree hygiene** — run all steps from `skills/skill-worktree-and-branching.md` §Quick reference:
+- [ ] **Worktree pre-flight (read-only)** — run the session-start scan from `skills/skill-worktree-and-branching.md` §Quick reference:
   - Checkout `staging`, pull latest
-  - Fetch + inspect worktrees and branches
-  - Remove stale worktrees (remote gone + no open PR)
+  - Fetch + inspect worktrees and branches (note any orphans — do not remove them; orphan GC is SUPER-M's job)
   - Check for open PRs overlapping your task area
 - [ ] **Shared-KB session start:** run `{shared_knowledge_path}/meta/agent.md §3.1 + §3.2` (notifications archive + warnings surface). If this project is named in any active warning → stop and flag.
 - [ ] Read `pipeline.md` — always
