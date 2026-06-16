@@ -12,12 +12,12 @@ Per-service setup for this project. Each section covers what the service does, e
 
 1. Create a Railway project → add a Postgres add-on (required for spend tracking)
 
-2. Copy `infra/Dockerfile.litellm` from `tron/tron-app/templates/project-scaffold/templates/app/infra/Dockerfile.litellm`. The template is pinned and correct — do not modify the image tag without testing. Key properties:
+2. Use the shipped `infra/Dockerfile.litellm`. The template is pinned and correct — do not modify the image tag without testing. Key properties:
    - Image: `docker.litellm.ai/berriai/litellm:main-v1.63.14-stable` (pinned — do NOT use `main-stable`)
    - Build context is the app repo root, so COPY paths use `infra/` prefix
    - Delegates to `litellm-entrypoint.sh` which drops the Prisma view before startup
 
-3. Copy `infra/litellm_config.yaml` from `tron/tron-app/templates/project-scaffold/templates/app/infra/litellm_config.yaml`. Fill `<MONTHLY_SPEND_CAP_USD>` with the monthly per-user spend cap (e.g. `5` for $5/user/month) and replace `<alias-N>` with your project's virtual model names. Key rules:
+3. Use the shipped `infra/litellm_config.yaml`. Fill `<MONTHLY_SPEND_CAP_USD>` with the monthly per-user spend cap (e.g. `5` for $5/user/month) and replace `<alias-N>` with your project's virtual model names. Key rules:
    - Use `max_user_budget` (per-user cap) + `user_budget_duration: monthly` — these are the correct LiteLLM field names
    - Do NOT add `tag_budget_config` — Enterprise-only, causes fatal startup crash
    - Example of correct structure:
@@ -29,14 +29,7 @@ Per-service setup for this project. Each section covers what the service does, e
      user_budget_duration: monthly
    ```
 
-4. Create `infra/litellm-entrypoint.sh`:
-   ```bash
-   #!/bin/bash
-   # Drop conflicting Postgres view created by old LiteLLM migrations.
-   # Without this, every cold start fails with "view already exists".
-   psql "$DATABASE_URL" -c "DROP VIEW IF EXISTS litellm_spend_logs CASCADE;" 2>/dev/null || true
-   exec litellm --config /app/config.yaml --run_gunicorn
-   ```
+4. Use the shipped `infra/litellm-entrypoint.sh` verbatim — do not re-author it. It drops the Postgres view (`LiteLLM_VerificationTokenView`) that otherwise blocks `prisma db push` on every cold start, then execs `litellm`. The Dockerfile already wires it as the entrypoint.
 
 5. Deploy to Railway: set env vars in Railway project settings:
    - `LITELLM_MASTER_KEY` — generate a strong random key
@@ -330,34 +323,3 @@ Per-service setup for this project. Each section covers what the service does, e
 **Env vars:** None in the app — Pipedream holds `SLACK_WEBHOOK_INFRA` internally in its environment.
 
 **Verify:** Trigger a Railway deploy → confirm message in `#infra-railway` within 30s.
-
----
-
-## TRON (Telegram Bot Notifications)
-
-**What:** Telegram bot for agent session notifications, workflow health alerts, and SUPER-M comms.
-
-**Steps:**
-
-1. Create bot via `@BotFather` on Telegram → get bot token
-
-2. Create or join the project's Telegram group/channel → get chat ID:
-   ```bash
-   # Send a message to the group, then:
-   curl "https://api.telegram.org/bot<token>/getUpdates" | jq '.result[].message.chat.id'
-   ```
-
-3. Set in agent-side env (NOT in Vercel — these are used by Claude agents, not the app):
-   ```bash
-   # Add to ~/.zshrc:
-   export TRON_BOT_TOKEN=<token>
-   export TRON_CHAT_ID=<chat_id>
-   ```
-
-4. Add `tron.md` to `meta/agents/` — copy from `tron/tron-app/templates/project-scaffold/templates/meta/agents/tron.md` and update bot token + chat ID
-
-5. Wire SUPER-M to send session start/end notifications via TRON
-
-**Env vars (agent-side only — NOT in Vercel):** `TRON_BOT_TOKEN`, `TRON_CHAT_ID`
-
-**Verify:** Ask SUPER-M to send a test message → confirm it appears in the Telegram group within 5s.

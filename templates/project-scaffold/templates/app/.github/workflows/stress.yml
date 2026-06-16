@@ -1,4 +1,5 @@
-# [optional] Stress/load tests
+# [optional] Stress/load tests — placeholder. Fill in real scenarios per project, then remove this notice.
+# Each step runs one k6 scenario under app/stress/scenarios/. Wire only the secrets your scenarios need.
 name: Stress Tests
 
 on:
@@ -22,42 +23,10 @@ jobs:
         with:
           k6-version: 0.50.0
 
-      - name: S1 — Concurrent batch (10 VU)
+      # Add one step per scenario. Example:
+      - name: <SCENARIO_NAME>
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}
-          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
-        run: k6 run scenarios/s1-concurrent-batch.js
-
-      - name: S2 — Chat concurrency (20 VU)
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
-        run: k6 run scenarios/s2-chat-concurrency.js
-
-      - name: S3 — Rate limit TOCTOU (25 VU)
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          SHARED_SESSION_TOKEN: ${{ secrets.STRESS_SHARED_SESSION_TOKEN }}
-        run: k6 run scenarios/s3-rate-limit-race.js
-
-      - name: S4 — DB connection spike (50 VU)
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          SESSION_TOKENS: ${{ secrets.STRESS_SESSION_TOKENS }}
-        run: k6 run scenarios/s4-db-connection-spike.js
-
-      - name: S5 — Heavy batch timeout validation
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          HEAVY_SESSION_TOKEN: ${{ secrets.STRESS_HEAVY_SESSION_TOKEN }}
-        run: k6 run scenarios/s5-heavy-batch-timeout.js
-        continue-on-error: true  # Log TIMEOUT_RISK but don't block
-
-      - name: S6 — Polar webhook idempotency (10 replays)
-        env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          POLAR_WEBHOOK_SECRET_STAGING: ${{ secrets.POLAR_WEBHOOK_SECRET_STAGING }}
-          TEST_SUBSCRIPTION_ID: ${{ secrets.STRESS_TEST_SUBSCRIPTION_ID }}
-          TEST_CUSTOMER_ID: ${{ secrets.STRESS_TEST_CUSTOMER_ID }}
-          TEST_PRODUCT_ID: ${{ secrets.STRESS_TEST_PRODUCT_ID }}
-        run: k6 run scenarios/s6-polar-webhook-idempotency.js
+          # Map only the secrets this scenario consumes, e.g.:
+          # <STRESS_SESSION_TOKENS>: ${{ secrets.<STRESS_SESSION_TOKENS> }}
+        run: k6 run scenarios/<SCENARIO_FILE>.js
