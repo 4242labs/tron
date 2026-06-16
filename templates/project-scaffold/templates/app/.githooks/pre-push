@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Hard guard — refuse any push that updates a protected base branch directly.
+# Version-controlled, seeded by scripts/setup-repo.sh, owned by no agent.
+# Protected branches advance only through a merged PR, never a direct push.
+# See principles-base.md §14.
+#
+# git invokes pre-push with: $1 = remote name, $2 = remote URL.
+# The refs being pushed arrive on stdin as: <local-ref> <local-sha> <remote-ref> <remote-sha>
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/staging)
+      echo "✗ Direct push to '$remote_ref' is forbidden." >&2
+      echo "  Open a PR from a feature branch instead." >&2
+      echo "  See skill-worktree-and-branching.md." >&2
+      exit 1
+      ;;
+  esac
+done
+
+exit 0
