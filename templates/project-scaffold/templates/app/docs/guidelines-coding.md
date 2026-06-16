@@ -28,4 +28,4 @@ The standing secure-coding baseline. The active per-block audit that enforces it
 
 ---
 
-**Last Updated:** initial extraction from `agents/engineer.md` — durable standards single-homed here; agent docs now reference this file.
+**Last Updated:** <SCAFFOLD_DATE> — durable standards single-homed here; agent docs reference this file.

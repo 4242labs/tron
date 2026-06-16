@@ -1,6 +1,6 @@
 # Playbook: Browser Testing (Devtools-class MCP + Automation-class MCP)
 
-Canonical project-local reference for browser validation in `<PROJECT_NAME>`. Both MCPs are configured locally and invoked via the Claude Code MCP layer. This playbook is the authoritative project-local guide — skills and agents point here. The 42hq-level guideline at `{shared_knowledge_path}/reference/guidelines-browser-testing.md` is the parent doc; this file inherits its rules and adds project-specific URLs, accounts, and paths.
+Canonical project-local reference for browser validation in `<PROJECT_NAME>`. Both MCPs are configured locally and invoked via the agent runtime's MCP layer. This playbook is the authoritative project-local guide — skills and agents point here. The 42hq-level guideline at `{shared_knowledge_path}/reference/guidelines-browser-testing.md` is the parent doc; this file inherits its rules and adds project-specific URLs, accounts, and paths.
 
 **When it's mandatory:** every block that touches UI or visible browser behavior. Full trigger rule in `../<META_REPO_NAME>/skills/skill-validate.md §3 Browser MCP Validation`.
 
@@ -186,7 +186,7 @@ Any workaround that "does the validation without either MCP" (e.g., manual curl 
 
 | Symptom | First-pass remediation |
 |:--------|:-----------------------|
-| MCP tool call returns "tool not available" | Check `.mcp.json` / Claude Code MCP panel; restart the MCP runtime if the tool namespace is absent |
+| MCP tool call returns "tool not available" | Check `.mcp.json` / the agent runtime's MCP panel; restart the MCP runtime if the tool namespace is absent |
 | Browser never reaches the page (timeout) | Check the dev server is running (default `localhost:3000`); check target URL reachable via `curl` |
 | Navigate succeeds but screenshot is blank | Add `wait_for` on a known selector before the screenshot; dev-mode bundlers can render late |
 | Console returns unrelated noise | Capture only the relevant flow window; note the noise in evidence but don't treat as finding |

@@ -14,13 +14,13 @@ general_settings:
 model_list:
   - model_name: <alias-1>
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: <PRIMARY_MODEL_ID>      # example: '<provider>/<model-id>' — swap per provider
+      api_key: os.environ/<MODEL_PROVIDER_API_KEY>
 
   - model_name: <alias-2>
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: <SECONDARY_MODEL_ID>    # example: '<provider>/<model-id>' — swap per provider
+      api_key: os.environ/<MODEL_PROVIDER_API_KEY>
 
   # Add more aliases as needed. Each alias maps a stable app-side name to a provider model.
 

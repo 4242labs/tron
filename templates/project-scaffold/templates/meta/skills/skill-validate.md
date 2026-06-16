@@ -67,9 +67,9 @@ Add project-specific rows here. Each audit's output feeds the Completion Report 
 
 ---
 
-## 4. Completion Report — Project Path
+## 4. Completion Report — Where It Lives
 
-Default: `blocks/<id>/completion-report.md`. Stage 2 produces it; stage 5 appends a `## Completion Report (post-merge)` section to the same file.
+The Completion Report **is** the session-end log — there is no separate completion-report file. It is the `## Completion Report` section of the engineer's session log (`logs/engineering/log-YYMMDD-HHMM-{block-id}-{slug}.md`, block-id included when applicable). Stage 2 writes that section; stage 5 appends a `## Completion Report (post-merge)` section to the same log.
 
 Format and rules: canon §5. Do not deviate.
 
@@ -79,7 +79,7 @@ Format and rules: canon §5. Do not deviate.
 
 After stage 2 validation completes clean:
 
-- Produce **User Verification List** at the bottom of the block doc (or in `blocks/<id>/user-verification.md`):
+- Produce **User Verification List** as a section at the bottom of the block doc:
 
 ```
 ## User Verification Required

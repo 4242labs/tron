@@ -10,7 +10,7 @@
 | Styling | Tailwind CSS v4 |
 | Backend/DB | Supabase (Postgres + Auth + Storage) |
 | Hosting | Vercel |
-| AI | Claude API via LiteLLM |
+| AI | <AI_PROVIDER> via LiteLLM |
 | Email Sending | <Email provider> |
 | Notifications | <Notification provider> |
 | Error Monitoring | Sentry (`@sentry/nextjs`) |
