@@ -9,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd <ABSOLUTE_PATH_TO_APP_SUBDIR> && npm test 2>&1 | tail -30"
+            "command": "cd <APP_REPO_NAME>/app && npx tsc --noEmit 2>&1 | tail -30"
           }
         ]
       }

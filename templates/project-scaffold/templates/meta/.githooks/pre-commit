@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Hard guard — refuse any commit made directly on a protected base branch.
+# Version-controlled, seeded by scripts/setup-repo.sh, owned by no agent.
+# All work goes through a feature branch + worktree + PR (skill-worktree-and-branching.md).
+# See principles-base.md §14.
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+
+case "$branch" in
+  main|staging)
+    echo "✗ Direct commits to '$branch' are forbidden." >&2
+    echo "  Create a feature branch in a worktree and commit there." >&2
+    echo "  See skill-worktree-and-branching.md." >&2
+    exit 1
+    ;;
+esac
+
+exit 0
