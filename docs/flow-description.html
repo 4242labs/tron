@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TRON — Flow Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --canvas-warm:#FDFAF5; --cream:#FEF3E2; --border-cool:#E7E5E4;
+    --mid-stone:#B8AFA8; --stone:#756D68; --graphite:#433E3A; --charcoal:#1C1917;
+    --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8; --copper-border:#F5C9A1;
+    --blue-dark:#2563EB; --emerald:#16A34A;
+    --font-heading:'Space Grotesk',system-ui,sans-serif;
+    --font-body:'IBM Plex Sans',system-ui,sans-serif;
+    --font-mono:'Geist Mono',ui-monospace,monospace;
+    --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px; --r-4:10px; --r-full:999px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--canvas-warm); color:var(--charcoal); font-family:var(--font-body); font-size:15px; line-height:1.6;}
+  .wrap{max-width:860px; margin:0 auto; padding:var(--sp-8) var(--sp-6) 96px;}
+  h1{font-family:var(--font-heading); font-weight:700; font-size:22px; margin:0 0 var(--sp-2); letter-spacing:-.01em;}
+  h1 .accent{color:var(--copper);}
+  .lead{color:var(--stone); font-size:13.5px; margin:0 0 var(--sp-8);}
+  .lead a{color:var(--blue-dark);}
+  details.node{background:#fff; border:1px solid var(--border-cool); border-radius:var(--r-4); margin-bottom:var(--sp-3); overflow:hidden;}
+  summary{cursor:pointer; list-style:none; display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-4) var(--sp-6); font-family:var(--font-heading); font-weight:600; font-size:15px;}
+  summary::-webkit-details-marker{display:none;}
+  summary::before{content:"▸"; color:var(--mid-stone); font-size:12px; transition:transform .15s ease;}
+  details[open] summary::before{transform:rotate(90deg);}
+  .nnum{font-family:var(--font-mono); font-size:12px; font-weight:500; color:var(--copper-dark); background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-full); padding:2px 9px;}
+  .lane-tag{margin-left:auto; font-family:var(--font-mono); font-size:11px; color:var(--mid-stone); text-transform:uppercase; letter-spacing:.06em;}
+  .body{padding:0 var(--sp-6) var(--sp-4);}
+  ul{margin:0; padding-left:18px;}
+  li{margin:5px 0;}
+  code{font-family:var(--font-mono); font-size:.86em; background:var(--cream); border:1px solid var(--copper-border); border-radius:5px; padding:1px 5px; color:var(--copper-dark);}
+  b.k{color:var(--charcoal);}
+  .llm{color:var(--copper-dark); font-weight:600;}
+  h2{font-family:var(--font-heading); font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--stone); margin:var(--sp-8) 0 var(--sp-3);}
+  .rule{background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-4); padding:var(--sp-4) var(--sp-6); margin-bottom:var(--sp-6); font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TRON — <span class="accent">Flow Notes</span></h1>
+  <p class="lead">Per-node detail that the diagrams intentionally leave out. The flow itself lives in
+    <a href="flow-core.html">flow-core.html</a> (core + drill-down sub-processes) and
+    <a href="flow-subs.html">flow-subs.html</a>. IDs here match the diagrams (<code>ND-NN</code>,
+    sub-steps <code>ND-NN-NN</code>).</p>
+
+  <div class="rule"><b class="k">Escalation invariant.</b> Anything outside the normal path is a wall:
+    TRON-DET detects it, <span class="llm">TRON-AIDE</span> informs the operator, the operator decides.
+    TRON never silently improvises a resolution.</div>
+
+  <h2>Core nodes</h2>
+
+  <details class="node" open>
+    <summary><span class="nnum">ND-01</span> BOOTUP<span class="lane-tag">once · TRON-DET</span></summary>
+    <div class="body"><ul>
+      <li>Runs once at <code>tron start</code>; the spine is all TRON-DET, then hands to <code>ND-02 PULSE</code>.</li>
+      <li><b class="k">ND-01-02 Refresh trunk:</b> <code>git fetch</code> + <code>merge --ff-only</code> — read-only. TRON reads trunk; agents write it.</li>
+      <li><b class="k">ND-01-04 Read blocks:</b> parse <code>blocks/*.md</code> + open PRs (status, dependencies) into the disposable state cache.</li>
+      <li>ND-01-05 / ND-01-06 are sub-processes (the two operator-input gates) — see below.</li>
+    </ul></div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-01-05</span> SET SCOPE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
+    <div class="body"><ul>
+      <li>The operator's answer lands at <b class="k">TRON-DET first</b>. DET resolves structured input — block ids, ranges (<code>02-01..02-04</code>), phases (<code>Phase 1 &amp; 2</code>) — deterministically.</li>
+      <li>Only when DET can't parse (fuzzy prose) does it hand off to <span class="llm">TRON-AIDE</span>, which holds a multi-turn conversation with the operator, then submits a candidate set back to DET.</li>
+      <li><b class="k">Validation:</b> every id ∈ pipeline <em>and</em> every scoped block's dependencies satisfiable (each dependency is <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency is a hard fail</b> — an unreachable block means a broken run.</li>
+      <li>Done blocks already inside the scope are simply skipped (no-op).</li>
+    </ul></div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-01-06</span> SET COUNTS<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
+    <div class="body"><ul>
+      <li>Worker count + architect count. <b class="k">Hard floor:</b> ≥ 1 each.</li>
+      <li>Unusual-but-valid counts (e.g. above the parallelism ceiling): <span class="llm">TRON-AIDE</span> advises but accepts as-is (soft).</li>
+      <li>A closing confirmation of the run-config precedes the lock.</li>
+    </ul></div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-02</span> PULSE<span class="lane-tag">tick · TRON-DET</span></summary>
+    <div class="body"><ul>
+      <li>The recurring bounded tick (daemon-driven). Each tick re-reads trunk into the disposable cache — no drift across crash / off-session.</li>
+      <li>Newly-<code>✅</code> blocks → tick review cadence (PULL) + release their worker.</li>
+      <li><b class="k">ND-02-09 Classify</b> is the <span class="llm">only LLM touch</span> in the tick: message → tag, stateless one-shot.</li>
+      <li>Effects are persisted <em>before</em> claimed inbox sidecars are dropped (at-least-once delivery).</li>
+      <li><b class="k">In-flight = worker OR open PR OR active gate</b> (OR'd), so re-dispatch is always safe across the build-before-PR window and crash-orphaned PRs.</li>
+      <li>An orphan PR (open PR, no worker on record) is <b class="k">not auto-adopted</b> — it escalates.</li>
+    </ul></div>
+  </details>
+
+  <p class="lead" style="margin-top:var(--sp-8)">Only validated nodes are documented here. ND-03 onward
+    are still on the core map (<a href="flow-core.html">flow-core.html</a>) but not yet walked — their
+    notes land here as each is approved.</p>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TRON — Core Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/bpmn-js@17.11.1/dist/bpmn-viewer.development.js"></script>
+<style>
+  :root{
+    --canvas-warm:#FDFAF5; --cream:#FEF3E2; --border-cool:#E7E5E4;
+    --mid-stone:#B8AFA8; --stone:#756D68; --graphite:#433E3A; --charcoal:#1C1917;
+    --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8; --copper-border:#F5C9A1;
+    --blue-dark:#2563EB; --emerald:#16A34A;
+    --font-heading:'Space Grotesk',system-ui,sans-serif;
+    --font-body:'IBM Plex Sans',system-ui,sans-serif;
+    --font-mono:'Geist Mono',ui-monospace,monospace;
+    --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px; --r-4:10px; --r-full:999px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;}
+  body{margin:0; background:var(--canvas-warm); color:var(--charcoal); font-family:var(--font-body); height:100vh; overflow:hidden;}
+  .wrap{max-width:none; margin:0; padding:0; height:100vh;}
+  #core{height:100vh; background:var(--canvas-warm); overflow:hidden;}
+  .bjs-powered-by{display:none !important;}
+  .bjs-drilldown{display:none !important;}
+  .zoomctl{position:absolute; right:18px; top:16px; display:flex; gap:6px; z-index:7;}
+  .zoomctl.in-ov{right:56px;}
+  .zoomctl button{width:32px; height:32px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:18px; line-height:1; color:var(--graphite); cursor:pointer; font-family:var(--font-body); box-shadow:0 1px 3px rgba(28,25,23,.08);}
+  .zoomctl button:hover{background:var(--cream); border-color:var(--copper-border);}
+  /* collapsed sub-process nodes are clickable */
+  .djs-element.has-sub{cursor:pointer;}
+  .djs-element.has-sub .djs-visual > rect{ fill:var(--copper-soft) !important; stroke:var(--copper) !important; stroke-width:2px !important; }
+
+  /* overlay */
+  #ov{position:fixed; inset:0; background:var(--canvas-warm); display:none; z-index:50;}
+  #ov.open{display:block;}
+  .ovbox{position:relative; background:var(--canvas-warm); height:100vh; width:100vw; display:flex; flex-direction:column; overflow:hidden;}
+  #ovcanvas{flex:1; min-height:0;}
+  .ovnav{position:absolute; top:16px; left:18px; z-index:7;}
+  .ovclose{position:absolute; top:16px; right:18px; z-index:7;}
+  .nnum{font-family:var(--font-mono); font-size:13px; font-weight:500; color:var(--copper-dark); background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-full); padding:2px 9px;}
+  .nname{font-family:var(--font-heading); font-weight:600; font-size:17px;}
+  .x{cursor:pointer; border:1px solid var(--border-cool); background:#fff; border-radius:8px; width:32px; height:32px; font-size:18px; line-height:1; color:var(--stone);}
+  .djs-element.aide .djs-visual > rect{ fill:var(--copper-soft) !important; stroke:var(--copper) !important; }
+  .djs-element.aide .djs-visual > text{ fill:var(--copper-dark) !important; }
+  .djs-element.op .djs-visual > rect{ fill:#EFF6FF !important; stroke:var(--blue-dark) !important; }
+  .djs-element.op .djs-visual > text{ fill:var(--blue-dark) !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="core"></div>
+</div>
+
+<div id="ov"><div class="ovbox">
+  <div id="ovcanvas"></div>
+  <button class="x ovnav" id="ov-back" onclick="ovBack()" style="display:none">‹</button>
+  <button class="x ovclose" onclick="closeOv()">×</button>
+</div></div>
+
+<script>
+/* ════════════ DATA MODEL ════════════ */
+const LANES = [
+  {id:'L_ENG', name:'ENGINEER',  y:80,  h:140},
+  {id:'L_TRON',name:'TRON',      y:220, h:250},
+  {id:'L_ARCH',name:'ARCHITECT', y:470, h:140},
+  {id:'L_REV', name:'REVIEWERS', y:610, h:140},
+];
+const POOL = {x:160,y:80,w:1340,h:670};
+const LANE_X = 190, LANE_W = 1310;
+
+const NODES = [
+  // TRON lane
+  {id:'Start', kind:'start', name:'tron:start',     lane:'L_TRON', x:240, y:327, w:36, h:36},
+  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', x:300, y:310, w:96, h:70, sub:'BOOTUP'},
+  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', x:432, y:310, w:96, h:70, sub:'PULSE'},
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', x:566, y:321, w:48, h:48},
+  {id:'ND-05', kind:'task',  name:'Dispatch',       lane:'L_TRON', x:656, y:317, w:104,h:56},
+  {id:'ND-04', kind:'task',  name:'DONE-gate',      lane:'L_TRON', x:806, y:317, w:110,h:56},
+  {id:'ND-10', kind:'task',  name:'Release',        lane:'L_TRON', x:966, y:317, w:96, h:56},
+  {id:'ND-06', kind:'task',  name:'Escalate',       lane:'L_TRON', x:1106,y:317, w:100,h:56},
+  {id:'ND-07', kind:'task',  name:'Apply decision', lane:'L_TRON', x:1256,y:317, w:120,h:56},
+  {id:'ND-09', kind:'task',  name:'Observe',        lane:'L_TRON', x:806, y:405, w:104,h:48},
+  {id:'End',   kind:'end',   name:'Session End',    lane:'L_TRON', x:244, y:420, w:36, h:36},
+  {id:'CA1',   kind:'catch', name:'pulse',          lane:'L_TRON', x:414, y:250, w:36, h:36},
+  {id:'TH1',   kind:'throw', name:'pulse',          lane:'L_TRON', x:1420,y:329, w:36, h:36},
+  // ENGINEER lane
+  {id:'ND-11', kind:'task',  name:'Build',          lane:'L_ENG',  x:656, y:124, w:104,h:52},
+  {id:'EX',    kind:'xor',   name:'',               lane:'L_ENG',  x:826, y:126, w:48, h:48},
+  // ARCHITECT lane
+  {id:'ND-08', kind:'task',  name:'Dispatch',       lane:'L_ARCH', x:432, y:514, w:104,h:52},
+  {id:'ND-12', kind:'task',  name:'Scope block',    lane:'L_ARCH', x:656, y:514, w:120,h:52},
+  {id:'ND-13', kind:'task',  name:'Log Review',     lane:'L_ARCH', x:906, y:514, w:120,h:52},
+  {id:'TH2',   kind:'throw', name:'pulse',          lane:'L_ARCH', x:1066,y:522, w:36, h:36},
+  // REVIEWERS lane
+  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  x:656, y:654, w:120,h:52},
+];
+
+const FLOWS = [
+  ['Start','ND-01'], ['ND-01','ND-02'], ['CA1','ND-02'], ['ND-02','ND-03'],
+  ['ND-03','ND-05','fill slot'], ['ND-03','ND-08','clear ahead'],
+  ['ND-03','ND-14','review'], ['ND-03','End','session:end'],
+  ['ND-05','ND-11'], ['ND-11','ND-09'], ['ND-09','EX'],
+  ['EX','ND-04','done'], ['EX','ND-06','wall'],
+  ['ND-04','ND-10'], ['ND-10','TH1'], ['ND-06','ND-07'], ['ND-07','TH1'],
+  ['ND-08','ND-12'], ['ND-12','TH2'], ['ND-14','ND-13'], ['ND-13','TH2'],
+];
+
+const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent'};
+
+/* ════════════ CORE XML ════════════ */
+const byId = Object.fromEntries(NODES.map(n=>[n.id,n]));
+const center = n => ({x:n.x+n.w/2, y:n.y+n.h/2});
+
+function route(s,t){
+  const sc=center(s), tc=center(t);
+  if(Math.abs(sc.y-tc.y)<=22){
+    return tc.x>sc.x ? [{x:s.x+s.w,y:sc.y},{x:t.x,y:tc.y}] : [{x:s.x,y:sc.y},{x:t.x+t.w,y:tc.y}];
+  }
+  const exitY = tc.y>sc.y ? s.y+s.h : s.y;
+  let entry;
+  if(tc.x>sc.x+4) entry={x:t.x,y:tc.y};
+  else if(tc.x<sc.x-4) entry={x:t.x+t.w,y:tc.y};
+  else entry={x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h};
+  return [{x:sc.x,y:exitY},{x:sc.x,y:tc.y},entry];
+}
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function coreXML(){
+  const linkNodes = new Set(['TH1','TH2','CA1']);
+  // process elements
+  const flowEls = NODES.map(n=>{
+    const tag = TAG[n.kind];
+    const inc = FLOWS.filter(f=>f[1]===n.id).map((f,i)=>`<bpmn:incoming>${f[0]}__${f[1]}</bpmn:incoming>`).join('');
+    const out = FLOWS.filter(f=>f[0]===n.id).map(f=>`<bpmn:outgoing>${f[0]}__${f[1]}</bpmn:outgoing>`).join('');
+    const def = (n.kind==='throw'||n.kind==='catch') ? `<bpmn:linkEventDefinition id="${n.id}_led" name="pulse"/>` : '';
+    const label = n.id.startsWith('ND-') ? `${n.id}\n${n.name}` : n.name;
+    return `<bpmn:${tag} id="${n.id}" name="${esc(label)}">${inc}${out}${def}</bpmn:${tag}>`;
+  }).join('\n    ');
+
+  const seqEls = FLOWS.map(f=>`<bpmn:sequenceFlow id="${f[0]}__${f[1]}" sourceRef="${f[0]}" targetRef="${f[1]}"${f[2]?` name="${esc(f[2])}"`:''}/>`).join('\n    ');
+
+  const laneEls = LANES.map(l=>{
+    const refs = NODES.filter(n=>n.lane===l.id).map(n=>`<bpmn:flowNodeRef>${n.id}</bpmn:flowNodeRef>`).join('');
+    return `<bpmn:lane id="${l.id}" name="${l.name}">${refs}</bpmn:lane>`;
+  }).join('\n      ');
+
+  // DI
+  const poolShape = `<bpmndi:BPMNShape id="Pool_di" bpmnElement="Pool" isHorizontal="true"><dc:Bounds x="${POOL.x}" y="${POOL.y}" width="${POOL.w}" height="${POOL.h}"/></bpmndi:BPMNShape>`;
+  const laneShapes = LANES.map(l=>`<bpmndi:BPMNShape id="${l.id}_di" bpmnElement="${l.id}" isHorizontal="true"><dc:Bounds x="${LANE_X}" y="${l.y}" width="${LANE_W}" height="${l.h}"/></bpmndi:BPMNShape>`).join('\n      ');
+  const nodeShapes = NODES.map(n=>{
+    const exp = n.kind==='sub' ? ' isExpanded="false"' : '';
+    const lbl = (n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch')
+      ? `<bpmndi:BPMNLabel><dc:Bounds x="${n.x-20}" y="${n.y+n.h+2}" width="76" height="14"/></bpmndi:BPMNLabel>` : '';
+    return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}"${exp}><dc:Bounds x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}"/>${lbl}</bpmndi:BPMNShape>`;
+  }).join('\n      ');
+  const edgeShapes = FLOWS.map(f=>{
+    const wp = route(byId[f[0]], byId[f[1]]).map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
+    return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_di" bpmnElement="${f[0]}__${f[1]}">${wp}</bpmndi:BPMNEdge>`;
+  }).join('\n      ');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Defs" targetNamespace="http://tron/flow">
+  <bpmn:collaboration id="Collab">
+    <bpmn:participant id="Pool" name="TRON workflow" processRef="Proc"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Proc" isExecutable="false">
+    <bpmn:laneSet id="LS">
+      ${laneEls}
+    </bpmn:laneSet>
+    ${flowEls}
+    ${seqEls}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Dg"><bpmndi:BPMNPlane id="Pl" bpmnElement="Collab">
+      ${poolShape}
+      ${laneShapes}
+      ${nodeShapes}
+      ${edgeShapes}
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+/* ════════════ FLOW REGISTRY (overlay) — node sub-processes + sentry sub-processes ════════════ */
+const FLOW = {
+  'ND-01': { num:'ND-01', name:'BOOTUP', start:'', end:'PULSE', grid:true, steps:[
+    {n:'Spawn TRON-AIDE', pos:[0,0]},
+    {n:'Refresh trunk',   pos:[1,0]},
+    {n:'Read pipeline',   pos:[1,1]},
+    {n:'Read blocks',     pos:[1,2]},
+    {n:'Set scope',  kind:'sub', opens:'ND-01-05', pos:[2,2]},
+    {n:'Set counts', kind:'sub', opens:'ND-01-06', pos:[3,2]},
+    {n:'Spawn architects', pos:[3,3]},
+    {n:'Cap pool',         pos:[3,4]},
+  ]},
+  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', steps:[
+    {n:'Refresh trunk'},{n:'Rebuild view'},{n:'Refresh PRs'},
+    {n:'Detect done'},{n:'Release workers'},{n:'Tick cadence'},
+    {n:'Sweep liveness'},{n:'Claim inboxes'},{n:'Classify messages', actor:'aide'},
+    {n:'Route messages'},{n:'Drive gates'},{n:'Drain triggers'},
+    {n:'Save state'},{n:'Drop sidecars'},
+  ]},
+  'ND-01-05': { num:'ND-01-05', name:'SET SCOPE', start:'', end:'Scope locked',
+    steps:[
+      {n:'Dispatch TRON-AIDE', col:0},                  // T0 det
+      {n:'Ask scope', actor:'aide', col:1},             // T1
+      {n:'Answer scope', actor:'op', col:2},            // T2
+      {n:'Resolved?', kind:'gateway', actor:'aide', col:2}, // T3 — above Answer; AIDE clears first
+      {n:'Validate scope', col:2},                      // T4 det — aligned above the gateway
+      {n:'Lock scope', col:3},                          // T5 det
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
+      {f:'T3',t:'T1',label:'clarify'},
+      {f:'T3',t:'T4',label:'resolved'},
+      {f:'T4',t:'T5'},
+      {f:'T5',t:'E'},
+    ]},
+  'ND-01-06': { num:'ND-01-06', name:'SET COUNTS', start:'', end:'Counts locked',
+    steps:[
+      {n:'Ask counts', actor:'aide'},  // T0
+      {n:'Answer counts', actor:'op'}, // T1
+      {n:'Validate floor'},            // T2 det
+      {n:'Floor ok?', kind:'gateway'}, // T3 det
+      {n:'Advise', actor:'aide'},      // T4
+      {n:'Confirm?', kind:'gateway', actor:'op'}, // T5 op
+      {n:'Lock counts'},               // T6 det
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
+      {f:'T3',t:'T4',label:'≥1'},
+      {f:'T3',t:'T0',label:'below floor'},
+      {f:'T4',t:'T5'},
+      {f:'T5',t:'T6',label:'confirm'},
+      {f:'T5',t:'T0',label:'revise'},
+      {f:'T6',t:'E'},
+    ]},
+};
+/* horizontal swimlane: TRON-DET / TRON-AIDE / OPERATOR lanes (only those used) */
+const STW=170, STH=68, SPITCHX=200, SX0=300, LANE_H=180;
+const ACTORS = [
+  {key:'det',  id:'L_DET',  name:'⚙  TRON-DET',  tag:'task'},
+  {key:'aide', id:'L_AIDE', name:'✦  TRON-AIDE', tag:'task'},
+  {key:'op',   id:'L_OP',   name:'☻  OPERATOR',  tag:'task'},
+];
+function subXML(def){
+  const n=def.steps.length;
+  const actorOf = s => s.actor || 'det';
+  const grid = def.grid || def.steps.some(s=>s.pos);
+  const poolY=120, poolX=130, laneX=poolX+30;   // poolY leaves a top band for loop-back arcs
+  const geom = {};
+  let lanesUsed, bandTop={}, poolW, poolH, laneW;
+
+  if(grid){
+    // explicit col/row grid in a single TRON-DET lane (compact, balanced shape)
+    const COLP=210, ROWP=112, OX=440, OYrel=82, OY=poolY+OYrel;
+    const cols=def.steps.map(s=>s.pos[0]), rows=def.steps.map(s=>s.pos[1]);
+    const startPos=[Math.min(...cols)-1, def.steps[0].pos[1]];
+    const endPos=[def.steps[n-1].pos[0], def.steps[n-1].pos[1]+1];
+    const maxCol=Math.max(...cols, endPos[0]), maxRow=Math.max(...rows, endPos[1]);
+    const cell=(c,r,w,h)=>({x:OX+c*COLP-w/2, y:OY+r*ROWP-h/2, w, h});
+    geom['S']={...cell(startPos[0],startPos[1],36,36), ord:-1};
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'; geom['T'+i]={...cell(s.pos[0],s.pos[1], gw?44:STW, gw?44:STH), ord:i}; });
+    geom['E']={...cell(endPos[0],endPos[1],36,36), ord:1e6};
+    poolW = OX + maxCol*COLP + STW/2 + 60 - poolX;
+    poolH = OYrel + (maxRow+1)*ROWP - 30;
+    lanesUsed=[ACTORS[0]]; bandTop.det=poolY;
+  } else {
+    // lane mode: one band per actor; column = step.col ?? index, row = actor's lane index
+    const used=new Set(['det',...def.steps.map(actorOf)]);
+    lanesUsed=ACTORS.filter(a=>used.has(a.key));
+    const cyL={}, rowOf={};
+    lanesUsed.forEach((a,k)=>{ bandTop[a.key]=poolY+k*LANE_H; cyL[a.key]=poolY+k*LANE_H+LANE_H/2; rowOf[a.key]=k; });
+    poolH=lanesUsed.length*LANE_H;
+    const colOf=(s,i)=> s.col!==undefined ? s.col : i;
+    geom['S']={x:215, y:cyL.det-18, w:36,h:36, row:0, col:-0.5, ord:-1};
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway',w=gw?44:STW,h=gw?44:STH,c=colOf(s,i),base=SX0+c*SPITCHX; geom['T'+i]={x:gw?base+STW/2-22:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
+    const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
+    geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-18, w:36,h:36, row:0, col:maxC+1, ord:1e6};
+    poolW = geom['E'].x+36+60-poolX;
+  }
+  laneW = poolW-30;
+  const G=id=>{const g=geom[id];return {...g,cx:g.x+g.w/2,cy:g.y+g.h/2,top:g.y,bottom:g.y+g.h,left:g.x,right:g.x+g.w};};
+
+  // semantic
+  const els=[]; const refs={det:['S','E'],aide:[],op:[]};
+  els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}"/>`);
+  def.steps.forEach((s,i)=>{
+    const a=grid?'det':actorOf(s), tag = s.kind==='gateway'?'exclusiveGateway' : s.kind==='sub'?'subProcess' : ACTORS.find(x=>x.key===a).tag;
+    refs[a].push('T'+i);
+    const stepId = `${def.num}-${String(i+1).padStart(2,'0')}`;
+    els.push(`<bpmn:${tag} id="T${i}" name="${esc(stepId+'\n'+s.n)}"/>`);
+  });
+  els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}"/>`);
+  const edges = def.edges || [{f:'S',t:'T0'}, ...Array.from({length:n-1},(_,i)=>({f:'T'+i,t:'T'+(i+1)})), {f:'T'+(n-1),t:'E'}];
+  const fl = edges.map((e,k)=>`<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${e.label?` name="${esc(e.label)}"`:''}/>`);
+  const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${a.name}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
+
+  // DI shapes
+  const di=[];
+  di.push(`<bpmndi:BPMNShape id="Pool_di" bpmnElement="PoolS" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`);
+  lanesUsed.forEach(a=>di.push(`<bpmndi:BPMNShape id="${a.id}_di" bpmnElement="${a.id}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${bandTop[a.key]}" width="${laneW}" height="${grid?poolH:LANE_H}"/></bpmndi:BPMNShape>`));
+  { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="36" height="36"/><bpmndi:BPMNLabel><dc:Bounds x="${g.x-18}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'';
+    const lbl = s.kind==='gateway'?`<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`:'';
+    di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
+  { const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="36" height="36"/><bpmndi:BPMNLabel><dc:Bounds x="${g.x-60}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+
+  // edges
+  const yTop = poolY-26;
+  edges.forEach((e,k)=>{
+    const s=G(e.f), t=G(e.t); let wp;
+    const sameRow=Math.abs(s.cy-t.cy)<6, sameCol=Math.abs(s.cx-t.cx)<6;
+    if(grid){
+      if(sameRow) wp = t.cx>=s.cx ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+      else if(sameCol) wp = t.cy>=s.cy ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
+      else { const mx=(s.right+t.left)/2; wp=[[s.right,s.cy],[mx,s.cy],[mx,t.cy],[t.left,t.cy]]; }
+    } else {
+      // port-aware: pick the side each edge leaves/enters from the grid relationship
+      const drow=t.row-s.row, dcol=t.col-s.col;
+      if(dcol <= -2) wp=[[s.cx,s.top],[s.cx,yTop],[t.cx,yTop],[t.cx,t.top]];   // long backward loop → arc over top
+      else if(drow===0) wp = dcol>=0 ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+      else {                                                                   // changing lane → exit top/bottom
+        const ey = drow>0 ? s.bottom : s.top;
+        if(Math.abs(dcol)<0.01) wp=[[s.cx,ey],[t.cx, drow>0?t.top:t.bottom]];  // same column → straight vertical
+        else { const ex = dcol>0 ? t.left : t.right; wp=[[s.cx,ey],[s.cx,t.cy],[ex,t.cy]]; } // enter target on its side
+      }
+    }
+    // anchor the label near the source (the node it leaves), just off the line
+    const dx=wp[1][0]-wp[0][0], dy=wp[1][1]-wp[0][1];
+    const vert=Math.abs(dx)<Math.abs(dy);
+    const lx = vert ? wp[0][0]+8 : wp[0][0]+(dx>0?6:-66);
+    const ly = vert ? wp[0][1]+(dy>0?6:-20) : wp[0][1]-17;
+    const lbl = e.label?`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="64" height="14"/></bpmndi:BPMNLabel>`:'';
+    di.push(`<bpmndi:BPMNEdge id="sf${k}_di" bpmnElement="sf${k}">${wp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}${lbl}</bpmndi:BPMNEdge>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="D_sp" targetNamespace="http://tron/flow">
+  <bpmn:collaboration id="CollabS"><bpmn:participant id="PoolS" name="${esc(def.num+' · '+def.name)}" processRef="SP"/></bpmn:collaboration>
+  <bpmn:process id="SP" isExecutable="false">
+    <bpmn:laneSet id="LS_S">${lanes}</bpmn:laneSet>
+    ${els.join('\n    ')}
+    ${fl.join('\n    ')}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Dg_sp"><bpmndi:BPMNPlane id="Pl_sp" bpmnElement="CollabS">
+    ${di.join('\n    ')}
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+/* ════════════ RENDER ════════════ */
+// repaint node shapes after edges so sequence flows sit beneath the boxes
+// TODO(flow): edges still overlap some node boxes — appendChild reorder is partial.
+//   Real fix likely needs per-edge waypoint clipping to shape borders, or a
+//   separate connection layer. Deferred.
+function edgesBehind(viewer){
+  const er = viewer.get('elementRegistry');
+  er.forEach(el=>{
+    if(el.waypoints) return;                                   // skip connections
+    if(el.type==='bpmn:Participant' || el.type==='bpmn:Lane') return; // keep pool/lanes back
+    const g = er.getGraphics(el);
+    if(g && g.parentNode) g.parentNode.appendChild(g);         // move to front
+  });
+}
+// collapsed sub-process: bpmn-js centers the label but bottoms the [+] marker, leaving the
+// content low with empty top. Shift label + marker up as one unit so it reads centered.
+function recenterSubMarkers(viewer){
+  const er=viewer.get('elementRegistry');
+  er.filter(e=>e.type==='bpmn:SubProcess').forEach(e=>{
+    const vis=er.getGraphics(e).querySelector('.djs-visual'); if(!vis) return;
+    [...vis.children].forEach((ch,idx)=>{
+      if(idx===0) return;                                   // keep the box outline
+      const dy = idx===1 ? -12.5 : -7.5;                    // label up more, marker less → modest gap, still centered
+      ch.setAttribute('transform', `translate(0,${dy}) ${ch.getAttribute('transform')||''}`.trim());
+    });
+  });
+}
+// bpmn-js draws no divider between a lane's owner-name band and its content — add one,
+// inside the lane's own graphics group so it renders identically to the lane border
+function addLaneDividers(viewer){
+  const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg';
+  er.filter(e=>e.type==='bpmn:Lane').forEach(l=>{
+    const g=er.getGraphics(l); if(!g) return;
+    const ref=g.querySelector('rect'), cs=ref?getComputedStyle(ref):null;
+    const ln=document.createElementNS(NS,'line');
+    ln.setAttribute('x1',30); ln.setAttribute('y1',0);     // local coords (lane group is translated)
+    ln.setAttribute('x2',30); ln.setAttribute('y2',l.height);
+    ln.setAttribute('stroke', cs?cs.stroke:'rgb(34, 36, 42)');
+    ln.setAttribute('stroke-width', cs?parseFloat(cs.strokeWidth):1.5);
+    g.appendChild(ln);
+  });
+}
+// keep the viewport inside the diagram bounds (no infinite canvas)
+function clampVB(canvas){
+  const vb=canvas.viewbox(), inner=vb.inner; let {x,y,width,height}=vb;
+  x = width>=inner.width  ? inner.x-(width-inner.width)/2   : Math.min(Math.max(x,inner.x), inner.x+inner.width-width);
+  y = height>=inner.height? inner.y-(height-inner.height)/2 : Math.min(Math.max(y,inner.y), inner.y+inner.height-height);
+  canvas.viewbox({x,y,width,height});
+}
+function fitNow(viewer){ const c=viewer.get('canvas'); c.zoom('fit-viewport','auto'); c.zoom(c.zoom()*0.9); viewer._minScale=c.zoom(); clampVB(c); }
+function attachPanZoom(viewer, sel){
+  if(viewer._panzoom) return; viewer._panzoom=true;
+  const canvas=viewer.get('canvas'), c=document.querySelector(sel);
+  c.style.position='relative'; c.style.cursor='grab';
+  const min=()=>viewer._minScale||0.05, max=()=>(viewer._minScale||0.2)*6;
+  const setZoom=s=>{ s=Math.min(Math.max(s,min()),max()); canvas.zoom(s); clampVB(canvas); };
+  const ctl=document.createElement('div'); ctl.className='zoomctl'+(sel==='#ovcanvas'?' in-ov':'');
+  ctl.innerHTML='<button data-z="in">+</button><button data-z="out">−</button><button data-z="fit">⤢</button>';
+  c.appendChild(ctl);
+  ctl.addEventListener('click',e=>{ const z=e.target.dataset.z; if(!z)return;
+    if(z==='fit') fitNow(viewer); else setZoom(canvas.zoom()*(z==='in'?1.25:0.8)); });
+  c.addEventListener('wheel',e=>{ e.preventDefault(); setZoom(canvas.zoom()*(e.deltaY<0?1.12:0.89)); },{passive:false});
+  let drag=false;
+  c.addEventListener('mousedown',e=>{ if(e.target.closest('.zoomctl'))return; drag=true; c.style.cursor='grabbing'; });
+  window.addEventListener('mouseup',()=>{ if(drag){drag=false; c.style.cursor='grab';} });
+  c.addEventListener('mousemove',e=>{ if(!drag)return; canvas.scroll({dx:e.movementX,dy:e.movementY}); clampVB(canvas); });
+}
+let ovViewer, ovStack=[], ovCurrent=null;
+function openFlow(key){ if(FLOW[key]){ ovStack.push(key); renderFlow(); } }
+function ovBack(){ ovStack.pop(); if(ovStack.length===0) closeOv(); else renderFlow(); }
+function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); }
+async function renderFlow(){
+  const key=ovStack[ovStack.length-1], def=FLOW[key]; ovCurrent=def;
+  document.getElementById('ov-back').style.display = '';
+  document.getElementById('ov').classList.add('open');
+  if(!ovViewer){
+    ovViewer = new BpmnJS({ container:'#ovcanvas' });
+    ovViewer.get('eventBus').on('element.click', e=>{
+      const m=/^T(\d+)$/.exec(e.element.id); if(!m) return;
+      const st=ovCurrent.steps[+m[1]]; if(st && st.opens) openFlow(st.opens);
+    });
+  }
+  await ovViewer.importXML(subXML(def));
+  const canvas=ovViewer.get('canvas');
+  def.steps.forEach((s,i)=>{
+    if(s.kind==='sub') canvas.addMarker('T'+i,'has-sub');
+    else { const a=s.actor||'det'; if(a!=='det') canvas.addMarker('T'+i,a); }
+  });
+  edgesBehind(ovViewer);
+  addLaneDividers(ovViewer);
+  recenterSubMarkers(ovViewer);
+  fitNow(ovViewer);
+  attachPanZoom(ovViewer,'#ovcanvas');
+}
+document.getElementById('ov').addEventListener('click', e=>{ if(e.target.id==='ov') closeOv(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOv(); });
+
+(async ()=>{
+  const core = new BpmnJS({ container:'#core' });
+  await core.importXML(coreXML());
+  const canvas = core.get('canvas');
+  NODES.filter(n=>n.sub).forEach(n=> canvas.addMarker(n.id,'has-sub'));
+  edgesBehind(core);
+  addLaneDividers(core);
+  recenterSubMarkers(core);
+  fitNow(core);
+  attachPanZoom(core,'#core');
+  core.get('eventBus').on('element.click', e=>{
+    const n = byId[e.element.id];
+    if(n && n.sub) openFlow(n.id);
+  });
+})();
+</script>
+</body>
+</html>

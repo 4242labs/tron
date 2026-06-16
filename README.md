@@ -59,7 +59,7 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 
 ## The flow
 
-![TRON supervisor workflow — BPMN](diagrams/flow-bpm.svg)
+The full workflow lives as interactive BPMN under [`docs/`](docs/): [`flow-core.html`](docs/flow-core.html) (core + drill-down sub-processes) and [`flow-description.html`](docs/flow-description.html) (per-node notes).
 
 ---
 
