@@ -23,11 +23,19 @@ jobs:
         with:
           path: meta
 
-      - name: Checkout canon (42hq)
+      - name: Checkout canon — 42hq (knowledge-base skills)
         uses: actions/checkout@v4
         with:
           repository: 42piratas/42hq
-          path: canon
+          path: canon-42hq
+          fetch-depth: 0
+          token: ${{ secrets.CANON_READ_TOKEN }}
+
+      - name: Checkout canon — tron (project-scaffold skills)
+        uses: actions/checkout@v4
+        with:
+          repository: 42piratas/tron
+          path: canon-scaffold
           fetch-depth: 0
           token: ${{ secrets.CANON_READ_TOKEN }}
 
@@ -35,7 +43,10 @@ jobs:
         id: drift
         run: |
           chmod +x meta/scripts/canon-drift-check.sh
-          meta/scripts/canon-drift-check.sh meta canon | tee drift-report.txt
+          meta/scripts/canon-drift-check.sh meta \
+            "canon-42hq::knowledge-base/skills" \
+            "canon-scaffold::templates/project-scaffold/templates/meta/skills" \
+            | tee drift-report.txt
           if grep -q "^DRIFT:" drift-report.txt; then
             echo "drift_detected=true" >> "$GITHUB_OUTPUT"
           else
@@ -57,7 +68,7 @@ jobs:
             const fs = require('fs');
             const report = fs.readFileSync('drift-report.txt', 'utf8');
             const title = 'Canon drift detected';
-            const body = `Drift CI detected canon-derived skills falling out of sync with \`42hq\` HEAD.\n\n\`\`\`\n${report}\n\`\`\`\n\nResolution: review each flagged skill, sync changes from canon, update \`canon_version\` frontmatter, commit.`;
+            const body = `Drift CI detected canon-derived skills falling out of sync with their canon source (42hq or tron scaffold) HEAD.\n\n\`\`\`\n${report}\n\`\`\`\n\nResolution: review each flagged skill, sync changes from canon, update \`canon_version\` frontmatter, commit.`;
             const { data: issues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,

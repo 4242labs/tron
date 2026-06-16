@@ -8,29 +8,39 @@
 #
 # Skips skills marked `source: project` (legitimate project customization).
 #
-# Usage: canon-drift-check.sh <meta-repo-path> <canon-repo-path>
+# Usage: canon-drift-check.sh <meta-repo-path> <canon-root>...
+#   <canon-root> = "REPO_PATH::SKILL_SUBDIR" — a canon checkout plus the skills dir
+#   within it. Pass one root per canon source; roots are tried in the order given and
+#   the first basename match wins. Canonical skills now live across TWO repos:
+#     "<42hq-checkout>::knowledge-base/skills"
+#     "<tron-checkout>::templates/project-scaffold/templates/meta/skills"
+#   so each root carries its own repo — per-file git history runs in the repo that
+#   actually owns the matched counterpart, not a single global canon checkout.
+#
 # Output: lines starting with "OK:" or "DRIFT:" — the workflow greps for "DRIFT:".
-# Requires the canon checkout to have FULL history (workflow: fetch-depth: 0).
+# Requires each canon checkout to have FULL history (workflow: fetch-depth: 0).
 #
 # Schema reference: knowledge-base/skills/REGISTRY-frontmatter.md
 
 set -euo pipefail
 
 META_PATH="${1:?meta repo path required}"
-CANON_PATH="${2:?canon repo path required}"
+shift
+if [ "$#" -eq 0 ]; then
+  echo "ERROR: at least one canon root required (REPO_PATH::SKILL_SUBDIR)" >&2
+  exit 2
+fi
+# Canonical search roots, in priority order. Each entry is "REPO_PATH::SKILL_SUBDIR".
+CANON_ROOTS=("$@")
 
-CANON_HEAD=$(cd "$CANON_PATH" && git rev-parse --short=7 HEAD)
-
-echo "Canon HEAD: $CANON_HEAD"
 echo "Meta path:  $META_PATH"
+for root in "${CANON_ROOTS[@]}"; do
+  repo="${root%%::*}"; sub="${root#*::}"
+  head=$(cd "$repo" && git rev-parse --short=7 HEAD)
+  echo "Canon root: $repo ($sub) @ $head"
+done
 echo "(drift is computed per-file: a skill drifts only when its canonical counterpart changed since canon_version)"
 echo "---"
-
-# Canonical search roots, in priority order.
-CANON_SKILL_DIRS=(
-  "new-project-template/templates/meta/skills"
-  "knowledge-base/skills"
-)
 
 # Iterate skill files only — REGISTRY-frontmatter.md scope is skill files, not agents.
 find "$META_PATH/skills" -maxdepth 2 -name "*.md" -type f 2>/dev/null | sort | while read -r file; do
@@ -72,35 +82,37 @@ find "$META_PATH/skills" -maxdepth 2 -name "*.md" -type f 2>/dev/null | sort | w
     continue
   fi
 
-  # Locate the canonical counterpart by basename.
+  # Locate the canonical counterpart by basename across all canon roots.
+  # Track the owning repo so git history runs where the file actually lives.
   base=$(basename "$file")
-  canonical=""
-  for dir in "${CANON_SKILL_DIRS[@]}"; do
-    if [ -f "$CANON_PATH/$dir/$base" ]; then
-      canonical="$dir/$base"
+  canonical=""; canon_repo=""
+  for root in "${CANON_ROOTS[@]}"; do
+    repo="${root%%::*}"; sub="${root#*::}"
+    if [ -f "$repo/$sub/$base" ]; then
+      canon_repo="$repo"; canonical="$sub/$base"
       break
     fi
   done
 
   if [ -z "$canonical" ]; then
-    echo "DRIFT: $rel_path — source: canon but no canonical counterpart found in canon (${CANON_SKILL_DIRS[*]})"
+    echo "DRIFT: $rel_path — source: canon but no canonical counterpart found in any canon root (${CANON_ROOTS[*]})"
     continue
   fi
 
-  # The pinned version must exist in canon history (needs fetch-depth: 0).
-  if ! (cd "$CANON_PATH" && git cat-file -e "${canon_version_field}^{commit}" 2>/dev/null); then
-    echo "DRIFT: $rel_path — canon_version $canon_version_field not found in canon history (ensure workflow uses fetch-depth: 0)"
+  # The pinned version must exist in the owning repo's history (needs fetch-depth: 0).
+  if ! (cd "$canon_repo" && git cat-file -e "${canon_version_field}^{commit}" 2>/dev/null); then
+    echo "DRIFT: $rel_path — canon_version $canon_version_field not found in $canon_repo history (ensure workflow uses fetch-depth: 0)"
     continue
   fi
 
   # Per-file drift: did the canonical file change AFTER the pinned version?
-  changes=$(cd "$CANON_PATH" && git rev-list --count "${canon_version_field}..HEAD" -- "$canonical" 2>/dev/null || echo "ERR")
+  changes=$(cd "$canon_repo" && git rev-list --count "${canon_version_field}..HEAD" -- "$canonical" 2>/dev/null || echo "ERR")
   if [ "$changes" = "ERR" ]; then
-    echo "DRIFT: $rel_path — could not compute per-file history for $canonical"
+    echo "DRIFT: $rel_path — could not compute per-file history for $canonical in $canon_repo"
   elif [ "$changes" = "0" ]; then
     echo "OK: $rel_path — $canonical unchanged since canon_version $canon_version_field"
   else
-    latest=$(cd "$CANON_PATH" && git log -1 --format=%h -- "$canonical")
+    latest=$(cd "$canon_repo" && git log -1 --format=%h -- "$canonical")
     echo "DRIFT: $rel_path — $canonical changed since $canon_version_field ($changes commit(s)); bump canon_version to $latest"
   fi
 done
