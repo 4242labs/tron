@@ -26,6 +26,8 @@ A block inherits this check; it may override or opt out via its `Deploy:` field.
 
 ## Phase Overview
 
-| Phase | Title | Status |
-|-------|-------|--------|
-| Phase 1 | <Title> | 📋 To do |
+Titles only — live status is owned solely by `pipeline.md`. Do not restate status here.
+
+| Phase | Title |
+|-------|-------|
+| Phase 1 | <Title> |

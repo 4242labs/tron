@@ -29,15 +29,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Map only the env/secrets your E2E suite needs; add per-integration
+      # mock-mode flags (e.g. <INTEGRATION>_E2E_MODE: "1") as required.
       - name: Run E2E API tests
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}
-          SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
-          GMAIL_E2E_MODE: "1"
-          ANTHROPIC_E2E_MODE: "1"
-          ADZUNA_E2E_MODE: "1"
-        run: npm test -- src/test/e2e/pipeline.e2e.ts src/test/e2e/payments.e2e.ts
+        run: npm test -- <E2E_API_GLOB>
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -45,6 +42,4 @@ jobs:
       - name: Run Playwright UI tests
         env:
           STAGING_URL: ${{ secrets.STAGING_URL }}
-          SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
-        run: npx playwright test src/test/e2e/ui.spec.ts
+        run: npx playwright test <E2E_UI_GLOB>

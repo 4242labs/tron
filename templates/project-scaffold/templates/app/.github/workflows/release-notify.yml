@@ -1,4 +1,5 @@
-# [optional] Email blast to subscribers on GitHub Release publish — requires email provider (Brevo) configured
+# [optional] Email blast to subscribers on GitHub Release publish — requires an email provider configured
+# and a release-email script shipped at app/scripts/. Remove this workflow if you don't notify on release.
 name: release-notify
 
 on:
@@ -26,8 +27,6 @@ jobs:
       - name: Send release email
         run: npx tsx scripts/send-release-email.ts
         env:
-          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          <EMAIL_PROVIDER_API_KEY>: ${{ secrets.<EMAIL_PROVIDER_API_KEY> }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_BODY: ${{ github.event.release.body }}

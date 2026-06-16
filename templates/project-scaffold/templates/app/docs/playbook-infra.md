@@ -57,7 +57,7 @@ Production-only secrets (never set on staging/preview):
 - Project: `<project>-litellm` on Railway
 - Config: `infra/litellm_config.yaml`
 - Entrypoint: `infra/litellm-entrypoint.sh` (drops conflicting Prisma view on cold start)
-- Image: `ghcr.io/berriai/litellm:main-v1.63.14-stable` (pinned — do NOT update without testing)
+- Image: `docker.litellm.ai/berriai/litellm:main-v1.63.14-stable` (pinned — do NOT update without testing)
 
 ### Spend Dashboard
 
@@ -78,16 +78,18 @@ Rotate `LITELLM_MASTER_KEY`:
 
 ### Channel Map
 
+Channel names are placeholders — name them per your workspace conventions.
+
 | Channel | Webhook env var | Source |
 |---------|----------------|--------|
-| `#financial-polar` | `SLACK_WEBHOOK_FINANCIAL` | Polar subscription events |
-| `#affiliates-fp` | `SLACK_WEBHOOK_AFFILIATES` | FirstPromoter events |
-| `#deploys-staging` | `SLACK_WEBHOOK_DEPLOYS_STAGING` | Vercel staging deploys |
-| `#deploys-prod` | `SLACK_WEBHOOK_DEPLOYS_PROD` | Vercel prod deploys |
-| `#digest-brevo` | `SLACK_WEBHOOK_DIGEST` | Daily email stats cron |
-| `#infra-railway` | via Pipedream | Railway deploy/crash events |
-| `#errors-sentry` | native integration | Sentry alerts |
-| `#support-plain` | native integration | Plain ticket events |
+| `#<financial-channel>` | `SLACK_WEBHOOK_FINANCIAL` | payment/subscription events |
+| `#<affiliates-channel>` | `SLACK_WEBHOOK_AFFILIATES` | affiliate/referral events |
+| `#<deploys-staging-channel>` | `SLACK_WEBHOOK_DEPLOYS_STAGING` | staging deploys |
+| `#<deploys-prod-channel>` | `SLACK_WEBHOOK_DEPLOYS_PROD` | prod deploys |
+| `#<digest-channel>` | `SLACK_WEBHOOK_DIGEST` | daily stats cron |
+| `#<infra-channel>` | via relay | infra deploy/crash events |
+| `#<errors-channel>` | native integration | error-monitoring alerts |
+| `#<support-channel>` | native integration | support ticket events |
 
 ### Pipedream Relay (Railway → Slack)
 

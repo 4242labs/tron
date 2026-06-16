@@ -1,3 +1,9 @@
+---
+name: skill-block-forward-review
+description: Architect folds a finished block's learnings into upcoming blocks; supervisor-dispatched, flips no status.
+source: project
+---
+
 # Skill: Block Forward Review
 
 **The supervising process dispatches this skill when a block lands done (✅) on trunk.** It is not user-initiated and it is not session-end — it flips no status and closes no block. Its job is to carry forward what the just-done block taught us, so upcoming blocks stay correct. Read this file **now** — do not rely on memory. Canonical flow: `{shared_knowledge_path}/principles-base.md §12` (Reviewer-trigger map → *Architect forward review*).
@@ -70,10 +76,7 @@ Edit the in-scope block files and their `pipeline.md` rows directly:
 
 ## 5. Persist
 
-**Feature branch + PR. Never push directly to a protected trunk branch.**
-
-- [ ] Branch → commit → `git push -u origin {branch}` → `gh pr create --base main` (meta repo)
-- [ ] Monitor CI until green. Never arm auto-merge. Merge is performed by the agent once authorized (by the user, or by the supervising process per its merge policy) — then monitor the merge through to a verified deploy.
+Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project delta: this is meta-repo work — PR targets `main`.
 - [ ] Write a forward-review log to `logs/architecture/log-YYMMDD-HHMM-{DONE_BLOCK_ID}-forward.md` using the **session-log format** (`ref-session-log-format.md`): the learnings harvested (§2), the blocks assessed (§3), the adjustments applied or escalated (§4). If there was no forward impact, the log says so in one line.
 
 ---

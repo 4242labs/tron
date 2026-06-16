@@ -3,7 +3,7 @@
 **Status:** Living Document
 **Purpose:** Historical record of completed pipeline phases and resolved technical debt. Moved here from `pipeline.md` to reduce token load — agents read `pipeline.md` every session; completed work doesn't need to be in that read path.
 
-**Last Updated:** <DATE>
+**Last Updated:** <YYYY-MM-DD>
 
 ---
 

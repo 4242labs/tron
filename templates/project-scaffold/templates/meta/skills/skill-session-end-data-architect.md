@@ -1,3 +1,10 @@
+---
+name: skill-session-end-data-architect
+description: Data architect close-out — update PII/lineage/caching registries, Core Docs staleness, git sync, log.
+source: canon
+canon_version: HEAD
+---
+
 # Skill: Data Architect Session End
 
 **This skill runs only when the user explicitly triggers session-end.** Do not run automatically after any check passes or because the conversation feels "done." The user-trigger-only rule is the canonical 6-stage flow's stage 6 — see `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.
@@ -31,25 +38,20 @@ Read this file **now** — do not rely on memory from session start.
 
 **Answer each explicitly. Do not skip any row.** Canonical list: `principles.md` §Core Docs.
 
+Rows are the Core Docs that ship with the scaffold. Skip any row whose doc this project doesn't ship; add a row for any project doc your work changed.
+
 | Doc | Affected? | Updated? |
 |:----|:----------|:---------|
 | `context.md` | YES / NO | ✅ / N/A |
 | `pipeline.md` | YES / NO | ✅ / N/A |
 | `principles.md` | YES / NO | ✅ / N/A |
-| `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | ✅ / N/A |
-| `../<APP_REPO_NAME>/app/RULES.md` | YES / NO | ✅ / N/A |
-| `app/README.md` | YES / NO | ✅ / N/A |
-| `../<APP_REPO_NAME>/docs/guidelines-design.md` | YES / NO | ✅ / N/A |
-| `../<APP_REPO_NAME>/docs/guidelines-brand.md` | YES / NO | ✅ / N/A |
+| `../<APP_REPO_NAME>/docs/guidelines-coding.md` | YES / NO | ✅ / N/A |
 | `../<APP_REPO_NAME>/docs/playbook-infra.md` | YES / NO | ✅ / N/A |
+| `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | ✅ / N/A |
 
 ## 5. Git Sync
 
-**Feature branch + PR in all cases. Never push directly to a protected trunk branch.**
-
-- Meta repo: branch → commit → `git push -u origin {branch}` → `gh pr create --base main`.
-- If the data-architect assessment touches app-repo files (e.g., migration SQL, schema docs): separate PR to app, default base `staging` (or `main` if the project runs single-branch); `hotfix/*` → `main` only.
-- Monitor CI until green. Never arm auto-merge. Merge is performed by the agent once authorized (by the user, or by the supervising process per its merge policy) — then monitor the merge through to a verified deploy.
+Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project deltas: meta-repo work PRs to `main`; app-repo files (migration SQL, schema docs) go in a separate PR to `staging` (default) — `main` if single-branch, `hotfix/*` → `main` only.
 
 ## 6. Final Report
 

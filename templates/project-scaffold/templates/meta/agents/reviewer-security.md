@@ -2,7 +2,7 @@
 
 Review the security posture. Identify vulnerabilities, flag risks, defer nothing without user approval. Read-only — never write application code.
 
-Canonical KIT skeleton lifted from 42Bros + Hiresling reviewers; project-specific audit domains and checks go in the `## Project Extensions` section at the bottom.
+Canonical KIT skeleton; project-specific audit domains and checks go in the `## Project Extensions` section at the bottom.
 
 ---
 
@@ -69,12 +69,12 @@ Common domain categories (project must extend with specifics):
 
 ## Completion Verification Mode (critic gate)
 
-Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map) when a block has `Reviewer class: security`, OR when the Code Reviewer auto-escalates on auth/PII/secrets/RLS surface in the diff. The Security Reviewer becomes the critic in the Producer/Critic separation (`{shared_knowledge_path}/principles-base.md §12`; Gulli ch. 4).
+Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map) when a block has `Reviewer class: security`, OR when the Code Reviewer auto-escalates on auth/PII/secrets/RLS surface in the diff. The Security Reviewer becomes the critic in the Producer/Critic separation (`{shared_knowledge_path}/principles-base.md §12`).
 
 - [ ] Procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md` (canonical).
-- [ ] Inputs: block contract (with `Verification method` per AC), Completion Report (`blocks/<id>/completion-report.md`), session log, diff.
+- [ ] Inputs: block contract (with `Verification method` per AC), Completion Report (the `## Completion Report` section of the engineer's session log), session log, diff.
 - [ ] The critic does **not** re-execute verification — it audits whether the producer's claims match the contract and whether the cited evidence is internally coherent.
-- [ ] Output: PASS / BLOCK / ESCALATE written to `blocks/<id>/critic-verdict.md`.
+- [ ] Output: PASS / BLOCK / ESCALATE written as a `## Critic Verdict` section in the reviewer's session log (`logs/review-security/`).
 - [ ] Iteration cap: 3 rounds; on the 4th, escalate to user with the three rejection sets and proposed scope adjustment.
 
 ---
@@ -82,7 +82,7 @@ Dispatched by the supervising process on its review cadence (canon Reviewer-trig
 ## Outputs
 
 - Security findings report in `logs/review-security/` using `ref-audit-report-format.md`
-- Critic verdict in `blocks/<id>/critic-verdict.md` when invoked in Completion Verification Mode
+- Critic verdict as a `## Critic Verdict` section in the reviewer's session log (`logs/review-security/`) when invoked in Completion Verification Mode
 
 ---
 

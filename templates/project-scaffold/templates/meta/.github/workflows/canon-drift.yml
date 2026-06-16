@@ -1,3 +1,12 @@
+# Canon-drift detection for skills marked `source: canon`.
+#
+# Setup notes:
+#   - <CANON_KB_REPO>       — the shared knowledge-base repo (provides `principles-base`
+#                             + shared skills). Remove this checkout AND its drift root
+#                             below if the project has no shared KB ({shared_knowledge_path} blank).
+#   - <CANON_SCAFFOLD_REPO> — the repo that owns the project-scaffold skills.
+#   - secrets.CANON_READ_TOKEN — a read-only PAT (or fine-grained token) with `contents: read`
+#                             on the canon repo(s). Required only if a canon repo is private.
 name: canon-drift
 
 on:
@@ -5,9 +14,7 @@ on:
     - cron: '0 8 * * *'  # nightly at 08:00 UTC
   pull_request:
     paths:
-      - 'skills/**'
-      - 'agents/**'
-      - 'principles.md'
+      - 'skills/**'   # the drift check only scans skills/ — do not widen this
   workflow_dispatch:
 
 permissions:
@@ -23,18 +30,19 @@ jobs:
         with:
           path: meta
 
-      - name: Checkout canon — 42hq (knowledge-base skills)
+      # Remove this step (and the canon-kb root in the drift-check call) if the project has no shared KB.
+      - name: Checkout canon — shared knowledge base
         uses: actions/checkout@v4
         with:
-          repository: 42piratas/42hq
-          path: canon-42hq
+          repository: <CANON_KB_REPO>
+          path: canon-kb
           fetch-depth: 0
           token: ${{ secrets.CANON_READ_TOKEN }}
 
-      - name: Checkout canon — tron (project-scaffold skills)
+      - name: Checkout canon — project-scaffold skills
         uses: actions/checkout@v4
         with:
-          repository: 42piratas/tron
+          repository: <CANON_SCAFFOLD_REPO>
           path: canon-scaffold
           fetch-depth: 0
           token: ${{ secrets.CANON_READ_TOKEN }}
@@ -44,7 +52,7 @@ jobs:
         run: |
           chmod +x meta/scripts/canon-drift-check.sh
           meta/scripts/canon-drift-check.sh meta \
-            "canon-42hq::knowledge-base/skills" \
+            "canon-kb::knowledge-base/skills" \
             "canon-scaffold::templates/project-scaffold/templates/meta/skills" \
             | tee drift-report.txt
           if grep -q "^DRIFT:" drift-report.txt; then
@@ -68,7 +76,7 @@ jobs:
             const fs = require('fs');
             const report = fs.readFileSync('drift-report.txt', 'utf8');
             const title = 'Canon drift detected';
-            const body = `Drift CI detected canon-derived skills falling out of sync with their canon source (42hq or tron scaffold) HEAD.\n\n\`\`\`\n${report}\n\`\`\`\n\nResolution: review each flagged skill, sync changes from canon, update \`canon_version\` frontmatter, commit.`;
+            const body = `Drift CI detected canon-derived skills falling out of sync with their canon source HEAD.\n\n\`\`\`\n${report}\n\`\`\`\n\nResolution: review each flagged skill, sync changes from canon, update \`canon_version\` frontmatter, commit.`;
             const { data: issues } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,

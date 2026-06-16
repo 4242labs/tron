@@ -2,13 +2,13 @@
 
 <One-line description of what this project does.>
 
-**Always invoke Claude from `<WORKSPACE_PATH>` (this directory).** Invoking from inside a sub-repo creates a separate memory context.
+**Always invoke the agent runtime from `<WORKSPACE_PATH>` (this directory).** Invoking from inside a sub-repo creates a separate memory context.
 
 ## Structure
 
 | Directory | Description |
 |-----------|-------------|
-| `<APP_REPO_NAME>/` | Git repo — Next.js app (app/, docs/, infra/, scripts/) |
+| `<APP_REPO_NAME>/` | Git repo — <APP_STACK_SUMMARY> (app/, docs/, infra/, scripts/) |
 | `<META_REPO_NAME>/` | Git repo — agents, skills, pipeline, blocks, logs |
 
 ## Agents
@@ -33,14 +33,7 @@ Invoked from `<WORKSPACE_PATH>` (this directory).
 
 Procedural skills in `<META_REPO_NAME>/skills/`. Agents read and follow these during specific workflows.
 
-| Skill | File | Used by |
-|:------|:-----|:--------|
-| Block Forward Review | `skill-block-forward-review.md` | Architect — dispatched by the supervising process when a block lands done; reconcile upcoming blocks against learnings/drift |
-| Review Cycle | `skill-review-cycle.md` | Architect — standalone, user-initiated cycle review (not the supervisor's review cadence) |
-| Validate | `skill-validate.md` | Engineer — DoD stages 2 (local) and 5 (post-merge re-validation) |
-| Code Review | `skill-review-code.md` | Code Reviewer — full audit procedure (dispatched on the review cadence) |
-| Session End (per agent) | `skill-session-end-{role}.md` | All agents — session closure checklist |
-| Worktree & Branching | `skill-worktree-and-branching.md` | All agents — branching, worktree, commit discipline |
+Single home for the skill ↔ file ↔ trigger registry: `<META_REPO_NAME>/principles.md §Skills Registry`. Read it there rather than restating it here.
 
 ## Key Files
 

@@ -1,3 +1,9 @@
+---
+name: skill-review-cycle
+description: Architect's user-initiated phase-boundary consistency sweep, archival, and doc reconciliation.
+source: project
+---
+
 # Skill: Cycle Review
 
 **This skill runs only when the user explicitly requests a cycle review.** Archival + status-flip inside §7 is the cycle-review equivalent of session-end stage 6 — it runs only under explicit user direction, never automatically. See `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.
@@ -64,13 +70,16 @@ Read `pipeline.md` for the in-scope phase section:
 
 Canonical list: `principles.md` §Core Docs.
 
+Rows are the Core Docs that ship with the scaffold. Skip any row whose doc this project doesn't ship; add a row for any project doc this cycle's work touched.
+
 | # | Doc | Location | Accurate? | If stale, what's wrong? |
 |:--|:----|:---------|:----------|:------------------------|
 | 1 | `context.md` — project structure, conventions | `context.md` | YES / NO | |
 | 2 | `pipeline.md` — scope, status, technical debt | `pipeline.md` | YES / NO | |
-| 3 | `CLAUDE.md` — app technical spec | `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | |
-| 4 | `README.md` — user-facing setup guide | `app/README.md` | YES / NO | |
-| 5 | `RULES.md` — content rules | `../<APP_REPO_NAME>/app/RULES.md` | YES / NO | |
+| 3 | `principles.md` — agent behavior rules | `principles.md` | YES / NO | |
+| 4 | `guidelines-coding.md` — code standards + secure coding | `../<APP_REPO_NAME>/docs/guidelines-coding.md` | YES / NO | |
+| 5 | `playbook-infra.md` — infra, secrets, services | `../<APP_REPO_NAME>/docs/playbook-infra.md` | YES / NO | |
+| 6 | `CLAUDE.md` — app technical spec | `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | |
 
 **If any doc is stale:**
 - Fix it now if the change is factual and unambiguous (e.g., new route, new component, new migration)
@@ -99,8 +108,8 @@ Verify docs don't contradict each other or the actual system:
 
 After §1–§6 validation passes:
 
-- [ ] **Pre-archival status gate:** For each in-scope block, verify `**Status:** ✅ Done` in the block doc header AND a Completion Report at `blocks/<id>/completion-report.md` (or appended) AND, when `Reviewer class:` ≠ `none`, a critic verdict at `blocks/<id>/critic-verdict.md` showing PASS. If any of these is missing or any block is still `📋 To do` or `🔄 In progress` → STOP. Do **not** flip status here. Report to user; the engineer must run the proper session-end flow first.
-- [ ] Move all in-scope block docs (and their `completion-report.md` + `critic-verdict.md` siblings) to `blocks/archive/`
+- [ ] **Pre-archival status gate:** For each in-scope block, verify `**Status:** ✅ Done` in the block doc header AND a Completion Report (the `## Completion Report` section) in the engineer's session log for the block AND, when `Reviewer class:` ≠ `none`, a `## Critic Verdict` section showing PASS in the reviewer's session log for the block. If any of these is missing or any block is still `📋 To do` or `🔄 In progress` → STOP. Do **not** flip status here. Report to user; the engineer must run the proper session-end flow first.
+- [ ] Move all in-scope block docs to `blocks/archive/` (the Completion Report and Critic Verdict live in session logs under `logs/` and stay there — only the block doc is archived)
 - [ ] If the **entire phase** is complete (all blocks ✅, none remaining): update the phase status in `pipeline.md` to ✅
 - [ ] If only a **partial review** (some blocks still open in the phase): archive only the reviewed ✅ blocks, leave the phase section as-is
 - [ ] Verify archived blocks are no longer in `blocks/` (only in `blocks/archive/`)
@@ -111,10 +120,7 @@ After §1–§6 validation passes:
 
 **Git sync:**
 
-**Feature branch + PR in all cases. Never push directly to a protected trunk branch.**
-
-- [ ] Branch → commit → `git push -u origin {branch}` → `gh pr create --base main` (meta repo). App-repo changes follow the project's app-repo branching convention — default `staging` if two-gate is live; `main` if single-branch; `hotfix/*` → `main` only.
-- [ ] Monitor CI until green. Never arm auto-merge. Merge is performed by the agent once authorized (by the user, or by the supervising process per its merge policy) — then monitor the merge through to a verified deploy.
+Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project deltas: meta-repo work PRs to `main`; app-repo changes follow the app branching convention — `staging` if two-gate is live, `main` if single-branch, `hotfix/*` → `main` only.
 
 **Review log:**
 
