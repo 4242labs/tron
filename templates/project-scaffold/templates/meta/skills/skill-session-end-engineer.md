@@ -13,6 +13,23 @@ Read this file **now** — do not rely on memory from session start.
 
 ---
 
+## The 6-Stage DoD Flow (context)
+
+This skill owns **stage 6 only**. The full flow is mapped here for orientation — not for re-execution from this skill. Canon: `{shared_knowledge_path}/principles-base.md §12`, `principles.md §Workflow`.
+
+| Stage | What | Owner / where |
+|:--|:--|:--|
+| 1 | Build — all tasks coded, tested locally, committed | engineer |
+| 2 | Local validation (pre-PR) — Completion Report, every AC PASS | `skill-validate.md` |
+| 3 | User-test gate — User Verification List, hand off to user | `skill-validate.md §5` |
+| 4 | User approves → PR → CI green → authorized merge (engineer merges, monitors to verified deploy; auto-merge never armed) | engineer |
+| 5 | Post-merge re-validation on trunk + deploy verification + self-attest | `skill-validate.md` |
+| 6 | User acknowledges → triggers session-end → status flip, archive, doc sync | **this skill** |
+
+**Reading discipline:** read `skill-validate.md` at every stage-2 and stage-5 invocation; read this skill only at stage 6. Never rely on memory. Block-status flip, block-file archival, and pipeline ✅ happen **only** at stage 6 under explicit user trigger — never inside validate.
+
+---
+
 ## Precondition: validation must already have run
 
 This skill is **paperwork only**. It does not validate. Validation lives in `skills/skill-validate.md` (the project's extension of `{shared_knowledge_path}/skills/skill-validate.md`) and must already have produced a clean Completion Report at:
@@ -20,7 +37,7 @@ This skill is **paperwork only**. It does not validate. Validation lives in `ski
 - **Stage 2** — local validation (pre-PR), all ACs `PASS`.
 - **Stage 5** — post-merge re-validation (on trunk), all ACs `PASS`, no regressions, **and a verified deploy where the block requires one** (a merge that is not deploy-verified is not done).
 
-If either is missing or has any `UNVERIFIED` row → STOP. Run validation first, then return here. Do not attempt to substitute alternative evidence (`{shared_knowledge_path}/principles-base.md §11`).
+If either is missing or has any `UNVERIFIED` row → STOP. Run validation first, then return here. Do not substitute alternative evidence — see the no-silent-downgrade / legal-moves rule in `skill-validate.md §Constraints`.
 
 Reviewers (code, security, data, branding/design) do **not** dispatch from this skill — they are dispatched by the supervising process on its review cadence (canon Reviewer-trigger map, `principles-base.md §12`).
 
@@ -36,7 +53,7 @@ Post-merge re-validation: N/N PASS (stage 5)
 Trigger session-end? (explicit yes required)
 ```
 
-Ambiguous responses ("looks good", "sounds fine", "ok") are **not** authorization — re-prompt for an explicit go-ahead. If the user pushes back on a verified PASS without producing new evidence, do not capitulate (`principles-base.md §13`). Re-state the evidence; if the user produces new evidence, re-open the relevant criterion via `skill-validate.md`.
+Ambiguous responses ("looks good", "sounds fine", "ok") are **not** authorization — re-prompt for an explicit go-ahead. If the user pushes back on a verified PASS without producing new evidence, do not capitulate — see the no-capitulation rule in `skill-validate.md §Constraints`. Re-state the evidence; if the user produces new evidence, re-open the relevant criterion via `skill-validate.md`.
 
 ---
 
@@ -56,6 +73,7 @@ Ambiguous responses ("looks good", "sounds fine", "ok") are **not** authorizatio
 | `context.md` | YES / NO | ✅ / N/A |
 | `pipeline.md` | YES / NO | ✅ / N/A |
 | `principles.md` | YES / NO | ✅ / N/A |
+| `../<APP_REPO_NAME>/docs/guidelines-coding.md` | YES / NO | ✅ / N/A |
 | `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | ✅ / N/A |
 | `../<APP_REPO_NAME>/app/RULES.md` | YES / NO | ✅ / N/A |
 | `app/README.md` | YES / NO | ✅ / N/A |
