@@ -2,7 +2,7 @@
 
 Project management, agents, skills, and session logs for `<PROJECT_NAME>`.
 
-**Always invoke Claude from the workspace root, not from inside this repo.**
+**Always invoke the agent runtime from the workspace root, not from inside this repo.**
 
 ## Agents
 

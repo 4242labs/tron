@@ -11,9 +11,9 @@
 # Usage: canon-drift-check.sh <meta-repo-path> <canon-root>...
 #   <canon-root> = "REPO_PATH::SKILL_SUBDIR" — a canon checkout plus the skills dir
 #   within it. Pass one root per canon source; roots are tried in the order given and
-#   the first basename match wins. Canonical skills now live across TWO repos:
-#     "<42hq-checkout>::knowledge-base/skills"
-#     "<tron-checkout>::templates/project-scaffold/templates/meta/skills"
+#   the first basename match wins. Canonical skills may live across more than one repo, e.g.:
+#     "<kb-checkout>::knowledge-base/skills"
+#     "<scaffold-checkout>::templates/project-scaffold/templates/meta/skills"
 #   so each root carries its own repo — per-file git history runs in the repo that
 #   actually owns the matched counterpart, not a single global canon checkout.
 #

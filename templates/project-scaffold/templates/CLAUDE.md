@@ -2,13 +2,13 @@
 
 <One-line description of what this project does.>
 
-**Always invoke Claude from `<WORKSPACE_PATH>` (this directory).** Invoking from inside a sub-repo creates a separate memory context.
+**Always invoke the agent runtime from `<WORKSPACE_PATH>` (this directory).** Invoking from inside a sub-repo creates a separate memory context.
 
 ## Structure
 
 | Directory | Description |
 |-----------|-------------|
-| `<APP_REPO_NAME>/` | Git repo — Next.js app (app/, docs/, infra/, scripts/) |
+| `<APP_REPO_NAME>/` | Git repo — <APP_STACK_SUMMARY> (app/, docs/, infra/, scripts/) |
 | `<META_REPO_NAME>/` | Git repo — agents, skills, pipeline, blocks, logs |
 
 ## Agents

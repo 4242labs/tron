@@ -1,14 +1,14 @@
 # MCP + Integration Setup
 
-Claude Code integrations for this project. Each section covers what the integration does, exact setup steps, and how to verify it works.
+MCP and API integrations for the agent runtime on this project. Each section covers what the integration does, exact setup steps, and how to verify it works.
 
-> **Terminology:** These are Claude Code MCP integrations and API integrations. Plain in particular is a raw HTTP integration — not an MCP server.
+> **Terminology:** These are MCP integrations and API integrations. Plain in particular is a raw HTTP integration — not an MCP server.
 
 ---
 
 ## Supabase MCP
 
-**What:** Lets Claude query your database, inspect schema, and review migrations directly from the conversation.
+**What:** Lets the agent query your database, inspect schema, and review migrations directly from the conversation.
 
 **Steps:**
 1. Get a Supabase access token: supabase.com → Account → Access Tokens → Generate new token
@@ -17,7 +17,7 @@ Claude Code integrations for this project. Each section covers what the integrat
    export SUPABASE_ACCESS_TOKEN=<token>
    ```
    Then: `source ~/.zshrc`
-3. Configure Claude Code MCP in `~/.claude/mcp.json` (or via Claude Code settings):
+3. Configure the agent runtime MCP in `~/.claude/mcp.json` (or via the agent runtime settings):
    ```json
    {
      "supabase": {
@@ -29,17 +29,17 @@ Claude Code integrations for this project. Each section covers what the integrat
      }
    }
    ```
-4. Restart Claude Code session
+4. Restart the agent runtime session
 
-**Verify:** Ask Claude "list tables in my Supabase project" — it should return your table list without errors.
+**Verify:** Ask the agent "list tables in my Supabase project" — it should return your table list without errors.
 
-**Token rotation:** Rotate access tokens every 90 days. Update `~/.zshrc` + Claude Code MCP config. Document rotation date in `docs/playbook-infra.md`.
+**Token rotation:** Rotate access tokens every 90 days. Update `~/.zshrc` + the agent runtime MCP config. Document rotation date in `docs/playbook-infra.md`.
 
 ---
 
 ## GitHub MCP
 
-**What:** Lets Claude manage PRs, issues, and repository settings directly from the conversation.
+**What:** Lets the agent manage PRs, issues, and repository settings directly from the conversation.
 
 **Steps:**
 1. Create a fine-grained PAT: github.com → Settings → Developer settings → Fine-grained personal access tokens → Generate new token
@@ -50,7 +50,7 @@ Claude Code integrations for this project. Each section covers what the integrat
    export GITHUB_PAT=<token>
    ```
    Then: `source ~/.zshrc`
-3. Configure Claude Code MCP:
+3. Configure the agent runtime MCP:
    ```json
    {
      "github": {
@@ -62,9 +62,9 @@ Claude Code integrations for this project. Each section covers what the integrat
      }
    }
    ```
-4. Restart Claude Code session
+4. Restart the agent runtime session
 
-**Verify:** Ask Claude "list open PRs in `<org>/<repo>`" — it should return the current PR list.
+**Verify:** Ask the agent "list open PRs in `<org>/<repo>`" — it should return the current PR list.
 
 **Token rotation:** Fine-grained PATs expire. Set a calendar reminder before expiry. Regenerate and update `~/.zshrc` + MCP config.
 
@@ -72,7 +72,7 @@ Claude Code integrations for this project. Each section covers what the integrat
 
 ## Vercel Plugin
 
-**What:** Lets Claude inspect deployments, read logs, and manage environment variables from the conversation.
+**What:** Lets the agent inspect deployments, read logs, and manage environment variables from the conversation.
 
 **Steps:**
 1. The plugin is already enabled in `.claude/settings.json`:
@@ -83,10 +83,10 @@ Claude Code integrations for this project. Each section covers what the integrat
      }
    }
    ```
-2. In Claude Code, type: `/vercel authenticate`
-3. Follow the OAuth flow in your browser — authorize Claude Code to access your Vercel account
+2. In the agent runtime, type: `/vercel authenticate`
+3. Follow the OAuth flow in your browser — authorize the agent runtime to access your Vercel account
 
-**Verify:** Ask Claude "list my recent Vercel deployments" — it should return your deployment history.
+**Verify:** Ask the agent "list my recent Vercel deployments" — it should return your deployment history.
 
 **Non-Vercel projects:** Remove `vercel@claude-plugins-official` from `enabledPlugins` in `.claude/settings.json`.
 

@@ -3,7 +3,7 @@
 **Status:** Living Document
 **Purpose:** Single source of truth for all product scope — what's being built, what's envisioned, and what needs fixing.
 
-**Last Updated:** <DATE>
+**Last Updated:** <YYYY-MM-DD>
 
 > Historical phases and resolved technical debt live in [`pipeline-archive.md`](./pipeline-archive.md). Diverse ideas not yet roadmapped live in [`backlog.md`](./backlog.md).
 

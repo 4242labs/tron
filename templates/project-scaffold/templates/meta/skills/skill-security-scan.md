@@ -133,7 +133,7 @@ Run only if `package.json` / lockfile changed:
 
 ```bash
 cd <APP_REPO_NAME>/app
-pnpm audit --audit-level=moderate
+npm audit --audit-level=moderate
 ```
 
 - [ ] Zero CRITICAL vulnerabilities

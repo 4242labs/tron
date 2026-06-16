@@ -25,7 +25,7 @@ You do **not** need to open the shared file to execute this skill. It exists so 
 
 Required before adding any worktree. Each repo ships `scripts/setup-repo.sh` (a tracked bootstrap script) that (a) configures portable-worktree settings (`worktree.useRelativePaths=true`, which implicitly enables `extensions.relativeWorktrees`) and (b) activates the committed base-branch guard in `.githooks/` — a `pre-commit` + `pre-push` pair that **hard-refuses any commit or push made directly on `main` / `staging`**. The guard is version-controlled and owned by no agent; it cannot be skipped by an agent forgetting the rule. Requires Git ≥ 2.48.
 
-- **`<APP_REPO_NAME>`** — auto-runs via `npm install` / `pnpm install` (wired through the `prepare` lifecycle script in `app/package.json`). No manual step needed after a fresh clone.
+- **`<APP_REPO_NAME>`** — auto-runs via `npm install` (wired through the `prepare` lifecycle script in `app/package.json`). No manual step needed after a fresh clone.
 - **`<META_REPO_NAME>`** — no Node package manager, so run once after cloning:
 
   ```

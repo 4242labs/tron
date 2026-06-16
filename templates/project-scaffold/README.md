@@ -26,7 +26,7 @@ Workspace-level, meta repo, and app repo file templates with `<PLACEHOLDER>` tok
 
 ## Versioning
 
-Template releases are tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **1.1.0**.
+Template releases are tracked in [`CHANGELOG.md`](./CHANGELOG.md). Current: **1.2.0**.
 
 ## Maintenance
 

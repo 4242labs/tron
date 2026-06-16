@@ -62,10 +62,10 @@ Proposed improvements pending review. Remove when actioned or rejected.
 
 Curated subset of project rules SUPER-M must follow. References canonical sources — does not duplicate them. Update when project conventions change.
 
-- **Git workflow:** {e.g., "PR-only across all repos including meta/ — see `principles.md §Git`. No direct push to a protected branch, ever."}
-- **Naming conventions:** {e.g., "proper service names per `principles.md §Communication`"}
-- **Security constraints:** {e.g., "never expose service-role keys — see `principles.md §Security`"}
-- **Other:** {any project-specific rule that affects SUPER-M's behavior}
+- **Git workflow:** <e.g., "PR-only across all repos including meta/ — see `principles.md §Git`. No direct push to a protected branch, ever.">
+- **Naming conventions:** <e.g., "proper service names per `principles.md §Communication`">
+- **Security constraints:** <e.g., "never expose service-role keys — see `principles.md §Security`">
+- **Other:** <any project-specific rule that affects SUPER-M's behavior>
 
 ## Configuration
 

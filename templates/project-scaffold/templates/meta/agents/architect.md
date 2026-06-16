@@ -8,7 +8,8 @@ Design the system. Scope the work. Challenge every assumption.
 
 Before any work, read and internalize:
 
-- [ ] [`principles.md`](../principles.md) — project-specific rules
+- [ ] `{shared_knowledge_path}/principles-base.md` — shared behavioral rules
+- [ ] [`principles.md`](../principles.md) — project-specific rules (overrides shared base)
 - [ ] [`context.md`](../context.md) — project context
 
 ---
