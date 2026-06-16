@@ -5,7 +5,7 @@
 
 **Relationship to pipeline:** When an item is promoted to the roadmap, move it to the §Promoted / Resolved section at the bottom with a forward reference.
 
-**Last Updated:** <DATE>
+**Last Updated:** <YYYY-MM-DD>
 
 ---
 

@@ -17,19 +17,7 @@ Project management, agents, skills, and session logs for `<PROJECT_NAME>`.
 
 ## Skills
 
-| Skill | File | Used by |
-|:------|:-----|:--------|
-| Validate | `skills/skill-validate.md` | Engineer (stages 2 and 5 of DoD flow) |
-| Block Forward Review | `skills/skill-block-forward-review.md` | Architect (supervisor-dispatched when a block lands done) |
-| Review Cycle | `skills/skill-review-cycle.md` | Architect (user-initiated) |
-| Code Review | `skills/skill-review-code.md` | Code Reviewer |
-| Security Scan | `skills/skill-security-scan.md` | Security Reviewer |
-| Worktree & Branching | `skills/skill-worktree-and-branching.md` | All agents |
-| Session End — Architect | `skills/skill-session-end-architect.md` | Architect |
-| Session End — Engineer | `skills/skill-session-end-engineer.md` | Engineer |
-| Session End — Data Architect | `skills/skill-session-end-data-architect.md` | Data Architect |
-| Session End — Code Reviewer | `skills/skill-session-end-reviewer-code.md` | Code Reviewer |
-| Session End — Security Reviewer | `skills/skill-session-end-reviewer-security.md` | Security Reviewer |
+Single home: `principles.md §Skills Registry` (skill ↔ file ↔ trigger). Don't restate the table here — read it there. Skill files live in `skills/`.
 
 ## Key Files
 

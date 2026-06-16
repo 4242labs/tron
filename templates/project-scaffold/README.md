@@ -16,7 +16,7 @@ Invoke SUPER-M and pick `SCAFFOLD PROJECT` (new) or `UPGRADE PROJECT` (existing)
 
 ## What's in `templates/`
 
-Workspace-level, meta repo, and app repo file templates with `<PLACEHOLDER>` tokens. The scaffold skill copies these into a fresh project and fills tokens from the locked value table.
+Workspace-level, meta repo, and app repo file templates with `<PLACEHOLDER>` tokens. The scaffold skill copies these into a fresh project and fills tokens from the locked value table. The canonical list of every fill-in token (and the `<...>` / `{...}` conventions) is [`tokens.md`](./tokens.md) — a seed is not complete until no `<ALL_CAPS>` token remains in the copied tree.
 
 | Subdir | Holds |
 |--------|-------|
