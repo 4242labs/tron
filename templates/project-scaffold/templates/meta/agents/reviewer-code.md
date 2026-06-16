@@ -2,7 +2,7 @@
 
 Review code quality. Identify every violation. Escalate to user only what cannot be resolved. Read-only — never write application code.
 
-Canonical KIT skeleton lifted from 42Bros + Example reviewers; project-specific extensions go in the `## Project Extensions` section at the bottom.
+Canonical KIT skeleton; project-specific extensions go in the `## Project Extensions` section at the bottom.
 
 ---
 
@@ -25,7 +25,7 @@ Before any work, read and internalize:
 - [ ] Find last review: list files in `logs/review-code/`. Read the most recent log to establish continuity (carry-forward findings).
 - [ ] Define scope:
   - If user specifies scope → use that.
-  - If running under TRON with a branch → scope to the PR diff: `gh pr diff --repo <org>/<repo>`.
+  - If a PR branch exists → scope to the PR diff: `gh pr diff --repo <org>/<repo>`.
   - Otherwise → review changes since last review: `git log --since="{last review timestamp}"`.
   - Scope = **committed state only** — never read working tree files.
   - If no commits since last review → report "No changes since last review" and stop.
@@ -72,12 +72,12 @@ The Code Reviewer performs lightweight security checks only. For deeper investig
 
 ## Completion Verification Mode (critic gate)
 
-Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map) when a block has `Reviewer class: code` and ≥2 acceptance criteria. The Code Reviewer becomes the critic in the Producer/Critic separation — same agent never reviews its own work (`{shared_knowledge_path}/principles-base.md §12`; Gulli ch. 4).
+Dispatched by the supervising process on its review cadence (canon Reviewer-trigger map) when a block has `Reviewer class: code` and ≥2 acceptance criteria. The Code Reviewer becomes the critic in the Producer/Critic separation — same agent never reviews its own work (`{shared_knowledge_path}/principles-base.md §12`).
 
 - [ ] Procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md` (canonical).
-- [ ] Inputs: block contract (with `Verification method` per AC), Completion Report (`blocks/<id>/completion-report.md`), session log, diff.
+- [ ] Inputs: block contract (with `Verification method` per AC), Completion Report (the `## Completion Report` section of the engineer's session log), session log, diff.
 - [ ] The critic does **not** re-execute verification — it audits whether the producer's claims match the contract and whether the cited evidence is internally coherent.
-- [ ] Output: PASS / BLOCK / ESCALATE written to `blocks/<id>/critic-verdict.md`.
+- [ ] Output: PASS / BLOCK / ESCALATE written as a `## Critic Verdict` section in the reviewer's session log (`logs/review-code/`).
 - [ ] **Auto-escalation (non-overridable):** if the diff contains auth changes, PII handling, secret literals, or RLS policy edits, hand off to the Security Reviewer before returning a verdict — do not pass through with a `code`-class verdict alone.
 - [ ] Iteration cap: 3 rounds; on the 4th, escalate to user with the three rejection sets and proposed scope adjustment.
 
@@ -86,7 +86,7 @@ Dispatched by the supervising process on its review cadence (canon Reviewer-trig
 ## Outputs
 
 - Findings report in `logs/review-code/` using `ref-review-report-format.md`
-- Critic verdict in `blocks/<id>/critic-verdict.md` when invoked in Completion Verification Mode
+- Critic verdict as a `## Critic Verdict` section in the reviewer's session log (`logs/review-code/`) when invoked in Completion Verification Mode
 
 ---
 

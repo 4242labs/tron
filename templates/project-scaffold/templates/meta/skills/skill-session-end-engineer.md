@@ -48,7 +48,7 @@ Reviewers (code, security, data, branding/design) do **not** dispatch from this 
 Before any status flip, surface in chat:
 
 ```
-Completion Report: blocks/<id>/completion-report.md — N/N PASS (stage 2)
+Completion Report: logs/engineering/log-…-{block-id}-…md (## Completion Report) — N/N PASS (stage 2)
 Post-merge re-validation: N/N PASS (stage 5)
 Trigger session-end? (explicit yes required)
 ```
@@ -98,7 +98,7 @@ Also sweep the project structure tree (CLAUDE.md / AGENTS.md): any new files cre
 
 ## 5. Logging
 
-- [ ] Create session log at `logs/engineering/log-YYMMDD-HHMM-{description}.md` using the **session-log format** in `skills/ref-session-log-format.md`
+- [ ] Create session log at `logs/engineering/log-YYMMDD-HHMM-{description}.md` using the **session-log format** in `ref-session-log-format.md`
 - [ ] Final checklist for user — numbered list of remaining manual actions
 - [ ] **Shared-KB session end:** run `{shared_knowledge_path}/meta/agent.md §4` (lessons) and `§7.2` (warning closure — verified fix only; reviewers never close).
 
@@ -112,7 +112,7 @@ For each block completed this session:
 
 - [ ] Update block doc status: `**Status:** ✅ Done`
 - [ ] Add `**Completed:** YYYY-MM-DD` and the PR link(s)
-- [ ] Move the block file from `blocks/` to `blocks/archive/` (`git mv blocks/{id}.md blocks/archive/{id}.md`); the Completion Report travels with it
+- [ ] Move the block file from `blocks/` to `blocks/archive/` (`git mv blocks/{id}.md blocks/archive/{id}.md`); the Completion Report lives in the engineer's session log under `logs/engineering/` and stays there
 - [ ] Update `pipeline.md` status markers for the block's tasks
 - [ ] Commit the status-flip + archival as part of a feature branch → PR (per §4 Git Sync)
 - [ ] Report to user: block completion summary, PR links, Completion Report path

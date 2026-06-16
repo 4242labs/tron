@@ -1,3 +1,10 @@
+---
+name: skill-worktree-and-branching
+description: Worktree + branch + PR discipline for all agents; the parallel-safe Git entry point. Never commit on the base branch.
+source: canon
+canon_version: HEAD
+---
+
 # Skill: Worktree + Branching (<PROJECT_NAME>)
 
 The entry point for all parallel-agent-safe work in <PROJECT_NAME>. Read this before touching any file.
@@ -34,11 +41,10 @@ Both scripts are idempotent (safe to re-run). Implements `{shared_knowledge_path
 
 - **Two repos.** <PROJECT_NAME> is split into `<GITHUB_ORG>/<APP_REPO_NAME>` (app code, docs, infra) and `<GITHUB_ORG>/<META_REPO_NAME>` (this repo — agents, skills, pipeline, blocks, logs). App work branches from `<APP_REPO_NAME>`; meta work branches from `<META_REPO_NAME>`.
 - **No direct push to `staging` or `main`.** Every change — `app/`, `meta/`, `docs/`, root files — goes through a feature branch + worktree + PR + CI + **a monitored merge**. There are no exceptions for either protected branch.
-- **Two-gate flow (Blocks 06-16 + 06-17).** All work flows through feature branches into `staging` (default) or `main` (hotfix only). Solo-dev repo: `required_approving_review_count: 0` on both branches (GitHub blocks self-approval). Auto-merge is banned — `gh pr merge --auto` is never armed; the agent merges once authorized and monitors the merge through to a verified deploy. Repo default branch is `staging`, so new PRs auto-target the correct gate.
+- **Two-gate flow.** All work flows through feature branches into `staging` (default) or `main` (hotfix only). Solo-dev repo: `required_approving_review_count: 0` on both branches (GitHub blocks self-approval). Auto-merge is banned — `gh pr merge --auto` is never armed; the agent merges once authorized and monitors the merge through to a verified deploy. Repo default branch is `staging`, so new PRs auto-target the correct gate.
   - **Default:** `feat|fix|chore|docs/<slug>` → PR targets `staging` → per-PR Vercel preview + `app-ci` → merge authorized → agent merges → integration-tested on `staging.<PROJECT_NAME>` → `staging → main` promotion PR → merge authorized → agent merges → ships to prod.
   - **Hotfix lane:** `hotfix/<slug>` → PR targets `main` directly → per-PR preview + `app-ci` → merge authorized → agent merges → ships immediately. Use only when the staging gate would cost more than the bug it patches. Backport after: `git checkout staging && git pull && git merge main`.
   - The `pr-base-guard` CI job mechanically enforces that only `staging` or `hotfix/*` branches can PR into `main`.
-  - See `blocks/06-16-staging-branch-and-protection.md`, `blocks/06-17-two-gate-hardening-and-default-base.md`, and `logs/architecture/adr-260409-staging-branch-workflow.md` (including the 2026-04-09 solo-dev amendment).
 - **Worktree base path.** Worktrees live **inside the workspace** at `<WORKSPACE_PATH>/worktrees/`, prefixed by repo:
 
   ```

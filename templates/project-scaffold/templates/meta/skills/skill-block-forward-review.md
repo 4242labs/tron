@@ -1,3 +1,9 @@
+---
+name: skill-block-forward-review
+description: Architect folds a finished block's learnings into upcoming blocks; supervisor-dispatched, flips no status.
+source: project
+---
+
 # Skill: Block Forward Review
 
 **The supervising process dispatches this skill when a block lands done (✅) on trunk.** It is not user-initiated and it is not session-end — it flips no status and closes no block. Its job is to carry forward what the just-done block taught us, so upcoming blocks stay correct. Read this file **now** — do not rely on memory. Canonical flow: `{shared_knowledge_path}/principles-base.md §12` (Reviewer-trigger map → *Architect forward review*).

@@ -20,7 +20,8 @@ Project management, agents, skills, and session logs for `<PROJECT_NAME>`.
 | Skill | File | Used by |
 |:------|:-----|:--------|
 | Validate | `skills/skill-validate.md` | Engineer (stages 2 and 5 of DoD flow) |
-| Review Cycle | `skills/skill-review-cycle.md` | Architect |
+| Block Forward Review | `skills/skill-block-forward-review.md` | Architect (supervisor-dispatched when a block lands done) |
+| Review Cycle | `skills/skill-review-cycle.md` | Architect (user-initiated) |
 | Code Review | `skills/skill-review-code.md` | Code Reviewer |
 | Security Scan | `skills/skill-security-scan.md` | Security Reviewer |
 | Worktree & Branching | `skills/skill-worktree-and-branching.md` | All agents |

@@ -1,3 +1,10 @@
+---
+name: skill-session-end-data-architect
+description: Data architect close-out — update PII/lineage/caching registries, Core Docs staleness, git sync, log.
+source: canon
+canon_version: HEAD
+---
+
 # Skill: Data Architect Session End
 
 **This skill runs only when the user explicitly triggers session-end.** Do not run automatically after any check passes or because the conversation feels "done." The user-trigger-only rule is the canonical 6-stage flow's stage 6 — see `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.

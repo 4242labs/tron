@@ -1,3 +1,10 @@
+---
+name: skill-session-end-architect
+description: Architect stage-6 close-out — record decisions/ADRs, Core Docs staleness, git sync, session log.
+source: canon
+canon_version: HEAD
+---
+
 # Skill: Architect Session End
 
 **This skill runs only when the user explicitly triggers session-end.** Do not run automatically after any check passes or because the conversation feels "done." The user-trigger-only rule is the canonical 6-stage flow's stage 6 — see `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.
@@ -42,6 +49,6 @@ Read this file **now** — do not rely on memory from session start.
 
 ## 5. Logging
 
-- [ ] Create session log at `logs/architecture/log-YYMMDD-HHMM-{description}.md` using the **session-log format** in `skills/ref-session-log-format.md`
+- [ ] Create session log at `logs/architecture/log-YYMMDD-HHMM-{description}.md` using the **session-log format** in `ref-session-log-format.md`
 - [ ] Final checklist for user — numbered list of remaining decisions or actions
 - [ ] **Shared-KB session end:** run `{shared_knowledge_path}/meta/agent.md §4` (lessons) and `§7.2` (warning closure — verified fix only; reviewers never close).

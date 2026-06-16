@@ -39,6 +39,7 @@ Procedural skills in `<META_REPO_NAME>/skills/`. Agents read and follow these du
 | Review Cycle | `skill-review-cycle.md` | Architect — standalone, user-initiated cycle review (not the supervisor's review cadence) |
 | Validate | `skill-validate.md` | Engineer — DoD stages 2 (local) and 5 (post-merge re-validation) |
 | Code Review | `skill-review-code.md` | Code Reviewer — full audit procedure (dispatched on the review cadence) |
+| Security Scan | `skill-security-scan.md` | Security Reviewer — security audit procedure (auth, RLS, secrets, integrations, deps) |
 | Session End (per agent) | `skill-session-end-{role}.md` | All agents — session closure checklist |
 | Worktree & Branching | `skill-worktree-and-branching.md` | All agents — branching, worktree, commit discipline |
 

@@ -1,3 +1,10 @@
+---
+name: skill-session-end-reviewer-code
+description: Code reviewer close-out — Core Docs staleness flags, persist review report via PR.
+source: canon
+canon_version: HEAD
+---
+
 # Skill: Code Reviewer Session End
 
 **This skill runs only when the user explicitly triggers session-end.** Do not run automatically after the review report is produced. The user-trigger-only rule is the canonical 6-stage flow's stage 6 — see `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.
@@ -24,7 +31,7 @@ Read this file **now** — do not rely on memory from session start.
 
 ## 2. Persist Review Report
 
-- [ ] Save review report to `logs/review-code/YYMMDD-HHMM-review-{scope}.md` using the **review report format** in `skills/ref-review-report-format.md`
-- [ ] Git commit and push
+- [ ] Save review report to `logs/review-code/YYMMDD-HHMM-review-{scope}.md` using the **review report format** in `ref-review-report-format.md`
+- [ ] Persist via a feature branch + worktree + PR — never commit on the base branch (per `skill-worktree-and-branching.md`). Meta repo: branch → commit → `git push -u origin {branch}` → `gh pr create --base main`; monitor CI, merge once authorized.
 - [ ] Report any unresolved items to user
 - [ ] **Shared-KB session end:** run `{shared_knowledge_path}/meta/agent.md §4` (lessons) and `§7.2` (warning closure — verified fix only; reviewers never close).

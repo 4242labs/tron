@@ -15,6 +15,7 @@ Before any work, read and internalize:
 
 ## Session Start
 
+- [ ] **Worktree hygiene.** Run the session-start scan from `skills/skill-worktree-and-branching.md` §Session-Start Hygiene. Create your feature worktree before editing any file. Never edit or commit in the main checkout.
 - [ ] **Shared-KB session start:** run `{shared_knowledge_path}/meta/agent.md §3.1 + §3.2` (notifications archive + warnings surface). If this project is named in any active warning → stop and flag.
 - [ ] Read `pipeline.md` — always
 - [ ] If anything is unclear → ask immediately
@@ -72,6 +73,12 @@ When writing or editing a block spec (uses `blocks/block-template.md`):
 - [ ] Single-criterion blocks (typo, one-line config) may set `Reviewer class: none` — engineer self-attests at completion. Anything with ≥2 criteria gets a real reviewer.
 
 Canonical rule: `{shared_knowledge_path}/principles-base.md §11/§12`. Critic procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md`.
+
+---
+
+## Post-Block Forward Review
+
+When a block lands done (✅) on trunk, the supervising process dispatches the Architect to run `skills/skill-block-forward-review.md` — harvest the finished block's learnings and reconcile the **upcoming** blocks (and their pipeline rows) before they are dispatched. This is not session-end: it flips no status and closes no block. Read the skill at invocation — do not rely on memory.
 
 ---
 

@@ -1,3 +1,9 @@
+---
+name: skill-review-cycle
+description: Architect's user-initiated phase-boundary consistency sweep, archival, and doc reconciliation.
+source: project
+---
+
 # Skill: Cycle Review
 
 **This skill runs only when the user explicitly requests a cycle review.** Archival + status-flip inside §7 is the cycle-review equivalent of session-end stage 6 — it runs only under explicit user direction, never automatically. See `{shared_knowledge_path}/principles-base.md §12` and the project's `principles.md §Workflow`.
@@ -99,8 +105,8 @@ Verify docs don't contradict each other or the actual system:
 
 After §1–§6 validation passes:
 
-- [ ] **Pre-archival status gate:** For each in-scope block, verify `**Status:** ✅ Done` in the block doc header AND a Completion Report at `blocks/<id>/completion-report.md` (or appended) AND, when `Reviewer class:` ≠ `none`, a critic verdict at `blocks/<id>/critic-verdict.md` showing PASS. If any of these is missing or any block is still `📋 To do` or `🔄 In progress` → STOP. Do **not** flip status here. Report to user; the engineer must run the proper session-end flow first.
-- [ ] Move all in-scope block docs (and their `completion-report.md` + `critic-verdict.md` siblings) to `blocks/archive/`
+- [ ] **Pre-archival status gate:** For each in-scope block, verify `**Status:** ✅ Done` in the block doc header AND a Completion Report (the `## Completion Report` section) in the engineer's session log for the block AND, when `Reviewer class:` ≠ `none`, a `## Critic Verdict` section showing PASS in the reviewer's session log for the block. If any of these is missing or any block is still `📋 To do` or `🔄 In progress` → STOP. Do **not** flip status here. Report to user; the engineer must run the proper session-end flow first.
+- [ ] Move all in-scope block docs to `blocks/archive/` (the Completion Report and Critic Verdict live in session logs under `logs/` and stay there — only the block doc is archived)
 - [ ] If the **entire phase** is complete (all blocks ✅, none remaining): update the phase status in `pipeline.md` to ✅
 - [ ] If only a **partial review** (some blocks still open in the phase): archive only the reviewed ✅ blocks, leave the phase section as-is
 - [ ] Verify archived blocks are no longer in `blocks/` (only in `blocks/archive/`)

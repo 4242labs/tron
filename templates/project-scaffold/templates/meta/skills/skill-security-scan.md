@@ -1,3 +1,9 @@
+---
+name: skill-security-scan
+description: Security reviewer's audit — auth, RLS, secrets, integrations, deps; gates block completion.
+source: project
+---
+
 # Skill: Security Scan — <PROJECT_NAME>
 
 **Read this file NOW — do not rely on memory from session start.**
@@ -126,7 +132,7 @@ If the block adds routes or modifies `next.config.ts` / middleware:
 Run only if `package.json` / lockfile changed:
 
 ```bash
-cd <PROJECT_NAME>-app/app
+cd <APP_REPO_NAME>/app
 pnpm audit --audit-level=moderate
 ```
 
