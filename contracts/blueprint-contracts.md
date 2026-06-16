@@ -1,8 +1,8 @@
 # Blueprint contracts — TRON deterministic FSM (B0 · reconciled to the converged workflow)
 
 **Status:** canon · **Block:** D1 (canon shape) · **Date:** 2026-06-05
-**Implements:** `42agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
-**Conforms to:** the frozen workflow — `42agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
+**Implements:** `42hq/agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
+**Conforms to:** the frozen workflow — `42hq/agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
 
 This is the authoritative contract set the rest of TRON is built against. **Design only** — no real
 copy. It locks: the event-table model, the standing layer (PULSE + SWITCHBOARD), the trigger
