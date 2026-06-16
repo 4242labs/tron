@@ -8,7 +8,7 @@ The entry point for all parallel-agent-safe work in <PROJECT_NAME>. Read this be
 
 This skill is the **<PROJECT_NAME> adaptation** of the shared multi-agent Git procedure. The shared file is the source of truth for lifecycle, hygiene, and branch flow; this file restates the parts an agent needs and adds the <PROJECT_NAME>-specific deltas.
 
-- `42hq/knowledge-base/skills/skill-git-multi-agent.md` — full Git workflow: worktree lifecycle, branch naming, rebase, CI monitoring, cleanup
+- `{shared_knowledge_path}/skills/skill-git-multi-agent.md` — full Git workflow: worktree lifecycle, branch naming, rebase, CI monitoring, cleanup
 
 You do **not** need to open the shared file to execute this skill. It exists so the procedure can evolve in one place.
 
@@ -26,7 +26,7 @@ Required before adding any worktree. Each repo ships `scripts/setup-repo.sh` (a 
   ./scripts/setup-repo.sh
   ```
 
-Both scripts are idempotent (safe to re-run). Implements `42hq/knowledge-base/principles-base.md §14 Portability — Relative-path worktrees`. Canonical template: `42hq/knowledge-base/templates/setup-repo.sh`.
+Both scripts are idempotent (safe to re-run). Implements `{shared_knowledge_path}/principles-base.md §14 Portability — Relative-path worktrees`. Canonical template: `{shared_knowledge_path}/templates/setup-repo.sh`.
 
 ---
 
@@ -54,7 +54,7 @@ Both scripts are idempotent (safe to re-run). Implements `42hq/knowledge-base/pr
 - **Always rebase on `staging` before pushing.** Run `git fetch origin && git rebase origin/staging` before every push. Skipping causes out-of-date rejections and integration conflicts — no exceptions.
 - **Monitor CI after every push. Do not proceed until all checks are green.** Run `gh pr checks {PR} --watch` immediately after opening a PR. Fix failures before any next step.
 - **One agent per branch.** Two agents must not share a worktree. If a branch carries WIP into a later session, the next agent **resumes the same worktree** rather than creating a new one on the same branch.
-- **Session start is read-only; tear down your own at session end.** Run the session-start scan (inspect + conflict check) every session — but never remove another agent's worktree there. Remove the worktree *you* created once *your* PR merges (block 6). Orphaned worktrees (remote gone + no open PR) are garbage-collected by SUPER-M's health check, not at session start — see `42hq/knowledge-base/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`.
+- **Session start is read-only; tear down your own at session end.** Run the session-start scan (inspect + conflict check) every session — but never remove another agent's worktree there. Remove the worktree *you* created once *your* PR merges (block 6). Orphaned worktrees (remote gone + no open PR) are garbage-collected by SUPER-M's health check, not at session start — see `{shared_knowledge_path}/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`.
 
 ---
 
@@ -135,7 +135,7 @@ Any branch tagged `[gone]` in `git branch -vv` has no remote counterpart — it 
 **Step 3 — Note orphans (read-only).**
 Session start is read-only — you never remove another agent's worktree here. For each worktree shown (excluding the main checkout):
 - Branch still exists on `origin` → leave it alone.
-- Branch shows `[gone]` **and** no open PR → orphaned. Leave it for SUPER-M's orphan GC (`42hq/knowledge-base/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`).
+- Branch shows `[gone]` **and** no open PR → orphaned. Leave it for SUPER-M's orphan GC (`{shared_knowledge_path}/skills/skill-git-multi-agent.md §Worktree teardown & orphan GC`).
 - Has an open PR → leave it; the next agent resumes it.
 
 You only ever remove the worktree **you** created, and only at session end once **your** PR merges (block 6).
