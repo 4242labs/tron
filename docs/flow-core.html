@@ -47,6 +47,10 @@
   .djs-element.aide .djs-visual > text{ fill:var(--copper-dark) !important; }
   .djs-element.op .djs-visual > rect{ fill:#EFF6FF !important; stroke:var(--blue-dark) !important; }
   .djs-element.op .djs-visual > text{ fill:var(--blue-dark) !important; }
+  /* horizontal diagram header (42labs DS) — replaces the pool's vertical title band */
+  .flowhead{position:absolute; top:16px; left:50%; transform:translateX(-50%); z-index:6;
+    display:flex; align-items:center; gap:10px; pointer-events:none;}
+  .flowhead .nname{font-family:var(--font-heading); font-weight:600; font-size:16px; color:var(--charcoal); letter-spacing:-.01em;}
 </style>
 </head>
 <body>
@@ -55,6 +59,7 @@
 </div>
 
 <div id="ov"><div class="ovbox">
+  <div class="flowhead" id="ovhead"></div>
   <div id="ovcanvas"></div>
   <button class="x ovnav" id="ov-back" onclick="ovBack()" style="display:none">‹</button>
   <button class="x ovclose" onclick="closeOv()">×</button>
@@ -63,43 +68,48 @@
 <script>
 /* ════════════ DATA MODEL ════════════ */
 const LANES = [
-  {id:'L_ENG', name:'ENGINEER',  y:80,  h:140},
-  {id:'L_TRON',name:'TRON',      y:220, h:250},
-  {id:'L_ARCH',name:'ARCHITECT', y:470, h:140},
-  {id:'L_REV', name:'REVIEWERS', y:610, h:140},
+  {id:'L_ENG', name:'ENGINEER',  y:80,  h:150},
+  {id:'L_TRON',name:'TRON',      y:230, h:360},
+  {id:'L_ARCH',name:'ARCHITECT', y:590, h:150},
+  {id:'L_REV', name:'REVIEWERS', y:740, h:150},
 ];
-const POOL = {x:160,y:80,w:1340,h:670};
+const POOL = {x:160,y:80,w:1340,h:810};
 const LANE_X = 190, LANE_W = 1310;
 
 const NODES = [
-  // TRON lane
-  {id:'Start', kind:'start', name:'tron:start',     lane:'L_TRON', x:240, y:327, w:36, h:36},
-  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', x:300, y:310, w:96, h:70, sub:'BOOTUP'},
-  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', x:432, y:310, w:96, h:70, sub:'PULSE'},
-  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', x:566, y:321, w:48, h:48},
-  {id:'ND-05', kind:'task',  name:'Dispatch',       lane:'L_TRON', x:656, y:317, w:104,h:56},
-  {id:'ND-04', kind:'task',  name:'DONE-gate',      lane:'L_TRON', x:806, y:317, w:110,h:56},
-  {id:'ND-10', kind:'task',  name:'Release',        lane:'L_TRON', x:966, y:317, w:96, h:56},
-  {id:'ND-06', kind:'task',  name:'Escalate',       lane:'L_TRON', x:1106,y:317, w:100,h:56},
-  {id:'ND-07', kind:'task',  name:'Apply decision', lane:'L_TRON', x:1256,y:317, w:120,h:56},
-  {id:'ND-09', kind:'task',  name:'Observe',        lane:'L_TRON', x:806, y:405, w:104,h:48},
-  {id:'End',   kind:'end',   name:'Session End',    lane:'L_TRON', x:244, y:420, w:36, h:36},
-  {id:'CA1',   kind:'catch', name:'pulse',          lane:'L_TRON', x:414, y:250, w:36, h:36},
-  {id:'TH1',   kind:'throw', name:'pulse',          lane:'L_TRON', x:1420,y:329, w:36, h:36},
+  // TRON lane — spine: Start→BOOTUP→PULSE ; PULSE + CA1 merge at router RT1 → SWITCHBOARD (one centerline)
+  {id:'Start', kind:'start', name:'tron:start',     lane:'L_TRON', x:240, y:292, w:36, h:36},
+  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', x:300, y:276, w:96, h:68, sub:'BOOTUP'},
+  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', x:470, y:276, w:96, h:68, sub:'PULSE'},
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', x:494, y:400, w:48, h:48},
+  {id:'TM1',   kind:'timer', name:'cadence',        lane:'L_TRON', x:476, y:230, w:36, h:36, lblAbove:true},   // → PULSE top-¼ (cadence floor)
+  {id:'CA1',   kind:'catch', name:'pulse',          lane:'L_TRON', x:524, y:230, w:36, h:36, lblAbove:true},   // → PULSE top-¾ (pulse event; catches TH1/TH2)
+  // lower chain row (SWITCHBOARD level): fill-slot → done-path
+  {id:'ND-05', kind:'task',  name:'Assign worker',  lane:'L_TRON', x:640, y:424, w:104,h:56},
+  {id:'ND-04', kind:'task',  name:'DONE-gate',      lane:'L_TRON', x:800, y:424, w:110,h:56},
+  {id:'ND-10', kind:'task',  name:'Release',        lane:'L_TRON', x:962, y:424, w:96, h:56},
+  {id:'TH1',   kind:'throw', name:'pulse',          lane:'L_TRON', x:1140,y:434, w:36, h:36},
+  // wall-path (lower sub-row)
+  {id:'ND-06', kind:'task',  name:'Escalate',       lane:'L_TRON', x:800, y:500, w:100,h:56},
+  {id:'ND-07', kind:'task',  name:'Apply decision', lane:'L_TRON', x:1090,y:500, w:120,h:56},
+  // worker monitoring
+  {id:'ND-09', kind:'task',  name:'Observe',        lane:'L_TRON', x:800, y:300, w:104,h:48},
+  {id:'End',   kind:'end',   name:'Session End',    lane:'L_TRON', x:244, y:434, w:36, h:36},
   // ENGINEER lane
-  {id:'ND-11', kind:'task',  name:'Build',          lane:'L_ENG',  x:656, y:124, w:104,h:52},
-  {id:'EX',    kind:'xor',   name:'',               lane:'L_ENG',  x:826, y:126, w:48, h:48},
+  {id:'ND-11', kind:'task',  name:'Build',          lane:'L_ENG',  x:640, y:128, w:104,h:52},
+  {id:'EX',    kind:'xor',   name:'',               lane:'L_ENG',  x:900, y:131, w:48, h:48},
   // ARCHITECT lane
-  {id:'ND-08', kind:'task',  name:'Dispatch',       lane:'L_ARCH', x:432, y:514, w:104,h:52},
-  {id:'ND-12', kind:'task',  name:'Scope block',    lane:'L_ARCH', x:656, y:514, w:120,h:52},
-  {id:'ND-13', kind:'task',  name:'Log Review',     lane:'L_ARCH', x:906, y:514, w:120,h:52},
-  {id:'TH2',   kind:'throw', name:'pulse',          lane:'L_ARCH', x:1066,y:522, w:36, h:36},
+  {id:'ND-08', kind:'task',  name:'Assign',         lane:'L_ARCH', x:340, y:639, w:104,h:52},
+  {id:'ND-12', kind:'task',  name:'Scope block',    lane:'L_ARCH', x:640, y:639, w:120,h:52},
+  {id:'ND-13', kind:'task',  name:'Log Review',     lane:'L_ARCH', x:900, y:639, w:120,h:52},
+  {id:'TH2',   kind:'throw', name:'pulse',          lane:'L_ARCH', x:1080,y:647, w:36, h:36},
   // REVIEWERS lane
-  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  x:656, y:654, w:120,h:52},
+  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  x:640, y:789, w:120,h:52},
 ];
 
 const FLOWS = [
-  ['Start','ND-01'], ['ND-01','ND-02'], ['CA1','ND-02'], ['ND-02','ND-03'],
+  ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
+  ['TM1','ND-02','',{toTop:0.25}], ['CA1','ND-02','',{toTop:0.75}],   // timer + pulse event re-enter PULSE at its top
   ['ND-03','ND-05','fill slot'], ['ND-03','ND-08','clear ahead'],
   ['ND-03','ND-14','review'], ['ND-03','End','session:end'],
   ['ND-05','ND-11'], ['ND-11','ND-09'], ['ND-09','EX'],
@@ -108,7 +118,7 @@ const FLOWS = [
   ['ND-08','ND-12'], ['ND-12','TH2'], ['ND-14','ND-13'], ['ND-13','TH2'],
 ];
 
-const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent'};
+const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent'};
 
 /* ════════════ CORE XML ════════════ */
 const byId = Object.fromEntries(NODES.map(n=>[n.id,n]));
@@ -118,6 +128,9 @@ function route(s,t){
   const sc=center(s), tc=center(t);
   if(Math.abs(sc.y-tc.y)<=22){
     return tc.x>sc.x ? [{x:s.x+s.w,y:sc.y},{x:t.x,y:tc.y}] : [{x:s.x,y:sc.y},{x:t.x+t.w,y:tc.y}];
+  }
+  if(Math.abs(sc.x-tc.x)<=6){  // same column → clean two-point vertical, no backtrack
+    return [{x:sc.x, y: tc.y>sc.y ? s.y+s.h : s.y}, {x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h}];
   }
   const exitY = tc.y>sc.y ? s.y+s.h : s.y;
   let entry;
@@ -135,8 +148,9 @@ function coreXML(){
     const tag = TAG[n.kind];
     const inc = FLOWS.filter(f=>f[1]===n.id).map((f,i)=>`<bpmn:incoming>${f[0]}__${f[1]}</bpmn:incoming>`).join('');
     const out = FLOWS.filter(f=>f[0]===n.id).map(f=>`<bpmn:outgoing>${f[0]}__${f[1]}</bpmn:outgoing>`).join('');
-    const def = (n.kind==='throw'||n.kind==='catch') ? `<bpmn:linkEventDefinition id="${n.id}_led" name="pulse"/>` : '';
-    const label = n.id.startsWith('ND-') ? `${n.id}\n${n.name}` : n.name;
+    const def = (n.kind==='throw'||n.kind==='catch') ? `<bpmn:linkEventDefinition id="${n.id}_led" name="pulse"/>`
+              : n.kind==='timer' ? `<bpmn:timerEventDefinition id="${n.id}_ted"/>` : '';
+    const label = n.name ? `${n.id}\n${n.name}` : n.id;
     return `<bpmn:${tag} id="${n.id}" name="${esc(label)}">${inc}${out}${def}</bpmn:${tag}>`;
   }).join('\n    ');
 
@@ -152,12 +166,17 @@ function coreXML(){
   const laneShapes = LANES.map(l=>`<bpmndi:BPMNShape id="${l.id}_di" bpmnElement="${l.id}" isHorizontal="true"><dc:Bounds x="${LANE_X}" y="${l.y}" width="${LANE_W}" height="${l.h}"/></bpmndi:BPMNShape>`).join('\n      ');
   const nodeShapes = NODES.map(n=>{
     const exp = n.kind==='sub' ? ' isExpanded="false"' : '';
-    const lbl = (n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch')
-      ? `<bpmndi:BPMNLabel><dc:Bounds x="${n.x-20}" y="${n.y+n.h+2}" width="76" height="14"/></bpmndi:BPMNLabel>` : '';
-    return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}"${exp}><dc:Bounds x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}"/>${lbl}</bpmndi:BPMNShape>`;
+    const marker = n.kind==='xor' ? ' isMarkerVisible="true"' : '';
+    const lbl = (n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch'||n.kind==='timer')
+      ? `<bpmndi:BPMNLabel><dc:Bounds x="${n.x-20}" y="${n.lblAbove?n.y-16:n.y+n.h+2}" width="76" height="14"/></bpmndi:BPMNLabel>` : '';
+    return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}"${exp}${marker}><dc:Bounds x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}"/>${lbl}</bpmndi:BPMNShape>`;
   }).join('\n      ');
   const edgeShapes = FLOWS.map(f=>{
-    const wp = route(byId[f[0]], byId[f[1]]).map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
+    const o=f[3]; let pts;
+    if(o && o.toTop!==undefined){ const s=byId[f[0]], t=byId[f[1]], sx=s.x+s.w/2, tx=t.x+t.w*o.toTop;
+      pts = Math.abs(sx-tx)<2 ? [{x:sx,y:s.y+s.h},{x:tx,y:t.y}] : [{x:sx,y:s.y+s.h},{x:sx,y:t.y-12},{x:tx,y:t.y-12},{x:tx,y:t.y}]; }
+    else pts = route(byId[f[0]], byId[f[1]]);
+    const wp = pts.map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
     return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_di" bpmnElement="${f[0]}__${f[1]}">${wp}</bpmndi:BPMNEdge>`;
   }).join('\n      ');
 
@@ -184,61 +203,165 @@ function coreXML(){
 
 /* ════════════ FLOW REGISTRY (overlay) — node sub-processes + sentry sub-processes ════════════ */
 const FLOW = {
-  'ND-01': { num:'ND-01', name:'BOOTUP', start:'', end:'PULSE', grid:true, steps:[
-    {n:'Spawn TRON-AIDE', pos:[0,0]},
-    {n:'Refresh trunk',   pos:[1,0]},
-    {n:'Read pipeline',   pos:[1,1]},
-    {n:'Read blocks',     pos:[1,2]},
-    {n:'Set scope',  kind:'sub', opens:'ND-01-05', pos:[2,2]},
-    {n:'Set counts', kind:'sub', opens:'ND-01-06', pos:[3,2]},
-    {n:'Spawn architects', pos:[3,3]},
-    {n:'Cap pool',         pos:[3,4]},
-  ]},
-  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', steps:[
-    {n:'Refresh trunk'},{n:'Rebuild view'},{n:'Refresh PRs'},
-    {n:'Detect done'},{n:'Release workers'},{n:'Tick cadence'},
-    {n:'Sweep liveness'},{n:'Claim inboxes'},{n:'Classify messages', actor:'aide'},
-    {n:'Route messages'},{n:'Drive gates'},{n:'Drain triggers'},
-    {n:'Save state'},{n:'Drop sidecars'},
-  ]},
-  'ND-01-05': { num:'ND-01-05', name:'SET SCOPE', start:'', end:'Scope locked',
+  'ND-01': { num:'ND-01', name:'BOOTUP', start:'', end:'PULSE', grid:true, endPos:[3,5],
     steps:[
-      {n:'Dispatch TRON-AIDE', col:0},                  // T0 det
-      {n:'Ask scope', actor:'aide', col:1},             // T1
-      {n:'Answer scope', actor:'op', col:2},            // T2
-      {n:'Resolved?', kind:'gateway', actor:'aide', col:2}, // T3 — above Answer; AIDE clears first
-      {n:'Validate scope', col:2},                      // T4 det — aligned above the gateway
-      {n:'Lock scope', col:3},                          // T5 det
+    // common spine — row0 L→R, snakes down to the fork
+    {n:'Spawn TRON-AIDE', pos:[0,0]},                                              // T0
+    {n:'Refresh trunk',   pos:[1,0]},                                              // T1
+    {n:'Refresh PRs',     pos:[2,0]},                                              // T2
+    {n:'Build snapshot',  pos:[3,0], data:{name:'SNAPSHOT', dir:'out', at:'above'}}, // T3
+    {n:'Read MANIFEST',   pos:[3,1], data:{name:'MANIFEST', dir:'in',  at:'right'}}, // T4 — probe
+    {n:'Resume?', kind:'gateway', pos:[2,1]},                                      // T5 — fork on presence
+    // fresh branch — straight down col2
+    {n:'Set scope',  kind:'sub', opens:'ND-01-07', pos:[2,2]},                     // T6
+    {n:'Set counts', kind:'sub', opens:'ND-01-08', pos:[2,3]},                     // T7
+    {n:'Write MANIFEST', pos:[2,4], data:{name:'MANIFEST', dir:'out', at:'right'}},   // T8 — born
+    // resume branch — down col1, LEFT of the fresh column (load+pipeline+fleet are one node)
+    {n:'Reconcile',   pos:[1,1], data:{name:'MANIFEST', dir:'out', at:'left', dock:0.75}}, // T9 — aligned with Resume?; resume enters its right, MANIFEST docks left-¾
+    {n:'Consistent?', kind:'gateway', pos:[1,2]},                                  // T10
+    // merge → tail (col2)
+    {n:'Cap pool', pos:[2,5]},                                                     // T11 → PULSE
+    {n:'Resolve', kind:'sub', opens:'ND-01-13', pos:[1,3], data:{name:'OUTBOX', dir:'out', at:'below'}},   // T12 — escalation; may message live workers → durable OUTBOX (flushed by first PULSE Deliver)
+    // link catches — where 01-13's throws land (repair re-reconciles, restart re-scopes)
+    {n:'→ 01-10', kind:'catch', pos:[0,1]},                                        // T13 → Reconcile (docks left-¼)
+    {n:'→ 01-07', kind:'catch', pos:[3,2]},                                        // T14 → Set scope
+  ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},{f:'T3',t:'T4'},{f:'T4',t:'T5'},
+      {f:'T5',t:'T6',label:'fresh'},
+      {f:'T5',t:'T9',label:'resume'},   // same row → straight into Reconcile's right side
+      {f:'T6',t:'T7'},{f:'T7',t:'T8'},
+      {f:'T8',t:'T11'},
+      {f:'T9',t:'T10'},
+      {f:'T10',t:'T11',label:'ok'},
+      {f:'T10',t:'T12',label:'conflict'},
+      {f:'T11',t:'E'},
+      {f:'T13',t:'T9', from:{s:'r'}, to:{s:'l',d:0.25}},   // → 01-10 catch → Reconcile left-¼ (repair); MANIFEST sits at left-¾
+      {f:'T14',t:'T6'},   // → 01-07 catch → Set scope (restart)
+    ]},
+  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', grid:true, endPos:[2,2], steps:[
+    // re-invoked each tick by the BASE loop (timer cadence OR pulse event); start here is just the entry
+    // 02-01 fork: first entry from BOOTUP arrives with a fresh snapshot (trunk+PRs+build ran in ND-01 before the fork),
+    // so the refresh trio is skipped once; every recurring tick rebuilds from trunk (no drift across crash / off-session).
+    {n:'First tick?', kind:'gateway', pos:[0,0], lblPos:'top'},                          // T0  02-01
+    {n:'Refresh trunk',     pos:[1,0]},                                                  // T1  02-02  ┐ refresh trio
+    {n:'Refresh PRs',       pos:[2,0]},                                                  // T2  02-03  │  (recurring only)
+    {n:'Rebuild snapshot',  pos:[3,0], data:{name:'SNAPSHOT', dir:'out', at:'above'}},   // T3  02-04  ┘
+    {n:'Detect done',       pos:[4,0]},                                                  // T4  02-05  ← merge (both branches)
+    // worker lifecycle — detect (Assess) then dispose (Settle); ambiguous cases escalate
+    {n:'Assess workers',    pos:[4,1]},   // row 1 ←                                     // T5  02-06  liveness + TTL + PR → done/dead/hung/orphan
+    {n:'Settle workers',    pos:[3,1]},                                                  // T6  02-07  release safe (resume-session / fresh); flag ambiguous; APPLY any resolved escalation whose operator reply has landed
+    {n:'Escalate?', kind:'gateway', pos:[2,1]},                                          // T7  02-08
+    {n:'Resolve', kind:'sub', opens:'ND-02-09', pos:[1,2]},                              // T8  02-09  raise-and-defer escalation (brief operator → OUTBOX → mark pending → await)
+    {n:'Tick cadence',      pos:[1,1]},                                                  // T9  02-10  merge: clean + resolved
+    {n:'Claim inboxes',     pos:[0,1]},                                                  // T10 02-11
+    {n:'Messages?', kind:'gateway', pos:[0,2]},                                          // T11 02-12  empty inbox → skip ONLY classify+route (sends still happen)
+    {n:'Classify messages', pos:[0.202,3], actor:'aide'},  // T12 02-13 — its top-¼ sits under 02-12's drop (straight)
+    {n:'Route messages',    pos:[1,3]},   // row 3 →                                     // T13 02-14  inbound → outbox
+    {n:'Drive gates',       pos:[2,3]},                                                  // T14 02-15  merge: routed + skipped; may enqueue sends (unblock/review/reject)
+    {n:'Drain triggers',    pos:[3,3]},                                                  // T15 02-16  operator commands; may enqueue sends
+    {n:'Deliver', kind:'mthrow', pos:[4,3], data:{name:'OUTBOX', dir:'in', at:'right'}}, // T16 02-17  single end-of-tick flush of ALL queued sends (id-tagged for dedupe)
+    {n:'Save state',        pos:[4,2], data:{name:'MANIFEST', dir:'out', at:'right'}},   // T17 02-18
+    {n:'Drop sidecars',     pos:[3,2]},                                                  // T18 02-19  (effects persisted before sidecars dropped)
+  ],
+    edges:[
+      {f:'S',t:'T0'},
+      {f:'T0',t:'T1',label:'recurring'},                       // full rebuild from trunk
+      {f:'T0',t:'T4',label:'first', labelAt:'start', from:{s:'b'}, to:{s:'b',d:0.25}},  // skip the trio → straight under-route into Detect done
+      {f:'T1',t:'T2'},{f:'T2',t:'T3'},{f:'T3',t:'T4'},         // refresh trio → merge
+      {f:'T4',t:'T5'},{f:'T5',t:'T6'},{f:'T6',t:'T7'},          // detect done → assess → settle → escalate?
+      {f:'T7',t:'T9',label:'ok'},                              // clean → continue the tick
+      {f:'T7',t:'T8',label:'escalate', from:{s:'b'}, to:{s:'r'}},  // leave 02-08 bottom → into 02-09 right
+      {f:'T8',t:'T9'},                                         // resolved → rejoin (straight up into cadence)
+      {f:'T9',t:'T10'},                                        // cadence → claim inboxes
+      {f:'T10',t:'T11'},                                       // claim → messages? gateway (down)
+      {f:'T11',t:'T12',label:'yes', from:{s:'b'}, to:{s:'t',d:0.25}},          // messages → classify (straight drop)
+      {f:'T11',t:'T14',label:'no', from:{s:'b',d:0.75}, to:{s:'t'}},    // empty inbox → skip classify+route → drive gates (top-centre)
+      {f:'T12',t:'T13', from:{s:'t',d:0.75}, to:{s:'l'}},     // 02-13 top-¾ → 02-14 left
+      {f:'T13',t:'T14'},                                       // route → drive gates (merge)
+      {f:'T14',t:'T15'},                                       // gates → triggers
+      {f:'T15',t:'T16'},                                       // triggers → deliver (single flush, after all producers)
+      {f:'T16',t:'T17'},                                       // deliver → save
+      {f:'T17',t:'T18'},                                       // save → drop (persist before drop)
+      {f:'T18',t:'E'},
+    ]},
+  'ND-01-07': { num:'ND-01-07', name:'SET SCOPE', start:'', end:'Scope locked',
+    steps:[
+      {n:'Assign TRON-AIDE', col:0},                    // T0 det
+      {n:'Ask scope', actor:'aide', col:0},             // T1 — directly below Assign (aligned)
+      {n:'Answer scope', actor:'op', col:1},            // T2
+      {n:'Resolved?', kind:'gateway', actor:'aide', col:1}, // T3 — above Answer
+      {n:'Validate scope', col:1},                      // T4 det — above the gateway
+      {n:'Lock scope', col:2},                          // T5 det
     ],
     edges:[
-      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
-      {f:'T3',t:'T1',label:'clarify'},
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
+      {f:'T3',t:'T1',label:'clarify', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
       {f:'T3',t:'T4',label:'resolved'},
       {f:'T4',t:'T5'},
       {f:'T5',t:'E'},
     ]},
-  'ND-01-06': { num:'ND-01-06', name:'SET COUNTS', start:'', end:'Counts locked',
+  'ND-01-08': { num:'ND-01-08', name:'SET COUNTS', start:'', end:'Counts locked',
     steps:[
-      {n:'Ask counts', actor:'aide'},  // T0
-      {n:'Answer counts', actor:'op'}, // T1
-      {n:'Validate floor'},            // T2 det
-      {n:'Floor ok?', kind:'gateway'}, // T3 det
-      {n:'Advise', actor:'aide'},      // T4
-      {n:'Confirm?', kind:'gateway', actor:'op'}, // T5 op
-      {n:'Lock counts'},               // T6 det
+      {n:'Assign TRON-AIDE', col:0},                        // T0 det
+      {n:'Ask counts', actor:'aide', col:0},                // T1 — directly below Assign (aligned)
+      {n:'Answer counts', actor:'op', col:1},               // T2
+      {n:'Confirmed?', kind:'gateway', actor:'aide', col:1}, // T3 — above Answer
+      {n:'Validate counts', col:1},                         // T4 det — above the gateway
+      {n:'Lock counts', col:2},                             // T5 det
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
+      {f:'T3',t:'T1',label:'revise', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
+      {f:'T3',t:'T4',label:'confirmed'},
+      {f:'T4',t:'T5'},
+      {f:'T5',t:'E'},
+    ]},
+  // escalation conversation (reached only from 01-11 conflict); resolves internally — no parent exit.
+  // repair → re-reconcile (01-10) · restart → fresh scope (01-07) · halt → terminate.
+  'ND-01-13': { num:'ND-01-13', name:'RESOLVE', start:'', noEnd:true,
+    steps:[
+      {n:'Assign TRON-AIDE', col:0},                          // T0 13-01 det
+      {n:'Brief + offer options', actor:'aide', col:0},       // T1 13-02 (under Assign)
+      {n:'Decide', actor:'op', col:0},                        // T2 13-03 (under Brief)
+      {n:'Choice?', kind:'gateway', actor:'aide', col:1},     // T3 13-04 — clarify vs proceed
+      {n:'', kind:'gateway', actor:'aide', col:2, lblPos:'bottom'}, // T4 13-05 — split repair/restart/halt (4-way hub)
+      {n:'→ 01-10', kind:'throw', col:2, lblPos:'top'},        // T5 13-06 repair (DET, straight ↑) — label at head, empty space above
+      {n:'→ 01-07', kind:'throw', actor:'aide', col:3},       // T6 13-07 restart (straight →)
+      {n:'Halt', kind:'terminate', actor:'op', col:2},        // T7 13-08 halt (OP, straight ↓)
     ],
     edges:[
       {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
-      {f:'T3',t:'T4',label:'≥1'},
-      {f:'T3',t:'T0',label:'below floor'},
-      {f:'T4',t:'T5'},
-      {f:'T5',t:'T6',label:'confirm'},
-      {f:'T5',t:'T0',label:'revise'},
-      {f:'T6',t:'E'},
+      {f:'T3',t:'T1',label:'clarify'},
+      {f:'T3',t:'T4',label:'proceed'},
+      {f:'T4',t:'T5',label:'repair',vlabel:true},
+      {f:'T4',t:'T6',label:'restart'},
+      {f:'T4',t:'T7',label:'halt',vlabel:true},
+    ]},
+  // raise-and-defer escalation (reached from 02-08). Briefs the operator, queues the ask to OUTBOX, marks the
+  // case escalation-pending, then ENDS (await). The operator's reply lands as an event on a later tick; Settle
+  // (02-07) applies the chosen action then. No inline decision — keeps the tick bounded (Temporal-signal style).
+  'ND-02-09': { num:'ND-02-09', name:'RESOLVE', start:'', end:'Awaiting operator',
+    steps:[
+      {n:'Assign TRON-AIDE', col:0},                                                          // T0 09-01 det
+      {n:'Brief + offer options', actor:'aide', col:0},                                       // T1 09-02 (under Assign) — AIDE composes the operator brief
+      {n:'Send to operator', kind:'mthrow', actor:'aide', col:1, data:{name:'OUTBOX', dir:'out', at:'below'}}, // T2 09-03 → OUTBOX
+      {n:'Mark pending', col:1},                                                              // T3 09-04 det — stamp escalation-pending (durable; guards re-escalation)
     ]},
 };
+/* ── LAYOUT TOKENS — single source of spacing for every diagram ── */
+const TOK = {
+  nodeW:170, nodeH:68, gw:44, ev:36, dataW:36, dataH:50,   // element sizes
+  colPitch:210, rowPitch:112, gridX0:440,     // grid mode
+  lanePitchX:200, laneX0:300, laneH:180,       // lane mode
+  poolX:130, poolY:120, lanePad:0, topBand:120,  // pool / lane frame (lanePad:0 → no pool title band, lane bars only)
+  poolMargin:60, poolMarginData:140, poolTrimY:30, // pool right/bottom padding (…Data: extra room for a right-placed data object)
+  dataGap:26, dataGapSide:30, dataLabelH:17, dataMargin:24,  // node→data gap; data label height; clearance from pool border
+  labelGap:8, channelStep:24, loopInset:22, laneTopMargin:24, // routing clearances
+  dock:[0.25,0.5,0.75], dockStub:18,             // connector anchor points per side (¼ · center · ¾) + leave/enter stub
+};
 /* horizontal swimlane: TRON-DET / TRON-AIDE / OPERATOR lanes (only those used) */
-const STW=170, STH=68, SPITCHX=200, SX0=300, LANE_H=180;
+const STW=TOK.nodeW, STH=TOK.nodeH, SPITCHX=TOK.lanePitchX, SX0=TOK.laneX0, LANE_H=TOK.laneH;
 const ACTORS = [
   {key:'det',  id:'L_DET',  name:'⚙  TRON-DET',  tag:'task'},
   {key:'aide', id:'L_AIDE', name:'✦  TRON-AIDE', tag:'task'},
@@ -248,24 +371,40 @@ function subXML(def){
   const n=def.steps.length;
   const actorOf = s => s.actor || 'det';
   const grid = def.grid || def.steps.some(s=>s.pos);
-  const poolY=120, poolX=130, laneX=poolX+30;   // poolY leaves a top band for loop-back arcs
+  const poolY=TOK.poolY, poolX=TOK.poolX, laneX=poolX+TOK.lanePad;
   const geom = {};
-  let lanesUsed, bandTop={}, poolW, poolH, laneW;
+  let lanesUsed, bandTop={}, poolW, poolH, laneW, laneH={};
 
   if(grid){
-    // explicit col/row grid in a single TRON-DET lane (compact, balanced shape)
-    const COLP=210, ROWP=112, OX=440, OYrel=82, OY=poolY+OYrel;
-    const cols=def.steps.map(s=>s.pos[0]), rows=def.steps.map(s=>s.pos[1]);
+    // grid in the TRON-DET lane; any AIDE step drops into its own lane below DET (compact, balanced)
+    const COLP=TOK.colPitch, ROWP=TOK.rowPitch, OX=TOK.gridX0, OYrel=TOK.topBand, OY=poolY+OYrel;
+    const isAide = s => actorOf(s)==='aide';
+    const hasAide = def.steps.some(isAide);
+    const maxDetRow = Math.max(...def.steps.filter(s=>!isAide(s)).map(s=>s.pos[1]));
+    const aideRow = maxDetRow + 1;
+    const rowOf = s => isAide(s) ? aideRow : s.pos[1];
+    const cols=def.steps.map(s=>s.pos[0]);
     const startPos=[Math.min(...cols)-1, def.steps[0].pos[1]];
-    const endPos=[def.steps[n-1].pos[0], def.steps[n-1].pos[1]+1];
-    const maxCol=Math.max(...cols, endPos[0]), maxRow=Math.max(...rows, endPos[1]);
+    const endPos = def.endPos || [def.steps[n-1].pos[0], def.steps[n-1].pos[1]+1];
+    const e2c = def.end2?def.end2.pos[0]:-Infinity, e2r = def.end2?def.end2.pos[1]:-Infinity;
+    const maxCol=Math.max(...cols, startPos[0], endPos[0], e2c), maxRow=Math.max(...def.steps.map(rowOf), endPos[1], e2r);
     const cell=(c,r,w,h)=>({x:OX+c*COLP-w/2, y:OY+r*ROWP-h/2, w, h});
-    geom['S']={...cell(startPos[0],startPos[1],36,36), ord:-1};
-    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'; geom['T'+i]={...cell(s.pos[0],s.pos[1], gw?44:STW, gw?44:STH), ord:i}; });
-    geom['E']={...cell(endPos[0],endPos[1],36,36), ord:1e6};
-    poolW = OX + maxCol*COLP + STW/2 + 60 - poolX;
-    poolH = OYrel + (maxRow+1)*ROWP - 30;
-    lanesUsed=[ACTORS[0]]; bandTop.det=poolY;
+    geom['S']={...cell(startPos[0],startPos[1],TOK.ev,TOK.ev), ord:-1};
+    if(def.start2) geom['S2']={...cell(startPos[0],startPos[1]+1,TOK.ev,TOK.ev), ord:-0.5};
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate'; geom['T'+i]={...cell(s.pos[0],rowOf(s), gw?TOK.gw:ev?TOK.ev:STW, gw?TOK.gw:ev?TOK.ev:STH), ord:i}; });
+    geom['E']={...cell(endPos[0],endPos[1],TOK.ev,TOK.ev), ord:1e6};
+    if(def.end2) geom['E2']={...cell(def.end2.pos[0],def.end2.pos[1],TOK.ev,TOK.ev), ord:1e6+1};
+    const rightData = def.steps.some(s=>s.data && (s.data.at||'below')==='right');
+    poolW = OX + maxCol*COLP + STW/2 + (rightData?TOK.poolMarginData:TOK.poolMargin) - poolX;
+    poolH = OYrel + (maxRow+1)*ROWP - TOK.poolTrimY;
+    if(hasAide){
+      const boundary = OY + (maxDetRow+0.5)*ROWP;   // split between last DET row and the AIDE band
+      lanesUsed=[ACTORS[0],ACTORS[1]];
+      bandTop.det=poolY; bandTop.aide=boundary;
+      laneH.det=boundary-poolY; laneH.aide=poolY+poolH-boundary;
+    } else {
+      lanesUsed=[ACTORS[0]]; bandTop.det=poolY; laneH.det=poolH;
+    }
   } else {
     // lane mode: one band per actor; column = step.col ?? index, row = actor's lane index
     const used=new Set(['det',...def.steps.map(actorOf)]);
@@ -274,25 +413,61 @@ function subXML(def){
     lanesUsed.forEach((a,k)=>{ bandTop[a.key]=poolY+k*LANE_H; cyL[a.key]=poolY+k*LANE_H+LANE_H/2; rowOf[a.key]=k; });
     poolH=lanesUsed.length*LANE_H;
     const colOf=(s,i)=> s.col!==undefined ? s.col : i;
-    geom['S']={x:215, y:cyL.det-18, w:36,h:36, row:0, col:-0.5, ord:-1};
-    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway',w=gw?44:STW,h=gw?44:STH,c=colOf(s,i),base=SX0+c*SPITCHX; geom['T'+i]={x:gw?base+STW/2-22:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
+    geom['S']={x:SX0-STW/2, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:-0.5, ord:-1};
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
     const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
-    geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-18, w:36,h:36, row:0, col:maxC+1, ord:1e6};
-    poolW = geom['E'].x+36+60-poolX;
+    if(!def.noEnd){ geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:maxC+1, ord:1e6}; }
+    poolW = (def.noEnd ? SX0+maxC*SPITCHX+STW/2 : geom['E'].x+TOK.ev) +TOK.poolMargin-poolX;  // noEnd: stop at the last node, don't reserve an end column
   }
-  laneW = poolW-30;
   const G=id=>{const g=geom[id];return {...g,cx:g.x+g.w/2,cy:g.y+g.h/2,top:g.y,bottom:g.y+g.h,left:g.x,right:g.x+g.w};};
 
+  // data objects — placed by tokens (size, gap, label), then the POOL/LANE grows to contain them so nothing crosses a border
+  const dataBoxes = def.steps.map((s,i)=>{
+    if(!s.data) return null;
+    const d=s.data, g=G('T'+i), at=d.at||'below', W=TOK.dataW, H=TOK.dataH, out=d.dir!=='in';
+    const df=d.dock??0.5, ay=g.top+g.h*df; let dx,dy,p1,p2;
+    if(at==='below'){ dx=g.cx-W/2; dy=g.bottom+TOK.dataGap; p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
+    else if(at==='above'){ dx=g.cx-W/2; dy=g.top-TOK.dataGap-H; p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
+    else if(at==='right'){ dx=g.right+TOK.dataGapSide; dy=ay-H/2; p1=[g.right,ay]; p2=[dx,ay]; }
+    else { dx=g.left-TOK.dataGapSide-W; dy=ay-H/2; p1=[g.left,ay]; p2=[dx+W,ay]; }
+    return {i, d, at, W, H, out, dx, dy, p1, p2};
+  });
+  // grow the pool right/bottom to enclose every data box + its label, with a token margin (top/left use topBand room)
+  dataBoxes.filter(Boolean).forEach(b=>{
+    const labelBelow = b.at!=='above';
+    const boxBottom = b.dy + b.H + (labelBelow?TOK.dataLabelH:0);
+    poolW = Math.max(poolW, (b.dx + b.W) + TOK.dataMargin - poolX);
+    poolH = Math.max(poolH, boxBottom + TOK.dataMargin - poolY);
+  });
+  // re-derive lane heights against the (possibly grown) pool — the bottom band absorbs the growth so lanes still tile the pool
+  if(grid){
+    if(lanesUsed.length>1) laneH[lanesUsed[1].key] = poolY+poolH - bandTop[lanesUsed[1].key];
+    else laneH[lanesUsed[0].key] = poolH;
+  } else {
+    lanesUsed.forEach((a,k)=> laneH[a.key] = (k===lanesUsed.length-1) ? poolH - k*LANE_H : LANE_H);
+  }
+  laneW = poolW-TOK.lanePad;
+
   // semantic
-  const els=[]; const refs={det:['S','E'],aide:[],op:[]};
-  els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}"/>`);
+  const els=[]; const refs={det:['S',...(def.start2?['S2']:[]),...(def.noEnd?[]:['E']),...(def.end2?['E2']:[])],aide:[],op:[]};
+  const startDef = k => k==='timer'?'<bpmn:timerEventDefinition/>':k==='message'?'<bpmn:messageEventDefinition/>':'';
+  els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}">${startDef(def.startKind)}</bpmn:startEvent>`);
+  if(def.start2) els.push(`<bpmn:startEvent id="S2" name="${esc(def.start2.name||'')}">${startDef(def.start2.kind)}</bpmn:startEvent>`);
   def.steps.forEach((s,i)=>{
-    const a=grid?'det':actorOf(s), tag = s.kind==='gateway'?'exclusiveGateway' : s.kind==='sub'?'subProcess' : ACTORS.find(x=>x.key===a).tag;
+    const a=actorOf(s); let tag, inner=''; const isLink = s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow';
+    if(s.kind==='gateway') tag='exclusiveGateway';
+    else if(s.kind==='sub') tag='subProcess';
+    else if(s.kind==='throw'){ tag='intermediateThrowEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
+    else if(s.kind==='mthrow'){ tag='intermediateThrowEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
+    else if(s.kind==='catch'){ tag='intermediateCatchEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
+    else if(s.kind==='end'||s.kind==='terminate'){ tag='endEvent'; if(s.kind==='terminate') inner='<bpmn:terminateEventDefinition id="T'+i+'_ted"/>'; }
+    else tag=ACTORS.find(x=>x.key===a).tag;
     refs[a].push('T'+i);
     const stepId = `${def.num}-${String(i+1).padStart(2,'0')}`;
-    els.push(`<bpmn:${tag} id="T${i}" name="${esc(stepId+'\n'+s.n)}"/>`);
+    els.push(`<bpmn:${tag} id="T${i}" name="${esc(stepId+'\n'+s.n)}">${inner}</bpmn:${tag}>`);  // every node shows its ID + name (events included)
   });
-  els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}"/>`);
+  if(!def.noEnd) els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}"/>`);
+  if(def.end2) els.push(`<bpmn:endEvent id="E2" name="${esc(def.end2.name)}"/>`);
   const edges = def.edges || [{f:'S',t:'T0'}, ...Array.from({length:n-1},(_,i)=>({f:'T'+i,t:'T'+(i+1)})), {f:'T'+(n-1),t:'E'}];
   const fl = edges.map((e,k)=>`<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${e.label?` name="${esc(e.label)}"`:''}/>`);
   const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${a.name}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
@@ -300,49 +475,119 @@ function subXML(def){
   // DI shapes
   const di=[];
   di.push(`<bpmndi:BPMNShape id="Pool_di" bpmnElement="PoolS" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`);
-  lanesUsed.forEach(a=>di.push(`<bpmndi:BPMNShape id="${a.id}_di" bpmnElement="${a.id}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${bandTop[a.key]}" width="${laneW}" height="${grid?poolH:LANE_H}"/></bpmndi:BPMNShape>`));
-  { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="36" height="36"/><bpmndi:BPMNLabel><dc:Bounds x="${g.x-18}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
-  def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'';
-    const lbl = s.kind==='gateway'?`<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`:'';
-    di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
-  { const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="36" height="36"/><bpmndi:BPMNLabel><dc:Bounds x="${g.x-60}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  lanesUsed.forEach(a=>di.push(`<bpmndi:BPMNShape id="${a.id}_di" bpmnElement="${a.id}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${bandTop[a.key]}" width="${laneW}" height="${laneH[a.key]}"/></bpmndi:BPMNShape>`));
+  { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  if(def.start2){ const g=G('S2'); di.push(`<bpmndi:BPMNShape id="S2_di" bpmnElement="S2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'', marker=s.kind==='gateway'?' isMarkerVisible="true"':'';
+    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate';
+    const lbl = s.kind==='gateway'
+        ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
+                                     : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
+                : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`  // bottom-center (id below the diamond)
+                : `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-32}" width="90" height="26"/></bpmndi:BPMNLabel>`)  // lane: above the diamond, clear of horizontal branches
+      : ev?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${s.lblPos==='top'?g.top-34:g.bottom+4}" width="100" height="${s.lblPos==='top'?28:14}"/></bpmndi:BPMNLabel>`:'';
+    di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}${marker}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
+  if(!def.noEnd){ const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  if(def.end2){ const g=G('E2'); di.push(`<bpmndi:BPMNShape id="E2_di" bpmnElement="E2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
 
-  // edges
-  const yTop = poolY-26;
+  // edges — lane-mode router keeps every waypoint inside the pool, staggers sibling branches,
+  // and runs cross-lane hops in the target lane's top margin (never through node rows or over the pool top)
+  const laneKeyByRow = (lanesUsed||[]).map(a=>a.key);
+  const bandTopOf = r => bandTop[laneKeyByRow[r]] ?? poolY;
+  const outBy={}; edges.forEach(e=>{ (outBy[e.f]=outBy[e.f]||[]).push(e.t); });
+  // anchor a point on a node's border: side s∈{t,r,b,l} at fraction d (TOK.dock = ¼·½·¾)
+  const dockPt=(g,sd,d)=> sd==='t'?[g.left+g.w*d,g.top] : sd==='b'?[g.left+g.w*d,g.bottom] : sd==='l'?[g.left,g.top+g.h*d] : [g.right,g.top+g.h*d];
+  const stubOut=(p,sd,k)=> sd==='t'?[p[0],p[1]-k]: sd==='b'?[p[0],p[1]+k]: sd==='l'?[p[0]-k,p[1]]:[p[0]+k,p[1]];
+  function dockRoute(a,sa,b,sb){                                       // orthogonal connector between two directed dock points
+    const K=TOK.dockStub, a1=stubOut(a,sa,K), b1=stubOut(b,sb,K);
+    if(Math.abs(a1[0]-b1[0])<2 || Math.abs(a1[1]-b1[1])<2) return [a,a1,b1,b];
+    const horizFirst = sa==='l'||sa==='r';
+    const corner = horizFirst?[b1[0],a1[1]]:[a1[0],b1[1]];
+    return [a,a1,corner,b1,b];
+  }
   edges.forEach((e,k)=>{
     const s=G(e.f), t=G(e.t); let wp;
     const sameRow=Math.abs(s.cy-t.cy)<6, sameCol=Math.abs(s.cx-t.cx)<6;
-    if(grid){
-      if(sameRow) wp = t.cx>=s.cx ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+    const sibs=outBy[e.f], bi=sibs.indexOf(e.t), bn=sibs.length;       // fan-out index for this branch
+    const stag = bn>1 ? (bi-(bn-1)/2)*TOK.channelStep : 0;             // stagger siblings apart
+    if(e.from && e.to){                                                // explicit dock anchors (side + fraction) → deterministic docking
+      const fs=e.from.s, ts=e.to.s;
+      if((fs==='l'||fs==='r') && ts==='b'){                            // leave horizontally → loop under → arrive bottom-centre (down the inter-column gap)
+        const ax=fs==='l'?s.left:s.right, chX=(s.cx+t.cx)/2, y1=t.bottom+TOK.loopInset;
+        wp=[[ax,s.cy],[chX,s.cy],[chX,y1],[t.cx,y1],[t.cx,t.bottom]];
+      } else if((fs==='t'||fs==='b') && (ts==='l'||ts==='r')){         // shortest L: leave at the from-dock x, run to the target's row, one turn into its side
+        const sx=e.from.d!=null?s.left+s.w*e.from.d:s.cx, sy=fs==='b'?s.bottom:s.top, tx=ts==='r'?t.right:t.left;
+        wp=[[sx,sy],[sx,t.cy],[tx,t.cy]];
+      } else wp = dockRoute(dockPt(s,fs,e.from.d??0.5), fs, dockPt(t,ts,e.to.d??0.5), ts);
+    } else if(grid){
+      if(e.enter==='top'){ const ex=t.cx<s.cx?s.left:s.right; wp=[[ex,s.cy],[t.cx,s.cy],[t.cx,t.top]]; }
+      else if(sameRow) wp = t.cx>=s.cx ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
       else if(sameCol) wp = t.cy>=s.cy ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
-      else { const mx=(s.right+t.left)/2; wp=[[s.right,s.cy],[mx,s.cy],[mx,t.cy],[t.left,t.cy]]; }
+      else if(t.cx>=s.cx){ const mx=(s.cx+t.cx)/2; wp=[[s.right,s.cy],[mx,s.cy],[mx,t.cy],[t.left,t.cy]]; }
+      else { const mx=(s.cx+t.cx)/2; wp=[[s.left,s.cy],[mx,s.cy],[mx,t.cy],[t.right,t.cy]]; }
     } else {
-      // port-aware: pick the side each edge leaves/enters from the grid relationship
       const drow=t.row-s.row, dcol=t.col-s.col;
-      if(dcol <= -2) wp=[[s.cx,s.top],[s.cx,yTop],[t.cx,yTop],[t.cx,t.top]];   // long backward loop → arc over top
-      else if(drow===0) wp = dcol>=0 ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
-      else {                                                                   // changing lane → exit top/bottom
-        const ey = drow>0 ? s.bottom : s.top;
-        if(Math.abs(dcol)<0.01) wp=[[s.cx,ey],[t.cx, drow>0?t.top:t.bottom]];  // same column → straight vertical
-        else { const ex = dcol>0 ? t.left : t.right; wp=[[s.cx,ey],[s.cx,t.cy],[ex,t.cy]]; } // enter target on its side
+      if(e.enter==='right'){                                          // back-edge → arc over the top, drop in from the target's right side
+        const yL=bandTopOf(s.row)+TOK.loopInset, xR=t.right+TOK.loopInset, sx=s.cx+stag;
+        wp=[[sx,s.top],[sx,yL],[xR,yL],[xR,t.cy],[t.right,t.cy]];
+      } else if(e.enter==='top'){                                     // up-edge → into the target lane's top margin, drop into target top-center
+        const yCh=bandTopOf(t.row)+TOK.laneTopMargin, sx=s.cx+stag;
+        wp=[[sx,s.top],[sx,yCh],[t.cx,yCh],[t.cx,t.top]];
+      } else if(sameRow && dcol<0){                                   // backward same-lane → straight (cleanest; arrives on the target's right)
+        wp=[[s.left,s.cy],[t.right,t.cy]];
+      } else if(drow===0){                                            // same lane forward → straight
+        wp = dcol>=0 ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+      } else if(sameCol){                                             // straight vertical between lanes
+        wp = drow>0 ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
+      } else {                                                        // cross-lane hop → exit sideways toward target (never up through the source column), turn at the target column, enter top/bottom
+        const ey=s.cy+stag, exX=dcol>0?s.right:s.left, enterY=drow>0?t.top:t.bottom;
+        wp=[[exX,ey],[t.cx,ey],[t.cx,enterY]];
       }
     }
-    // anchor the label near the source (the node it leaves), just off the line
-    const dx=wp[1][0]-wp[0][0], dy=wp[1][1]-wp[0][1];
-    const vert=Math.abs(dx)<Math.abs(dy);
-    const lx = vert ? wp[0][0]+8 : wp[0][0]+(dx>0?6:-66);
-    const ly = vert ? wp[0][1]+(dy>0?6:-20) : wp[0][1]-17;
-    const lbl = e.label?`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="64" height="14"/></bpmndi:BPMNLabel>`:'';
+    // label at the midpoint of the edge's middle segment, offset off the line — diverging branches never share an anchor
+    let lbl='';
+    if(e.label){
+      let lx,ly;
+      if(e.vlabel){                                              // vertical label beside its line, hugging the gateway (source), letter-bottoms toward the line (rotated post-render)
+        const lineX=wp[0][0], above=t.cy<s.cy, cx2=lineX+12;
+        const cy2 = above ? s.top-26 : s.bottom+40;              // repair: just above the gateway · halt: below the bottom-centre id label
+        lx=cx2-32; ly=cy2-7;
+      } else if(e.labelAt==='start'){                            // hug the source: sit at the start of the first long run after the gateway
+        const a=wp.length>3?wp[1]:wp[0], b=wp.length>3?wp[2]:wp[1], horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
+        lx=horiz?(a[0]<b[0]?a[0]+TOK.labelGap:a[0]-26-TOK.labelGap):a[0]+TOK.labelGap; ly=horiz?a[1]-16:a[1]+TOK.labelGap;
+      } else {
+        const i0=Math.floor((wp.length-1)/2), a=wp[i0], b=wp[i0+1];
+        const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2, horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
+        lx=horiz?mx-26:mx+TOK.labelGap; ly=horiz?my-16:my-7;
+      }
+      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="64" height="14"/></bpmndi:BPMNLabel>`;
+    }
     di.push(`<bpmndi:BPMNEdge id="sf${k}_di" bpmnElement="sf${k}">${wp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}${lbl}</bpmndi:BPMNEdge>`);
+  });
+
+  // data objects — emitted from the precomputed token boxes; label on the far side so it never crosses the association
+  const dataEls=[], assoc=[];
+  dataBoxes.filter(Boolean).forEach(b=>{
+    const {i, d, at, W, H, out, dx, dy, p1, p2} = b;
+    const ref=`DOR${i}`, obj=`DO${i}`, aId=`asc${i}`;
+    dataEls.push(`<bpmn:dataObjectReference id="${ref}" name="${esc(d.name)}" dataObjectRef="${obj}"/>`);
+    dataEls.push(`<bpmn:dataObject id="${obj}"/>`);
+    const lblY = at==='above' ? dy-TOK.dataLabelH : dy+H+3;   // far side of the icon (away from the node)
+    assoc.push(`<bpmn:association id="${aId}" sourceRef="${out?'T'+i:ref}" targetRef="${out?ref:'T'+i}" associationDirection="One"/>`);
+    di.push(`<bpmndi:BPMNShape id="${ref}_di" bpmnElement="${ref}"><dc:Bounds x="${Math.round(dx)}" y="${Math.round(dy)}" width="${W}" height="${H}"/><bpmndi:BPMNLabel><dc:Bounds x="${Math.round(dx+W/2-50)}" y="${Math.round(lblY)}" width="100" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`);
+    const awp = out?[p1,p2]:[p2,p1];
+    di.push(`<bpmndi:BPMNEdge id="${aId}_di" bpmnElement="${aId}">${awp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}</bpmndi:BPMNEdge>`);
   });
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="D_sp" targetNamespace="http://tron/flow">
-  <bpmn:collaboration id="CollabS"><bpmn:participant id="PoolS" name="${esc(def.num+' · '+def.name)}" processRef="SP"/></bpmn:collaboration>
+  <bpmn:collaboration id="CollabS"><bpmn:participant id="PoolS" name="" processRef="SP"/></bpmn:collaboration>
   <bpmn:process id="SP" isExecutable="false">
     <bpmn:laneSet id="LS_S">${lanes}</bpmn:laneSet>
     ${els.join('\n    ')}
+    ${dataEls.join('\n    ')}
     ${fl.join('\n    ')}
+    ${assoc.join('\n    ')}
   </bpmn:process>
   <bpmndi:BPMNDiagram id="Dg_sp"><bpmndi:BPMNPlane id="Pl_sp" bpmnElement="CollabS">
     ${di.join('\n    ')}
@@ -417,12 +662,25 @@ function attachPanZoom(viewer, sel){
   window.addEventListener('mouseup',()=>{ if(drag){drag=false; c.style.cursor='grab';} });
   c.addEventListener('mousemove',e=>{ if(!drag)return; canvas.scroll({dx:e.movementX,dy:e.movementY}); clampVB(canvas); });
 }
+// rotate marked edge labels (vlabel) to vertical, around their own centre — for labels that sit beside a vertical line
+function rotateVLabels(viewer, def){
+  const reg=viewer.get('elementRegistry');
+  (def.edges||[]).forEach((e,k)=>{
+    if(!e.vlabel) return;
+    const lbl=reg.get('sf'+k+'_label'); if(!lbl) return;
+    const gfx=reg.getGraphics(lbl); if(!gfx) return;
+    let bb; try{ bb=gfx.getBBox(); }catch(_){ return; }
+    const cx=bb.x+bb.width/2, cy=bb.y+bb.height/2, tr=gfx.getAttribute('transform')||'';
+    gfx.setAttribute('transform', (tr?tr+' ':'')+`rotate(90 ${cx} ${cy})`);  // letter-bottoms face the line
+  });
+}
 let ovViewer, ovStack=[], ovCurrent=null;
 function openFlow(key){ if(FLOW[key]){ ovStack.push(key); renderFlow(); } }
 function ovBack(){ ovStack.pop(); if(ovStack.length===0) closeOv(); else renderFlow(); }
 function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); }
 async function renderFlow(){
   const key=ovStack[ovStack.length-1], def=FLOW[key]; ovCurrent=def;
+  document.getElementById('ovhead').innerHTML = `<span class="nnum">${def.num}</span><span class="nname">${esc(def.name)}</span>`;
   document.getElementById('ov-back').style.display = '';
   document.getElementById('ov').classList.add('open');
   if(!ovViewer){
@@ -441,6 +699,7 @@ async function renderFlow(){
   edgesBehind(ovViewer);
   addLaneDividers(ovViewer);
   recenterSubMarkers(ovViewer);
+  rotateVLabels(ovViewer, def);
   fitNow(ovViewer);
   attachPanZoom(ovViewer,'#ovcanvas');
 }
