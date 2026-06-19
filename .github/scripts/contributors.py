@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-REPO = os.environ.get("GITHUB_REPOSITORY", "42piratas/tron")
+REPO = os.environ.get("GITHUB_REPOSITORY", "4242labs/tron")
 README = os.environ.get("README_PATH", "README.md")
 START, END = "<!-- contributors:start -->", "<!-- contributors:end -->"
 SIZE = 64

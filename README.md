@@ -8,8 +8,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
-  <a href="https://github.com/42piratas/tron/graphs/contributors"><img src="https://img.shields.io/github/contributors/42piratas/tron" alt="Contributors" /></a>
-  <a href="https://github.com/42piratas/tron/wiki"><img src="https://img.shields.io/badge/docs-wiki-success.svg" alt="Wiki" /></a>
+  <a href="https://github.com/4242labs/tron/graphs/contributors"><img src="https://img.shields.io/github/contributors/4242labs/tron" alt="Contributors" /></a>
+  <a href="https://github.com/4242labs/tron/wiki"><img src="https://img.shields.io/badge/docs-wiki-success.svg" alt="Wiki" /></a>
 </p>
 
 ---
@@ -181,7 +181,7 @@ itself: a new worker skill or reviewer lens, a sharper protocol, an engine or li
 docs. Per-project or machine-specific assumptions live in seeded instances, never here. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the clone → branch → PR → CI → merge flow.
 
-Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/issues/new/choose).
+Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
 
 ## Contributors
 

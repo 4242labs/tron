@@ -7,7 +7,7 @@ gets you from clone to merged PR.
 ## Quick start
 
 ```bash
-git clone https://github.com/42piratas/tron.git
+git clone https://github.com/4242labs/tron.git
 cd tron
 ./tron validate      # blueprint-lint over the grammar + event table + knobs (must be green)
 ./tron doctor        # environment check + lint
@@ -24,7 +24,7 @@ There's no build step — the engine is plain Python (`python3`), the connectors
 | **Protocol** | `protocols/<name>.md` | a lifecycle flow (bootup / run-teardown / …) |
 | **Engine** | `engine/` | the dispatch loop, selector, trunk reader, judgment, lint — keep it deterministic |
 | **Copy** | `messages.yaml` | TRON's voice (dark, dry, sardonic; never name the host runtime) |
-| **Docs** | `README.md`, the [wiki](https://github.com/42piratas/tron/wiki), `contracts/` | guides, references |
+| **Docs** | `README.md`, the [wiki](https://github.com/4242labs/tron/wiki), `contracts/` | guides, references |
 
 The behaviour itself — the trigger grammar and the event table — is canon and intentionally stable.
 A genuinely new *shape* of control is a bigger conversation: open an issue first.
@@ -46,5 +46,5 @@ A genuinely new *shape* of control is a bigger conversation: open an issue first
 3. Open a PR into `main`. Keep it focused; describe what and why.
 4. CI green → merge. Squash or merge — keep history readable.
 
-Found a bug or have an idea? [Open an issue](https://github.com/42piratas/tron/issues/new/choose).
+Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
 We're glad you're here.
