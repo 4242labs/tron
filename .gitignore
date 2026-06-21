@@ -77,3 +77,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# runtime event-log output (engine test runs), not source
+/home-events.jsonl

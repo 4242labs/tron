@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TRON | 42labs</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/bpmn-js@17.11.1/dist/bpmn-viewer.development.js"></script>
+<style>
+  :root{
+    --canvas-warm:#FDFAF5; --cream:#FEF3E2; --border-cool:#E7E5E4;
+    --mid-stone:#B8AFA8; --stone:#756D68; --graphite:#433E3A; --charcoal:#1C1917;
+    --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8; --copper-border:#F5C9A1;
+    --blue-dark:#2563EB; --sky:#EFF6FF;
+    --emerald:#16A34A; --emerald-dark:#166534; --emerald-soft:#F0FDF4;   /* LLM / AIDE nodes */
+    --amber:#EAB308; --amber-dark:#854D0E; --amber-soft:#FEFCE8;          /* sub-process drill-downs */
+    --accent:var(--copper); --logo:var(--copper-dark);   /* 42labs DS semantic tokens (light) — logo wordmark = copper-dark */
+    --font-heading:'Space Grotesk',system-ui,sans-serif;
+    --font-body:'IBM Plex Sans',system-ui,sans-serif;
+    --font-mono:'Geist Mono',ui-monospace,monospace;
+    --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px; --r-4:10px; --r-full:999px;
+    --head-h:62px;   /* fixed page header — matches the website nav (26px logo + 18px block padding) */
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;}
+  body{margin:0; background:var(--canvas-warm); color:var(--charcoal); font-family:var(--font-body); height:100vh; overflow:hidden;}
+  .wrap{max-width:none; margin:0; padding:0; height:100vh; display:flex; flex-direction:column;}
+  /* fixed page header: full-bleed white bar; content constrained to the website's 1280px container */
+  .topbar{flex:0 0 var(--head-h); height:var(--head-h); background:var(--canvas-warm); border-bottom:1px solid var(--border-cool);
+    display:flex; align-items:center; z-index:20;}
+  .topbar__inner{width:100%; max-width:1280px; margin-inline:auto; padding-inline:clamp(20px,5vw,48px);
+    display:flex; align-items:center; justify-content:space-between; gap:24px;}
+  .topctl{display:flex; align-items:center; gap:8px;}
+  .logolink{display:inline-flex; align-items:center;}
+  #core{flex:1; min-height:0; background:var(--cream); overflow:hidden;}
+  .bjs-powered-by{display:none !important;}
+  .bjs-drilldown{display:none !important;}
+  .zoomctl{display:flex; gap:6px;}
+  .zoomctl button{width:32px; height:32px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:18px; line-height:1; color:var(--graphite); cursor:pointer; font-family:var(--font-body); box-shadow:0 1px 3px rgba(28,25,23,.08);}
+  .zoomctl button:hover{background:var(--cream); border-color:var(--copper-border);}
+  /* annotations toggle — same control style as the zoom buttons, but accent (copper) */
+  .annotbtn{height:32px; padding:0 14px;
+    border:1px solid var(--copper-border); background:var(--copper-soft); color:var(--copper-dark);
+    border-radius:8px; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;
+    text-transform:uppercase; letter-spacing:.03em; box-shadow:0 1px 3px rgba(28,25,23,.08);}
+  .annotbtn:hover{background:var(--copper); color:#fff; border-color:var(--copper);}
+  /* annotations — sliding right panel (hosts the flow notes); hidden off-canvas until toggled. Covers the header too. */
+  .notes-panel{position:fixed; top:0; right:0; width:460px; max-width:92vw; height:100vh; z-index:60;
+    background:#fff; border-left:1px solid var(--border-cool); box-shadow:-8px 0 24px rgba(28,25,23,.10);
+    transform:translateX(100%); transition:transform .28s ease; display:flex; flex-direction:column;}
+  .notes-panel.open{transform:translateX(0);}
+  .notes-panel iframe{flex:1; width:100%; border:0;}
+  .notes-close{position:absolute; top:12px; right:12px; width:30px; height:30px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:17px; line-height:1; color:var(--stone); cursor:pointer; z-index:1;}
+  .notes-close:hover{background:var(--cream); border-color:var(--copper-border);}
+  /* chart area (pool + every lane) = canvas-warm, against the cream page behind it */
+  .djs-element[data-element-id="Pool"] .djs-visual > rect,
+  .djs-element[data-element-id="PoolS"] .djs-visual > rect,
+  .djs-element[data-element-id^="L_"] .djs-visual > rect{ fill:var(--canvas-warm) !important; }
+  /* collapsed sub-process nodes are clickable */
+  .djs-element.has-sub{cursor:pointer;}
+  .djs-element.has-sub .djs-visual > rect{ fill:var(--amber-soft) !important; stroke:var(--amber) !important; stroke-width:2px !important; }
+
+  /* overlay */
+  #ov{position:fixed; inset:0; background:var(--cream); display:none; z-index:50;}
+  #ov.open{display:block;}
+  .ovbox{position:relative; background:var(--cream); height:100vh; width:100vw; display:flex; flex-direction:column; overflow:hidden;}
+  #ovcanvas{flex:1; min-height:0;}
+  .nnum{font-family:var(--font-mono); font-size:13px; font-weight:500; color:var(--copper-dark); background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-full); padding:2px 9px;}
+  .x{cursor:pointer; border:1px solid var(--border-cool); background:#fff; border-radius:8px; width:32px; height:32px; font-size:18px; line-height:1; color:var(--stone);}
+  .djs-element.aide .djs-visual > rect, .djs-element.llm .djs-visual > rect{ fill:var(--emerald) !important; stroke:var(--emerald-dark) !important; }
+  .djs-element.aide .djs-visual > text, .djs-element.llm .djs-visual > text{ fill:#fff !important; }
+  .djs-element.op .djs-visual > rect{ fill:var(--sky) !important; stroke:var(--blue-dark) !important; }
+  .djs-element.op .djs-visual > text{ fill:var(--blue-dark) !important; }
+  /* horizontal diagram header (42labs DS) — ONE component for the core map and every sub-process,
+     left side of the fixed top bar: [back?] [logo] | [id badge?] [name]. */
+  .flowhead{display:flex; align-items:center; gap:10px;}
+  .flowhead .nname{font-family:var(--font-heading); font-weight:600; font-size:16px; color:var(--charcoal); text-transform:uppercase; letter-spacing:.01em;}
+  .flowhead .logo__svg{height:26px; width:auto; display:block;}   /* DS nav logo height */
+  .flowhead .logo__mark{fill:var(--accent);}
+  .flowhead .logo__type{fill:var(--logo);}
+  .flowhead .hsep{width:1px; height:18px; background:var(--border-cool);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar"><div class="topbar__inner">
+    <div class="flowhead" id="corehead"></div>
+    <div class="topctl" id="corectl">
+      <button class="annotbtn" id="annot-btn" onclick="toggleNotes()">annotations</button>
+    </div>
+  </div></header>
+  <div id="core"></div>
+</div>
+
+<aside class="notes-panel" id="notes" aria-label="annotations">
+  <button class="notes-close" onclick="toggleNotes(false)" aria-label="close annotations">×</button>
+  <iframe id="notes-frame" title="flow annotations" loading="lazy"></iframe>
+</aside>
+
+<div id="ov"><div class="ovbox">
+  <header class="topbar"><div class="topbar__inner">
+    <div class="flowhead" id="ovhead"></div>
+    <div class="topctl" id="ovctl">
+      <button class="annotbtn" onclick="toggleNotes()">annotations</button>
+      <button class="x" onclick="closeOv()" aria-label="close">×</button>
+    </div>
+  </div></header>
+  <div id="ovcanvas"></div>
+</div></div>
+
+<script>
+/* ════════════ HEADER — one component for the core map and every sub-process ════════════ */
+const LOGO_SVG = `<svg class="logo__svg" viewBox="0 0 150 27" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TRON"><path class="logo__mark" d="M23.5389 25.5945C23.5389 26.2534 23.004 26.7876 22.3442 26.7876H20.7762C20.716 26.7876 20.6567 26.7831 20.5989 26.7745C20.541 26.7831 20.4818 26.7876 20.4215 26.7876H1.19468C0.534876 26.7876 0 26.2534 0 25.5945V24.0659C0 23.407 0.534876 22.8728 1.19468 22.8728H8.82942V16.2481C8.82942 15.4791 9.45284 14.8557 10.2219 14.8557H11.3944C12.1634 14.8557 12.7868 15.4791 12.7868 16.2482V22.8728H19.5815V16.2481C19.5815 15.4791 20.2049 14.8557 20.974 14.8557H22.1465C22.9155 14.8557 23.5389 15.4791 23.5389 16.2482V25.5945Z"/><path class="logo__mark" d="M11.5921 0.279053C11.6524 0.279053 11.7116 0.283274 11.7695 0.291869C11.8273 0.283274 11.8865 0.279053 11.9468 0.279053H31.1736C31.8334 0.279053 32.3683 0.813209 32.3683 1.47212V3.00075C32.3683 3.65966 31.8334 4.19382 31.1736 4.19382H23.5389V10.5575C23.5389 11.3265 22.9155 11.95 22.1465 11.95H20.974C20.2049 11.95 19.5815 11.3265 19.5815 10.5575V4.19382H12.7868V10.5575C12.7868 11.3265 12.1634 11.95 11.3944 11.95H10.2219C9.45284 11.95 8.82942 11.3265 8.82942 10.5575V1.47212C8.82942 0.813209 9.3643 0.279053 10.0241 0.279053H11.5921Z"/><path class="logo__type" d="M89.728 8.75482C89.728 9.78958 89.6001 10.7139 89.3443 11.5278C89.0886 12.3416 88.7398 13.0625 88.298 13.6903C87.8678 14.3065 87.3678 14.8355 86.7981 15.2773C86.2284 15.7191 85.6297 16.0854 85.0018 16.376C84.3856 16.6551 83.7578 16.8585 83.1183 16.9864C82.4905 17.1143 81.8975 17.1783 81.3395 17.1783L90.8093 25.3575H83.7985L74.3461 17.1783H72.201C71.5846 17.1783 71.0848 16.6785 71.0848 16.0621V13.7601C71.0848 13.1436 71.5846 12.6439 72.201 12.6439H81.3395C81.9092 12.5974 82.4265 12.4811 82.8916 12.2951C83.3683 12.0975 83.7752 11.8359 84.1124 11.5103C84.4612 11.1848 84.7286 10.7953 84.9146 10.3418C85.1007 9.87678 85.1937 9.34777 85.1937 8.75482V5.89469C85.1937 5.6389 85.1588 5.44706 85.089 5.31917C85.0309 5.17965 84.9495 5.08083 84.8449 5.02269C84.7519 4.95293 84.6472 4.91224 84.531 4.90061C84.4263 4.88899 84.3275 4.88317 84.2345 4.88317H69.2711V25.3575H64.7367V2.63344C64.7367 2.31952 64.7949 2.02304 64.9111 1.74401C65.0274 1.46497 65.1844 1.22081 65.382 1.01153C65.5913 0.802254 65.8354 0.639483 66.1145 0.523217C66.3935 0.406952 66.6958 0.348819 67.0214 0.348819H84.2345C85.246 0.348819 86.1005 0.534844 86.7981 0.906893C87.4957 1.26732 88.0596 1.72657 88.4898 2.28464C88.9316 2.83109 89.2455 3.42404 89.4315 4.0635C89.6292 4.70296 89.728 5.30173 89.728 5.85981V8.75482Z"/><path class="logo__type" d="M51.3778 25.5668H46.8435V15.9052C46.8435 15.2887 47.3432 14.789 47.9596 14.789H50.2617C50.8781 14.789 51.3778 15.2887 51.3778 15.9052V25.5668Z"/><path class="logo__type" d="M61.3709 3.9763C61.3709 4.59274 60.8711 5.09245 60.2547 5.09245H51.3778V10.8825C51.3778 11.4989 50.8781 11.9986 50.2617 11.9986H47.9596C47.3432 11.9986 46.8435 11.4989 46.8435 10.8825V5.09245H37.9492C37.3327 5.09245 36.833 4.59274 36.833 3.9763V1.67425C36.833 1.05781 37.3327 0.558097 37.9492 0.558097H60.2547C60.8711 0.558097 61.3709 1.05781 61.3709 1.67425V3.9763Z"/><path class="logo__type" d="M98.5875 15.2424C98.5875 16.1377 98.727 16.9515 99.006 17.684C99.2967 18.4049 99.7036 19.0269 100.227 19.5501C100.75 20.0616 101.372 20.4628 102.093 20.7534C102.825 21.0325 103.633 21.172 104.517 21.172H110.621C111.505 21.172 112.307 21.0325 113.028 20.7534C113.76 20.4628 114.388 20.0616 114.911 19.5501C115.434 19.0269 115.835 18.4049 116.114 17.684C116.405 16.9515 116.55 16.1377 116.55 15.2424C116.55 14.992 116.753 14.789 117.004 14.789H120.631C120.882 14.789 121.085 14.992 121.085 15.2424C121.085 16.7655 120.823 18.1665 120.3 19.4454C119.777 20.7244 119.05 21.8289 118.12 22.759C117.19 23.6891 116.085 24.4158 114.807 24.939C113.539 25.4506 112.156 25.7063 110.656 25.7063H104.517C103.017 25.7063 101.628 25.4506 100.349 24.939C99.07 24.4158 97.9654 23.6891 97.0353 22.759C96.1052 21.8289 95.3727 20.7244 94.8379 19.4454C94.3147 18.1665 94.0531 16.7655 94.0531 15.2424C94.0531 14.992 94.2561 14.789 94.5065 14.789H98.134C98.3844 14.789 98.5875 14.992 98.5875 15.2424Z"/><path class="logo__type" d="M110.656 2.20737e-05C112.156 2.20737e-05 113.539 0.26162 114.807 0.784815C116.085 1.30801 117.19 2.03467 118.12 2.96479C119.05 3.88329 119.777 4.98781 120.3 6.27836C120.823 7.55728 121.085 8.95247 121.085 10.4639V10.8825C121.085 11.4989 120.585 11.9986 119.969 11.9986H117.667C117.05 11.9986 116.55 11.4989 116.55 10.8825V10.4639C116.55 9.56868 116.405 8.76063 116.114 8.03978C115.835 7.30731 115.434 6.68529 114.911 6.17372C114.4 5.65053 113.778 5.24941 113.045 4.97037C112.324 4.67971 111.528 4.53438 110.656 4.53438H104.517C103.633 4.53438 102.825 4.67971 102.093 4.97037C101.372 5.24941 100.75 5.65053 100.227 6.17372C99.7036 6.68529 99.2967 7.30731 99.006 8.03978C98.727 8.76063 98.5875 9.56868 98.5875 10.4639V10.8825C98.5875 11.4989 98.0877 11.9986 97.4713 11.9986H95.1693C94.5528 11.9986 94.0531 11.4989 94.0531 10.8825V10.4639C94.0531 8.95247 94.3147 7.55728 94.8379 6.27836C95.3727 4.98781 96.1052 3.88329 97.0353 2.96479C97.9654 2.03467 99.07 1.30801 100.349 0.784815C101.628 0.26162 103.017 2.20737e-05 104.517 2.20737e-05H110.656Z"/><path class="logo__type" d="M126.404 0.170605C126.834 -0.00378947 127.276 -0.044484 127.729 0.0485266C128.183 0.129911 128.572 0.339198 128.898 0.676361L142.157 14.5075L142.142 14.5225L143.822 16.245L145.466 17.9592V17.929L150 22.5756V23.4179C150 23.7434 149.936 24.0457 149.808 24.3248C149.692 24.6038 149.529 24.848 149.32 25.0572C149.122 25.2549 148.884 25.4119 148.605 25.5281C148.326 25.6444 148.029 25.7025 147.715 25.7025C147.436 25.7025 147.152 25.6502 146.861 25.5456C146.582 25.4409 146.332 25.2723 146.111 25.0398L129.543 7.73949V25.3537H125.009V2.28083C125.009 1.81577 125.137 1.3972 125.392 1.02516C125.66 0.641489 125.997 0.356628 126.404 0.170605Z"/><path class="logo__type" d="M148.884 0.345004C149.5 0.345004 150 0.844721 150 1.46115V15.8381C150 16.8391 148.784 17.3338 148.085 16.6175L145.783 14.2584C145.58 14.05 145.466 13.7703 145.466 13.4791V1.46115C145.466 0.844721 145.965 0.345004 146.582 0.345004H148.884Z"/></svg>`;
+// header inner HTML: [back?] [logo] | [id badge?] [name] — same structure everywhere
+function headBar({num, name, back}){
+  return (back ? `<button class="x" onclick="ovBack()" aria-label="back">‹</button>` : '')
+    + `<a class="logolink" href="https://tron.42labs.io" target="_self" aria-label="TRON — 42labs home">${LOGO_SVG}</a>`
+    + `<span class="hsep"></span>`
+    + (num ? `<span class="nnum">${num}</span>` : '')
+    + `<span class="nname">${esc(name)}</span>`;
+}
+/* ════════════ DATA MODEL ════════════ */
+// lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–4, ARCHITECT rows 5–6, REVIEWERS row 7.
+// y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
+const LANES = [
+  {id:'L_ENG', name:'ENGINEER',  rows:[0,0], y:0, h:0},
+  {id:'L_TRON',name:'TRON',      rows:[1,4], y:0, h:0},
+  {id:'L_ARCH',name:'ARCHITECT', rows:[5,6], y:0, h:0},
+  {id:'L_REV', name:'REVIEWERS', rows:[7,7], y:0, h:0},
+];
+const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
+let LANE_X = 190, LANE_W = 1310;        // computed by layoutCore()
+
+// CORE NODES — placed on a track grid by (col,row). Same col → shared centre X (vertical alignment);
+// same row → shared centre Y. Geometry (x/y) is derived in layoutCore(); only col/row/size live here.
+const NODES = [
+  // ── ENGINEER lane · row 0 — Build → EX ──
+  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_ENG',  col:1, row:0, w:36, h:36, lblOnly:true},   // fleet intake catch (workers + architect + reviewers); writes the HOPPER store — does NOT trigger PULSE (dashed message flows from agent pools still TODO)
+  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_ENG',  col:2, row:0, w:50, h:56, lblOnly:true},   // durable sidecar store: agents drop here, PULSE drains it on its own cadence at 02-12 (pull, not push)
+  {id:'ND-11', kind:'task',  name:'Build',          lane:'L_ENG',  col:4, row:0, w:104,h:89, llm:true, llmId:'LLM-11'},
+  {id:'EX',    kind:'xor',   name:'',               lane:'L_ENG',  col:5, row:0, w:48, h:48},   // worker-outcome split → done / wall
+
+  // ── TRON lane · rows 1–4 ──
+  // row 1 — engineer-outcome row: DONE-gate (done) · Escalate → Apply decision (wall), all straight under EX ; OPERATOR inbox catch sits here (col 3)
+  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:3, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel, off the fleet intake → PARLEY handler (ND-18)
+  {id:'ND-04', kind:'task',  name:'DONE-gate',      lane:'L_TRON', col:5, row:1, w:110,h:56},   // straight below EX; no exit yet
+  {id:'ND-06', kind:'task',  name:'Escalate',       lane:'L_TRON', col:6, row:1, w:100,h:56},
+  {id:'ND-07', kind:'task',  name:'Apply decision', lane:'L_TRON', col:7, row:1, w:120,h:56},
+  // row 2 — spine: Start → BOOTUP → PULSE → OPERATOR handler ; Release + pulse-throw tucked under the wall row
+  {id:'Start', kind:'start', name:'tron:start',     lane:'L_TRON', col:0, row:2, w:36, h:36},
+  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:2, w:96, h:68, sub:'BOOTUP'},
+  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:2, w:96, h:68, sub:'PULSE'},
+  {id:'ND-18', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:3, row:2, w:96, h:68, sub:'PARLEY'},   // operator-message handler — fed by OPERATOR INTAKE; own channel, off PULSE
+  {id:'ND-10', kind:'task',  name:'CAST OFF',       lane:'L_TRON', col:6, row:2, w:96, h:56},   // under ND-06
+  {id:'TH1',   kind:'throw', name:'pulse',          lane:'L_TRON', col:7, row:2, w:36, h:36},   // under ND-07
+  // pulse triggers — parked in row 1 above PULSE, dock onto its top at ¼ / ¾ (special: don't size tracks)
+  {id:'TM1',   kind:'timer', name:'METRONOME',      lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¼ (cadence floor)
+  {id:'CA1',   kind:'catch', name:'pulse',          lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¾ (pulse event; catches TH1/TH2)
+  // row 3 — SWITCHBOARD → fill slot (Assign worker) ; session end
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:2, row:3, w:48, h:48, lblPos:'bl'},   // 4-way hub → label to the bottom-left quadrant, clear of all four lines
+  {id:'ND-05', kind:'task',  name:'DEPLOY',         lane:'L_TRON', col:4, row:3, w:104,h:56},
+  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},
+  // row 4 — dispatch gateway → Observe (idle-tick monitor arm)
+  {id:'ND-16', kind:'xor',   name:'',               lane:'L_TRON', col:2, row:4, w:48, h:48, lblPos:'l'},   // SWITCHBOARD's outcome split, in-line between ND-03 and ND-15
+  {id:'ND-09', kind:'task',  name:'Observe',        lane:'L_TRON', col:4, row:4, w:104,h:48},   // ND-16's monitor arm (nothing actionable from PULSE)
+
+  // ── ARCHITECT lane · rows 5–6 — router → Assign → Scope → converge → pulse ; Log Review on row 6 ──
+  {id:'ND-15', kind:'xor',   name:'',               lane:'L_TRON', col:2, row:5, w:48, h:48, lblPos:'l'},   // router (TRON-owned): distributes SWITCHBOARD's cross-lane routes (clear ahead / review); label left (top/right/bottom carry lines)
+  {id:'ND-08', kind:'task',  name:'Assign',         lane:'L_ARCH', col:4, row:5, w:104,h:52},
+  {id:'ND-12', kind:'task',  name:'Scope block',    lane:'L_ARCH', col:5, row:5, w:120,h:100, llm:true, llmId:'LLM-12'},
+  {id:'ND-17', kind:'xor',   name:'',               lane:'L_ARCH', col:6, row:5, w:48, h:48, lblPos:'t'},   // converging: ND-12 + ND-13 → TH2
+  {id:'TH2',   kind:'throw', name:'pulse',          lane:'L_ARCH', col:7, row:5, w:36, h:36},
+  {id:'ND-13', kind:'task',  name:'Log Review',     lane:'L_ARCH', col:6, row:6, w:120,h:100, llm:true, llmId:'LLM-13'},   // under ND-17
+  {id:'AIN',   kind:'mcatch',  name:'ARCHITECT INBOX', lane:'L_ARCH', col:3, row:6, w:36, h:36, lblOnly:true},   // architect inbox catch (same col as ND-18); writes ARCHITECT HOPPER — how it reaches the architect is TBD
+  {id:'AHOP',  kind:'datastore',name:'ARCHITECT HOPPER',lane:'L_ARCH', col:4, row:6, w:50, h:56, lblOnly:true},   // architect inbox store, below ND-08 (TBD wiring)
+
+  // ── REVIEWERS lane · row 7 ──
+  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:6, row:7, w:120,h:100, llm:true, llmId:'LLM-14'},
+];
+
+const FLOWS = [
+  ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
+  ['TM1','ND-02','',{toTop:0.25}], ['CA1','ND-02','',{toTop:0.75}],   // timer + pulse event re-enter PULSE at its top
+  ['OPI','ND-18','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],          // operator inbox → OPERATOR handler (same column, straight drop)
+  ['ND-03','ND-05','fill slot'], ['ND-03','End','session:end'],
+  ['ND-03','ND-16'], ['ND-16','ND-15'],                                // SWITCHBOARD → dispatch gateway → cross-lane router (in-line)
+  ['ND-16','ND-09','monitor'],                                         // gateway → Observe (idle tick — nothing actionable from PULSE)
+  ['ND-15','ND-08','clear ahead'], ['ND-15','ND-14','review'],         // router distributes the cross-lane routes
+  ['ND-05','ND-11','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],          // 05→11 centre-to-centre (straight riser, same column)
+  ['ND-11','EX'],                                                      // Build → EX directly (Observe detached from the build chain)
+  ['EX','ND-04','done',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],        // EX → ND-04 straight down (same column)
+  ['EX','ND-06','wall',{from:{s:'r',d:0.5}, to:{s:'t',d:0.5}}],        // EX right → ND-06 top
+  ['ND-06','ND-07'], ['ND-07','TH1'],                                  // wall path → Apply decision → pulse
+  ['ND-10','TH1'],                                                     // Release → pulse (incoming still loose)
+
+  ['ND-08','ND-12'], ['ND-12','ND-17'], ['ND-14','ND-13'], ['ND-13','ND-17'], ['ND-17','TH2'],   // ND-12 + ND-13 converge at ND-17 → TH2
+];
+
+// COMMS — non-enforcing connections (BPMN associations): communication / data read that does NOT advance a token.
+// [source, target, {from,to}] — same fractional-dock anchors as FLOWS.
+const COMMS = [
+  ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
+  ['HOPPER','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],  // PULSE reads (and may write on claim/drop) — undirected, the action is PULSE's; straight, same column; not a trigger
+  ['AIN','AHOP','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],        // ARCHITECT INTAKE writes ARCHITECT HOPPER (directed, straight, same row)
+];
+
+const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', datastore:'dataStoreReference'};
+
+/* ════════════ CORE XML ════════════ */
+const byId = Object.fromEntries(NODES.map(n=>[n.id,n]));
+const center = n => ({x:n.x+n.w/2, y:n.y+n.h/2});
+
+// ── CORE TRACK GRID — same rules as the sub-process grid, lifted to the swimlane core ──
+// Column width = widest node in that column; row height = tallest node in that row; columns/rows are
+// laid edge-to-edge with one grid gap (TOK.colGap/rowGap) and never below colMin/rowMin. Outer padding
+// is a single symmetric PAD on every side, so no lane has a large empty pocket and margins match.
+function layoutCore(){
+  const G=TOK.colGap, GR=TOK.rowGap, PAD=TOK.pad, BAND=TOK.laneBand;   // one symmetric padding; lane owner strip
+  const maxCol=Math.max(...NODES.map(n=>n.col)), maxRow=Math.max(...NODES.map(n=>n.row));
+  const placed=NODES.filter(n=>!n.special);               // TM1/CA1 don't drive track sizes (they dock onto PULSE)
+  const trackW=[], trackH=[];
+  for(let c=0;c<=maxCol;c++){ const ws=placed.filter(n=>n.col===c).map(n=>n.w); trackW[c]=Math.max(TOK.colMin, ws.length?Math.max(...ws):TOK.colMin); }
+  for(let r=0;r<=maxRow;r++){ const hs=NODES.filter(n=>n.row===r).map(n=>n.h); trackH[r]=Math.max(TOK.rowMin, hs.length?Math.max(...hs):TOK.rowMin); }
+  // every row's lane → the vertical gap above a row is the small grid gap WITHIN a lane, but a full 2·PAD
+  // BETWEEN lanes, so each lane's content clears its band top & bottom by exactly PAD (== the pool padding).
+  const laneOfRow={}; LANES.forEach(l=>{ for(let r=l.rows[0];r<=l.rows[1];r++) laneOfRow[r]=l.id; });
+  const colC=[], rowC=[];
+  colC[0]=POOL.x+BAND+PAD+trackW[0]/2;
+  for(let c=1;c<=maxCol;c++) colC[c]=colC[c-1]+trackW[c-1]/2+G+trackW[c]/2;
+  rowC[0]=POOL.y+PAD+trackH[0]/2;
+  for(let r=1;r<=maxRow;r++){ const gap = laneOfRow[r]===laneOfRow[r-1] ? GR : 2*PAD; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
+  placed.forEach(n=>{ n.x=Math.round(colC[n.col]-n.w/2); n.y=Math.round(rowC[n.row]-n.h/2); });
+  // pulse triggers dock above PULSE at ¼ / ¾, parked in row 1
+  const P=byId['ND-02'];
+  byId['TM1'].x=Math.round(P.x+P.w*0.25-18); byId['TM1'].y=Math.round(rowC[1]-18);
+  byId['CA1'].x=Math.round(P.x+P.w*0.75-18); byId['CA1'].y=Math.round(rowC[1]-18);
+  // lane bands tile the pool; every boundary sits PAD below the upper lane's last content row (== PAD above
+  // the lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
+  const rowBot=r=>rowC[r]+trackH[r]/2;
+  let top=POOL.y;
+  LANES.forEach((l,k)=>{ const bottom=Math.round(rowBot(l.rows[1])+PAD); l.y=top; l.h=bottom-top; top=bottom; });
+  POOL.h = top - POOL.y;
+  POOL.w = Math.round(colC[maxCol]+trackW[maxCol]/2 + PAD - POOL.x);
+  LANE_X = POOL.x; LANE_W = POOL.w;   // lanes sit FLUSH with the pool — the owner-name band is inside each lane; no dead strip
+}
+
+function route(s,t){
+  const sc=center(s), tc=center(t);
+  if(Math.abs(sc.y-tc.y)<=22){
+    return tc.x>sc.x ? [{x:s.x+s.w,y:sc.y},{x:t.x,y:tc.y}] : [{x:s.x,y:sc.y},{x:t.x+t.w,y:tc.y}];
+  }
+  if(Math.abs(sc.x-tc.x)<=6){  // same column → clean two-point vertical, no backtrack
+    return [{x:sc.x, y: tc.y>sc.y ? s.y+s.h : s.y}, {x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h}];
+  }
+  const exitY = tc.y>sc.y ? s.y+s.h : s.y;
+  let entry;
+  if(tc.x>sc.x+4) entry={x:t.x,y:tc.y};
+  else if(tc.x<sc.x-4) entry={x:t.x+t.w,y:tc.y};
+  else entry={x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h};
+  return [{x:sc.x,y:exitY},{x:sc.x,y:tc.y},entry];
+}
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// waypoints for a FLOWS/COMMS entry [source,target,label,opts] — shared by sequence flows and associations
+function edgePts(f){
+  const o=f[3];
+  if(o && o.toTop!==undefined){ const s=byId[f[0]], t=byId[f[1]], sx=s.x+s.w/2, tx=t.x+t.w*o.toTop;
+    return Math.abs(sx-tx)<2 ? [{x:sx,y:s.y+s.h},{x:tx,y:t.y}] : [{x:sx,y:s.y+s.h},{x:sx,y:t.y-12},{x:tx,y:t.y-12},{x:tx,y:t.y}]; }
+  if(o && o.from){                                                   // fractional dock anchors: {from:{s,d}, to:{s,d}} — s∈t/b/l/r, d=fraction along that side
+    const s=byId[f[0]], t=byId[f[1]];
+    const dp=(n,a)=> a.s==='t'?{x:n.x+n.w*a.d,y:n.y} : a.s==='b'?{x:n.x+n.w*a.d,y:n.y+n.h} : a.s==='l'?{x:n.x,y:n.y+n.h*a.d} : {x:n.x+n.w,y:n.y+n.h*a.d};
+    const sp=dp(s,o.from), tp=dp(t,o.to);
+    const sv=o.from.s==='t'||o.from.s==='b', tv=o.to.s==='t'||o.to.s==='b';   // vertical exit / entry?
+    if(Math.abs(sp.x-tp.x)<2 || Math.abs(sp.y-tp.y)<2) return [sp,tp];
+    if(sv && !tv) return [sp,{x:sp.x,y:tp.y},tp];        // exit vertical, enter horizontal → L
+    if(!sv && tv) return [sp,{x:tp.x,y:sp.y},tp];        // exit horizontal, enter vertical → L
+    if(sv && tv){ const my=(sp.y+tp.y)/2; return [sp,{x:sp.x,y:my},{x:tp.x,y:my},tp]; }   // both vertical → Z
+    const mx=(sp.x+tp.x)/2; return [sp,{x:mx,y:sp.y},{x:mx,y:tp.y},tp]; }                  // both horizontal → Z
+  return route(byId[f[0]], byId[f[1]]);
+}
+
+function coreXML(){
+  const linkNodes = new Set(['TH1','TH2','CA1']);
+  // process elements
+  const flowEls = NODES.map(n=>{
+    const tag = TAG[n.kind];
+    const inc = FLOWS.filter(f=>f[1]===n.id).map((f,i)=>`<bpmn:incoming>${f[0]}__${f[1]}</bpmn:incoming>`).join('');
+    const out = FLOWS.filter(f=>f[0]===n.id).map(f=>`<bpmn:outgoing>${f[0]}__${f[1]}</bpmn:outgoing>`).join('');
+    const def = (n.kind==='throw'||n.kind==='catch') ? `<bpmn:linkEventDefinition id="${n.id}_led" name="pulse"/>`
+              : n.kind==='timer' ? `<bpmn:timerEventDefinition id="${n.id}_ted"/>`
+              : n.kind==='mcatch' ? `<bpmn:messageEventDefinition id="${n.id}_med"/>` : '';
+    const label = n.lblOnly ? n.name : (n.name ? `${n.id}\n${n.name}` : n.id);
+    return `<bpmn:${tag} id="${n.id}" name="${esc(label)}">${inc}${out}${def}</bpmn:${tag}>`;
+  }).join('\n    ');
+
+  const seqEls = FLOWS.map(f=>`<bpmn:sequenceFlow id="${f[0]}__${f[1]}" sourceRef="${f[0]}" targetRef="${f[1]}"${f[2]?` name="${esc(f[2])}"`:''}/>`).join('\n    ');
+
+  const laneEls = LANES.map(l=>{
+    const refs = NODES.filter(n=>n.lane===l.id && n.kind!=='datastore').map(n=>`<bpmn:flowNodeRef>${n.id}</bpmn:flowNodeRef>`).join('');   // data stores are not flow nodes
+    return `<bpmn:lane id="${l.id}" name="${l.name}">${refs}</bpmn:lane>`;
+  }).join('\n      ');
+
+  // DI
+  const poolShape = `<bpmndi:BPMNShape id="Pool_di" bpmnElement="Pool" isHorizontal="true"><dc:Bounds x="${POOL.x}" y="${POOL.y}" width="${POOL.w}" height="${POOL.h}"/></bpmndi:BPMNShape>`;
+  const laneShapes = LANES.map(l=>`<bpmndi:BPMNShape id="${l.id}_di" bpmnElement="${l.id}" isHorizontal="true"><dc:Bounds x="${LANE_X}" y="${l.y}" width="${LANE_W}" height="${l.h}"/></bpmndi:BPMNShape>`).join('\n      ');
+  const nodeShapes = NODES.map(n=>{
+    const exp = n.kind==='sub' ? ' isExpanded="false"' : '';
+    const marker = n.kind==='xor' ? ' isMarkerVisible="true"' : '';
+    const cx=n.x+n.w/2, cy=n.y+n.h/2;
+    let lbl='';
+    if(n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch'||n.kind==='timer'||n.kind==='mcatch'||n.kind==='datastore')
+      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${cx-38}" y="${n.lblAbove?n.y-34:n.y+n.h+3}" width="76" height="28"/></bpmndi:BPMNLabel>`;   // id+name on two lines, clear of the circle
+    else if(n.kind==='xor' && n.lblPos){   // explicit gateway-label side, kept off the diamond's lines
+      const W=96, p={ l:[n.x-W-6, cy-14], r:[n.x+n.w+6, cy-14], t:[cx-W/2, n.y-30], b:[cx-W/2, n.y+n.h+4],
+                      bl:[n.x-W+4, n.y+n.h+4], br:[n.x+n.w-4, n.y+n.h+4] }[n.lblPos];
+      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(p[0])}" y="${Math.round(p[1])}" width="${W}" height="28"/></bpmndi:BPMNLabel>`; }
+    return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}"${exp}${marker}><dc:Bounds x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}"/>${lbl}</bpmndi:BPMNShape>`;
+  }).join('\n      ');
+  const edgeShapes = FLOWS.map(f=>{
+    const pts = edgePts(f);
+    const wp = pts.map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
+    // edge label — offset OFF the line: above a horizontal run, to the right of a vertical run
+    let lbl='';
+    if(f[2]){ const i0=Math.floor((pts.length-1)/2), a=pts[i0], b=pts[i0+1], horiz=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
+      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2, lx=horiz?mx-30:mx+TOK.labelGap, ly=horiz?my-19:my-8;
+      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="60" height="14"/></bpmndi:BPMNLabel>`; }
+    return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_di" bpmnElement="${f[0]}__${f[1]}">${wp}${lbl}</bpmndi:BPMNEdge>`;
+  }).join('\n      ');
+
+  // associations — non-enforcing communication / data-read connectors (dotted), e.g. PULSE pulling the HOPPER
+  const assocEls = COMMS.map(f=>`<bpmn:association id="${f[0]}__${f[1]}_a" associationDirection="${f[3]&&f[3].undirected?'None':'One'}" sourceRef="${f[0]}" targetRef="${f[1]}"/>`).join('\n    ');
+  const assocShapes = COMMS.map(f=>{
+    const wp = edgePts(f).map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
+    return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_a_di" bpmnElement="${f[0]}__${f[1]}_a">${wp}</bpmndi:BPMNEdge>`;
+  }).join('\n      ');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Defs" targetNamespace="http://tron/flow">
+  <bpmn:collaboration id="Collab">
+    <bpmn:participant id="Pool" name="" processRef="Proc"/>
+  </bpmn:collaboration>
+  <bpmn:process id="Proc" isExecutable="false">
+    <bpmn:laneSet id="LS">
+      ${laneEls}
+    </bpmn:laneSet>
+    ${flowEls}
+    ${seqEls}
+    ${assocEls}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Dg"><bpmndi:BPMNPlane id="Pl" bpmnElement="Collab">
+      ${poolShape}
+      ${laneShapes}
+      ${nodeShapes}
+      ${edgeShapes}
+      ${assocShapes}
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+/* ════════════ FLOW REGISTRY (overlay) — node sub-processes + sentry sub-processes ════════════ */
+const FLOW = {
+  'ND-01': { num:'ND-01', name:'BOOTUP', start:'', end:'PULSE', grid:true, endPos:[3,5],
+    steps:[
+    // common spine — row0 L→R, snakes down to the fork
+    {n:'Spawn TRON-AIDE', pos:[0,0]},                                              // T0  01-01
+    {n:'Refresh trunk',   pos:[1,0]},                                              // T1  01-02
+    {n:'Refresh PRs',     pos:[2,0]},                                              // T2  01-03
+    {n:'Trunk fresh?', kind:'gateway', pos:[3,0], lblPos:'top'},                   // T3  01-04 — validate the fetch advanced BEFORE building (B11; never bootup off stale trunk)
+    {n:'Build snapshot',  pos:[4,0], data:{name:'SNAPSHOT', dir:'out', at:'above'}}, // T4  01-05
+    {n:'Read MANIFEST',   pos:[4,1], data:{name:'MANIFEST', dir:'in',  at:'right'}}, // T5  01-06 — probe
+    {n:'Resume?', kind:'gateway', pos:[2,1]},                                      // T6  01-07 — fork on presence
+    // fresh branch — straight down col2
+    {n:'Set scope',  kind:'sub', opens:'ND-01-08', pos:[2,2]},                     // T7  01-08
+    {n:'Set counts', kind:'sub', opens:'ND-01-09', pos:[2,3]},                     // T8  01-09
+    {n:'Write MANIFEST', pos:[2,4], data:{name:'MANIFEST', dir:'out', at:'right'}},   // T9  01-10 — born
+    // resume branch — down col1, LEFT of the fresh column (load+pipeline+fleet are one node)
+    {n:'Reconcile',   pos:[1,1], data:{name:'MANIFEST', dir:'out', at:'left', dock:0.75}}, // T10 01-11 — aligned with Resume?; resume enters its right, MANIFEST docks left-¾
+    {n:'Consistent?', kind:'gateway', pos:[1,2]},                                  // T11 01-12
+    // merge → tail (col2)
+    {n:'Cap pool', pos:[2,5]},                                                     // T12 01-13 → PULSE
+    {n:'Resolve', kind:'sub', opens:'ND-01-14', pos:[1,3]},   // T13 01-14 — escalation; may message live workers (sent direct / to their hopper)
+    // link catches — where 01-14's throws land (repair re-reconciles, restart re-scopes)
+    {n:'→ 01-11', kind:'catch', pos:[0,1]},                                        // T14 01-15 → Reconcile (docks left-¼)
+    {n:'→ 01-08', kind:'catch', pos:[3,2]},                                        // T15 01-16 → Set scope
+    {n:'Halt — trunk unreachable', kind:'terminate', pos:[3,1], lblPos:'bottom'},  // T16 01-17 — persist: dead trunk → cannot bootup; no MANIFEST yet, so emit terminal.halt_bootup SYNCHRONOUSLY (the interactive operator is told why) then terminate
+  ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
+      {f:'T3',t:'T4',label:'fresh'},                                  // fetch advanced → build
+      {f:'T3',t:'T1',label:'retry', from:{s:'t'}, to:{s:'t'}},        // transient fail → re-fetch (death-cap bounds the loop)
+      {f:'T3',t:'T16',label:'persist', vlabel:true},                  // dead trunk → terminate
+      {f:'T4',t:'T5'},                                                // build → read manifest (down)
+      {f:'T5',t:'T6', from:{s:'t'}, to:{s:'t'}},                      // read → resume? (over the gap, clear of the terminate)
+      {f:'T6',t:'T7',label:'fresh'},
+      {f:'T6',t:'T10',label:'resume'},   // same row → straight into Reconcile's right side
+      {f:'T7',t:'T8'},{f:'T8',t:'T9'},
+      {f:'T9',t:'T12'},
+      {f:'T10',t:'T11'},
+      {f:'T11',t:'T12',label:'ok'},
+      {f:'T11',t:'T13',label:'conflict'},
+      {f:'T12',t:'E'},
+      {f:'T14',t:'T10', from:{s:'r'}, to:{s:'l',d:0.25}},   // → 01-11 catch → Reconcile left-¼ (repair); MANIFEST sits at left-¾
+      {f:'T15',t:'T7'},   // → 01-08 catch → Set scope (restart)
+    ]},
+  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', grid:true, endPos:[2,2], steps:[
+    // re-invoked each tick by the BASE loop (timer cadence OR pulse event); start here is just the entry
+    // 02-01 fork: first entry from BOOTUP arrives with a fresh snapshot (trunk+PRs+build ran in ND-01 before the fork),
+    // so the refresh trio is skipped once; every recurring tick rebuilds from trunk (no drift across crash / off-session).
+    {n:'First tick?', kind:'gateway', pos:[0,0], lblPos:'top'},                          // T0  02-01
+    {n:'Refresh trunk',     pos:[1,0]},                                                  // T1  02-02  ┐ refresh trio
+    {n:'Refresh PRs',       pos:[2,0]},                                                  // T2  02-03  ┘  (recurring only)
+    {n:'Snapshot fresh?', kind:'gateway', pos:[3,0], lblPos:'top'},                      // T3  02-04  validate the fetch advanced BEFORE rebuilding (never build off stale trunk)
+    {n:'Rebuild snapshot',  pos:[4,0], data:{name:'SNAPSHOT', dir:'out', at:'above'}},   // T4  02-05
+    {n:'Detect done',       pos:[5,0]},                                                  // T5  02-06  ← merge (first / fresh-rebuild / persist-skip)
+    // worker lifecycle — detect (Assess) then dispose (Settle); ambiguous cases escalate
+    {n:'Assess workers',    pos:[5,1]},   // row 1 ←                                     // T6  02-07  liveness + TTL + PR → done/dead/hung/orphan
+    {n:'Settle workers',    pos:[3,1]},                                                  // T7  02-08  release safe (resume-session / fresh); flag ambiguous; APPLY any resolved escalation whose operator reply has landed
+    {n:'Escalate?', kind:'gateway', pos:[2,1]},                                          // T8  02-09
+    {n:'Resolve', kind:'sub', opens:'ND-02-10', pos:[1,2]},                              // T9  02-10  raise-and-defer escalation (brief operator → send → mark pending → await)
+    {n:'Tick cadence',      pos:[1,1]},                                                  // T10 02-11  merge: clean + resolved
+    {n:'Claim inboxes',     pos:[0,1]},                                                  // T11 02-12
+    {n:'Messages?', kind:'gateway', pos:[0,2]},                                          // T12 02-13  empty inbox → skip ONLY classify+route (sends still happen)
+    {n:'Classify messages', pos:[0.202,3], actor:'aide', llmId:'LLM-02-14'},  // T13 02-14 — the one LLM touch per tick; its top-¼ sits under 02-13's drop (straight)
+    {n:'Route messages',    pos:[1,3]},   // row 3 →                                     // T14 02-15  tag → recipient (worker / architect / operator)
+    {n:'Drive gates',       pos:[2,3]},                                                  // T15 02-16  merge: routed + skipped; may produce sends (unblock/review/reject)
+    {n:'Drain triggers',    pos:[3,3]},                                                  // T16 02-17  operator commands; may produce sends
+    {n:'Deliver', kind:'mthrow', pos:[4,3]},                                             // T17 02-18  send each message to its recipient — direct, or to the recipient's hopper (id-tagged for dedupe)
+    {n:'Save state',        pos:[4,2], data:{name:'MANIFEST', dir:'out', at:'right'}},   // T18 02-19
+    {n:'Drop sidecars',     pos:[3,2]},                                                  // T19 02-20  (effects persisted before sidecars dropped)
+  ],
+    edges:[
+      {f:'S',t:'T0'},
+      {f:'T0',t:'T1',label:'recurring'},                       // full rebuild from trunk
+      {f:'T0',t:'T5',label:'first', labelAt:'start', from:{s:'b'}, to:{s:'b',d:0.25}},  // skip the trio → straight under-route into Detect done
+      {f:'T1',t:'T2'},{f:'T2',t:'T3'},                         // refresh trio → fresh? gate
+      {f:'T3',t:'T4',label:'fresh'},                           // fetch advanced → rebuild
+      {f:'T3',t:'T1',label:'retry', from:{s:'t'}, to:{s:'t'}}, // transient fail → re-fetch (death-cap bounds the loop)
+      {f:'T3',t:'T5',label:'persist', from:{s:'b',d:0.6}, to:{s:'b',d:0.75}},  // death-cap → raise alarm + skip Rebuild (no fresh snapshot → 02-06/07/08 self-skip); pipeline still flushes the alarm at Deliver
+      {f:'T4',t:'T5'},                                         // rebuild → detect done
+      {f:'T5',t:'T6'},{f:'T6',t:'T7'},{f:'T7',t:'T8'},          // detect → assess → settle → escalate?
+      {f:'T8',t:'T10',label:'ok'},                             // clean → continue the tick
+      {f:'T8',t:'T9',label:'escalate', from:{s:'b'}, to:{s:'r'}},  // leave 02-09 bottom → into 02-10 right
+      {f:'T9',t:'T10'},                                        // resolved → rejoin (straight up into cadence)
+      {f:'T10',t:'T11'},                                       // cadence → claim inboxes
+      {f:'T11',t:'T12'},                                       // claim → messages? gateway (down)
+      {f:'T12',t:'T13',label:'yes', from:{s:'b'}, to:{s:'t',d:0.25}},          // messages → classify (straight drop)
+      {f:'T12',t:'T15',label:'no', from:{s:'b',d:0.75}, to:{s:'t'}},    // empty inbox → skip classify+route → drive gates (top-centre)
+      {f:'T13',t:'T14', from:{s:'t',d:0.75}, to:{s:'l'}},     // 02-14 top-¾ → 02-15 left
+      {f:'T14',t:'T15'},                                       // route → drive gates (merge)
+      {f:'T15',t:'T16'},                                       // gates → triggers
+      {f:'T16',t:'T17'},                                       // triggers → deliver (single flush, after all producers)
+      {f:'T17',t:'T18'},                                       // deliver → save
+      {f:'T18',t:'T19'},                                       // save → drop (persist before drop)
+      {f:'T19',t:'E'},
+    ]},
+  'ND-01-08': { num:'ND-01-08', name:'SET SCOPE', start:'', end:'Scope locked', grid:true, endPos:[3,0],
+    steps:[
+      {n:'Assign TRON-AIDE', pos:[0,0]},                      // T0 det
+      {n:'Ask scope', actor:'aide', pos:[0,1], llmId:'LLM-01-08-02'},  // T1 aide — directly below Assign (aligned)
+      {n:'Answer scope', actor:'op', pos:[1,2]},              // T2 op
+      {n:'Resolved?', kind:'gateway', actor:'aide', pos:[1,1]}, // T3 aide — above Answer
+      {n:'Validate scope', pos:[1,0]},                        // T4 det — above the gateway
+      {n:'Lock scope', pos:[2,0]},                            // T5 det
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
+      {f:'T3',t:'T1',label:'clarify', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
+      {f:'T3',t:'T4',label:'resolved'},
+      {f:'T4',t:'T1',label:'invalid', from:{s:'l'}, to:{s:'r',d:0.25}},   // DET validation fails (dangling dep / empty id-set) → re-ask the operator (drops in the inter-column gap into Ask's upper-right, clear of clarify). FIRST-RUN (empty archive-history): empty scope is legitimate (architect hasn't authored) → not invalid; closes B13/GAP-5. Truly-unscaffolded pipeline = upstream concern (TRON never scaffolds).
+      {f:'T4',t:'T5',label:'ok'},
+      {f:'T5',t:'E'},
+    ]},
+  'ND-01-09': { num:'ND-01-09', name:'SET COUNTS', start:'', end:'Counts locked', grid:true, endPos:[3,0],
+    steps:[
+      {n:'Assign TRON-AIDE', pos:[0,0]},                      // T0 det
+      {n:'Ask counts', actor:'aide', pos:[0,1], llmId:'LLM-01-09-02'}, // T1 aide — directly below Assign (aligned)
+      {n:'Answer counts', actor:'op', pos:[1,2]},            // T2 op
+      {n:'Confirmed?', kind:'gateway', actor:'aide', pos:[1,1]}, // T3 aide — above Answer
+      {n:'Validate counts', pos:[1,0]},                      // T4 det — above the gateway
+      {n:'Lock counts', pos:[2,0]},                          // T5 det
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
+      {f:'T3',t:'T1',label:'revise', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
+      {f:'T3',t:'T4',label:'confirmed'},
+      {f:'T4',t:'T1',label:'invalid', from:{s:'l'}, to:{s:'r',d:0.25}},   // DET validation fails (below floor / non-integer) → re-ask the operator (inter-column gap into Ask's upper-right, clear of revise)
+      {f:'T4',t:'T5',label:'ok'},
+      {f:'T5',t:'E'},
+    ]},
+  // escalation conversation (reached only from 01-12 conflict); resolves internally — no parent exit.
+  // repair → re-reconcile (01-11) · restart → fresh scope (01-08) · halt → terminate.
+  'ND-01-14': { num:'ND-01-14', name:'RESOLVE', start:'', noEnd:true, grid:true, endPos:[0,0],
+    steps:[
+      {n:'Assign TRON-AIDE', pos:[0,0]},                       // T0 14-01 det
+      {n:'Brief + offer options', actor:'aide', pos:[0,1], llmId:'LLM-01-14-02'},    // T1 14-02 (under Assign)
+      {n:'Decide', actor:'op', pos:[0,2]},                     // T2 14-03 (under Brief)
+      {n:'Choice?', kind:'gateway', actor:'aide', pos:[1,1], lblPos:'top'},  // T3 14-04 — clarify vs proceed (label up, clear of the hub)
+      {n:'', kind:'gateway', actor:'aide', pos:[2,1]}, // T4 14-05 — split repair/restart/halt (4-way hub); id-label to the right (col 3 buffer keeps it clear)
+      {n:'→ 01-11', kind:'throw', pos:[2,0], lblPos:'top'},     // T5 14-06 repair (DET, straight ↑) — label at head, empty space above
+      {n:'→ 01-08', kind:'throw', actor:'aide', pos:[4,1]},    // T6 14-07 restart (straight →) — col 4 leaves the hub room
+      {n:'Archive MANIFEST', actor:'op', pos:[2,2], data:{name:'MANIFEST', dir:'in', at:'below'}}, // T7 14-08 — archive the live MANIFEST before terminate
+      {n:'Halt', kind:'terminate', actor:'op', pos:[4,2]},     // T8 14-09 halt (straight → after archive)
+    ],
+    edges:[
+      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},
+      {f:'T2',t:'T3', from:{s:'r'}, to:{s:'b'}},   // Decide right → up the inter-column gap → into Choice? bottom (clear of Brief / clarify)
+      {f:'T3',t:'T1',label:'clarify'},
+      {f:'T3',t:'T4',label:'proceed'},
+      {f:'T4',t:'T5',label:'repair',vlabel:true},
+      {f:'T4',t:'T6',label:'restart'},
+      {f:'T4',t:'T7',label:'halt',vlabel:true},   // hub → Archive MANIFEST (straight ↓)
+      {f:'T7',t:'T8'},                             // Archive → Halt (straight →)
+    ]},
+  // raise-and-defer escalation (reached from 02-09). Briefs the operator, sends the ask, marks the
+  // case escalation-pending, then ENDS (await). The operator's reply lands as an event on a later tick; Settle
+  // (02-08) applies the chosen action then. No inline decision — keeps the tick bounded (Temporal-signal style).
+  'ND-02-10': { num:'ND-02-10', name:'RESOLVE', start:'', end:'Awaiting operator', grid:true, endPos:[2,0],
+    steps:[
+      {n:'Assign TRON-AIDE', pos:[0,0]},                                                       // T0 10-01 det
+      {n:'Brief + offer options', actor:'aide', pos:[0,1], llmId:'LLM-02-10-02'},                       // T1 10-02 (under Assign) — AIDE composes the operator brief
+      {n:'OPERATOR INTAKE', kind:'mthrow', actor:'aide', pos:[1,1]},                           // T2 10-03 — message-throw to the operator channel (matches the OPERATOR INTAKE catch)
+      {n:'Mark pending', pos:[1,0]},                                                           // T3 10-04 det — stamp escalation-pending (durable; guards re-escalation)
+    ]},
+
+  // ── ND-18 PARLEY — operator-message handler (own channel, off PULSE; fed by OPERATOR INTAKE) ──
+  // Triggered when an operator message lands. Two outcomes branch off Intent?:
+  //   ACT  — command (halt/pause/resume/rescope) → run-state · decision (reply to a parked case) → PULSE Settle. No reply.
+  //   ANSWER — query (status/inspect) or ask (free-form) → AIDE composes from artifacts → reply to operator;
+  //            an ask AIDE can't answer from artifacts is sent to the architect (lands in ARCHITECT HOPPER), answered later.
+  // Operator-initiated, so the conversation is synchronous (human present) — nothing here is parked across PULSE ticks.
+  // GRID layout (grid:true) to match the core + ND-01/ND-02: DET = row 0, AIDE auto-drops to row 1; every arm a straight run.
+  'ND-18': { num:'ND-18', name:'PARLEY', start:'', noEnd:true, grid:true, endPos:[5,1],
+    steps:[
+      {n:'Intent?', kind:'gateway', pos:[0,0], lblPos:'top'},                                       // T0 det
+      {n:'Apply command / decision', pos:[1,0]},                                                     // T1 det — ACT: command→run-state · decision→Settle
+      {n:'Acted', kind:'end', pos:[2,0]},                                                            // T2 det end
+      {n:'Compose answer', actor:'aide', pos:[0,1], llmId:'LLM-18-04'},                                    // T3 aide — straight under Intent? (what it reads = TBD; no invented store)
+      {n:'Answerable?', kind:'gateway', actor:'aide', pos:[3,1], lblPos:'top'},                      // T4 aide
+      {n:'OPERATOR INTAKE', kind:'mthrow', actor:'aide', pos:[4,1]},                                 // T5 aide — message-throw to the operator channel (matches the OPERATOR INTAKE catch)
+      {n:'Replied', kind:'end', actor:'aide', pos:[5,1]},                                            // T6 aide end
+      {n:'ARCHITECT INBOX', kind:'mthrow', pos:[3,0], lblPos:'top'},                                 // T7 det — message-throw to the architect (matches the ARCHITECT INBOX catch); lands in ARCHITECT HOPPER
+      {n:'Deferred', kind:'end', pos:[4,0]},                                                         // T8 det end — adjacent to Send to architect
+    ],
+    edges:[
+      {f:'S',t:'T0'},
+      {f:'T0',t:'T1', label:'act'},                 // command / decision
+      {f:'T0',t:'T3', label:'answer'},              // query / ask
+      {f:'T1',t:'T2'},
+      {f:'T3',t:'T4'},
+      {f:'T4',t:'T5', label:'yes'},
+      {f:'T4',t:'T7', label:'no'},
+      {f:'T5',t:'T6'},
+      {f:'T7',t:'T8'},
+    ]},
+};
+/* ── LAYOUT TOKENS — single source of spacing for every diagram ── */
+const TOK = {
+  nodeW:170, nodeH:68, gw:44, ev:36, dataW:36, dataH:50,   // element sizes
+  // TRACK GRID — column width = widest element in that column, row height = tallest in that row;
+  // tracks are separated by a fixed grid-unit gap and never fall below a min size. A task-only column
+  // is nodeW+colGap = 210 wide (== the old uniform pitch); a gateway/event-only column shrinks to colMin.
+  colGap:40, rowGap:44, colMin:44, rowMin:36, gridX0:440,   // grid mode (track grid)
+  pad:48, laneBand:30,                          // core: one symmetric outer/inter-lane padding; lane owner-name strip
+  lanePitchX:200, laneX0:300, laneH:180,       // lane mode
+  poolX:130, poolY:120, lanePad:0, topBand:120,  // pool / lane frame (lanePad:0 → no pool title band, lane bars only)
+  poolMargin:60, poolMarginData:140, poolTrimY:30, // pool right/bottom padding (…Data: extra room for a right-placed data object)
+  dataGap:26, dataGapSide:30, dataLabelH:17, dataMargin:24,  // node→data gap; data label height; clearance from pool border
+  labelGap:8, channelStep:24, loopInset:22, laneTopMargin:24, // routing clearances
+  dock:[0.25,0.5,0.75], dockStub:18,             // connector anchor points per side (¼ · center · ¾) + leave/enter stub
+};
+/* horizontal swimlane: TRON-DET / TRON-AIDE / OPERATOR lanes (only those used) */
+const STW=TOK.nodeW, STH=TOK.nodeH, SPITCHX=TOK.lanePitchX, SX0=TOK.laneX0, LANE_H=TOK.laneH;
+const ACTORS = [
+  {key:'det',  id:'L_DET',  name:'⚙  TRON-DET',  tag:'task'},
+  {key:'aide', id:'L_AIDE', name:'✦  TRON-AIDE', tag:'task'},
+  {key:'op',   id:'L_OP',   name:'☻  OPERATOR',  tag:'task'},
+];
+function subXML(def){
+  const n=def.steps.length;
+  const actorOf = s => s.actor || 'det';
+  const grid = def.grid || def.steps.some(s=>s.pos);
+  const poolY=TOK.poolY, poolX=TOK.poolX, laneX=poolX+TOK.lanePad;
+  const geom = {};
+  let lanesUsed, bandTop={}, poolW, poolH, laneW, laneH={};
+
+  if(grid){
+    // TRACK GRID in the TRON-DET lane; any AIDE step drops into its own lane below DET (compact, balanced).
+    // Each column's width = the widest element placed in it (floored at colMin); each row's height = the
+    // tallest element in it (floored at rowMin). Columns/rows are laid edge-to-edge with a fixed grid gap,
+    // so element centres still snap to shared column/row lines (vertical & horizontal alignment) while a
+    // gateway/event-only column tightens instead of reserving full task width.
+    const PAD=TOK.pad, BAND=TOK.laneBand;
+    const dimOf = s => { const gw=s.kind==='gateway', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate'; return {w:gw?TOK.gw:ev?TOK.ev:STW, h:gw?TOK.gw:ev?TOK.ev:STH}; };
+    const isAide = s => actorOf(s)==='aide', isOp = s => actorOf(s)==='op';
+    const hasAide = def.steps.some(isAide), hasOp = def.steps.some(isOp);
+    const detRows = def.steps.filter(s=>!isAide(s)&&!isOp(s)).map(s=>s.pos[1]);
+    const maxDetRow = detRows.length?Math.max(...detRows):0;
+    const aideRow = maxDetRow + 1;                          // AIDE drops to one band below DET
+    const opRow   = (hasAide?aideRow:maxDetRow) + 1;        // OP drops one band below the lowest of DET/AIDE
+    const rowOf = s => isOp(s)?opRow : isAide(s)?aideRow : s.pos[1];
+    const laneOfRow = r => (hasOp && r===opRow) ? 'op' : (hasAide && r===aideRow) ? 'aide' : 'det';
+    const cols=def.steps.map(s=>s.pos[0]);
+    const startPos=[Math.min(...cols)-1, def.steps[0].pos[1]];
+    const endPos = def.endPos || [def.steps[n-1].pos[0], rowOf(def.steps[n-1])+1];
+    // every placed item (steps + start/end events) contributes its size to the track it sits in (fractional → nearest track)
+    const items=[{c:startPos[0],r:startPos[1],w:TOK.ev,h:TOK.ev}];
+    if(def.start2) items.push({c:startPos[0],r:startPos[1]+1,w:TOK.ev,h:TOK.ev});
+    def.steps.forEach(s=>{ const d=dimOf(s); items.push({c:s.pos[0],r:rowOf(s),w:d.w,h:d.h}); });
+    items.push({c:endPos[0],r:endPos[1],w:TOK.ev,h:TOK.ev});
+    if(def.end2) items.push({c:def.end2.pos[0],r:def.end2.pos[1],w:TOK.ev,h:TOK.ev});
+    const minCol=Math.min(...items.map(i=>Math.round(i.c))), maxCol=Math.max(...items.map(i=>Math.round(i.c)));
+    const minRow=Math.min(...items.map(i=>Math.round(i.r))), maxRow=Math.max(...items.map(i=>Math.round(i.r)));
+    const trackW={}, trackH={};
+    for(let c=minCol;c<=maxCol;c++){ const ws=items.filter(i=>Math.round(i.c)===c).map(i=>i.w); trackW[c]=Math.max(TOK.colMin, ws.length?Math.max(...ws):TOK.colMin); }
+    for(let r=minRow;r<=maxRow;r++){ const hs=items.filter(i=>Math.round(i.r)===r).map(i=>i.h); trackH[r]=Math.max(TOK.rowMin, hs.length?Math.max(...hs):TOK.rowMin); }
+    // SYMMETRIC margins — same rule as layoutCore(): leftmost track-left = poolX + BAND + PAD (BAND = lane
+    // owner-name strip); top = poolY + PAD; right/bottom = PAD. Gap WITHIN a lane = rowGap, BETWEEN lanes = 2·PAD.
+    // A data object docked ABOVE a top-row element needs room above it → reserve it so the box clears the pool top by PAD.
+    const aboveTop = def.steps.some(s=> s.data && (s.data.at==='above') && rowOf(s)===minRow);
+    const topPad = PAD + (aboveTop ? TOK.dataGap+TOK.dataH+TOK.dataLabelH : 0);
+    const colC={}, rowC={};
+    colC[minCol] = poolX + BAND + PAD + trackW[minCol]/2;
+    for(let c=minCol+1;c<=maxCol;c++) colC[c]=colC[c-1]+trackW[c-1]/2+TOK.colGap+trackW[c]/2;
+    rowC[minRow] = poolY + topPad + trackH[minRow]/2;
+    for(let r=minRow+1;r<=maxRow;r++){ const gap = laneOfRow(r)!==laneOfRow(r-1) ? 2*PAD : TOK.rowGap; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
+    const cx=c=>{ const f=Math.floor(c),g=Math.ceil(c); return f===g?colC[f]:colC[f]+(c-f)*(colC[g]-colC[f]); };
+    const cy=r=>{ const f=Math.floor(r),g=Math.ceil(r); return f===g?rowC[f]:rowC[f]+(r-f)*(rowC[g]-rowC[f]); };
+    const cell=(c,r,w,h)=>({x:cx(c)-w/2, y:cy(r)-h/2, w, h});
+    geom['S']={...cell(startPos[0],startPos[1],TOK.ev,TOK.ev), ord:-1};
+    if(def.start2) geom['S2']={...cell(startPos[0],startPos[1]+1,TOK.ev,TOK.ev), ord:-0.5};
+    def.steps.forEach((s,i)=>{ const d=dimOf(s); geom['T'+i]={...cell(s.pos[0],rowOf(s), d.w, d.h), ord:i}; });
+    geom['E']={...cell(endPos[0],endPos[1],TOK.ev,TOK.ev), ord:1e6};
+    if(def.end2) geom['E2']={...cell(def.end2.pos[0],def.end2.pos[1],TOK.ev,TOK.ev), ord:1e6+1};
+    poolW = colC[maxCol]+trackW[maxCol]/2 + PAD - poolX;
+    poolH = rowC[maxRow]+trackH[maxRow]/2 + PAD - poolY;
+    // lane bands tile the pool; each boundary sits PAD below the upper lane's last content row (== PAD above the
+    // lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
+    lanesUsed=[ACTORS[0], ...(hasAide?[ACTORS[1]]:[]), ...(hasOp?[ACTORS[2]]:[])];
+    const detBottom = rowC[maxDetRow]+trackH[maxDetRow]/2;
+    bandTop.det = poolY;
+    if(hasAide) bandTop.aide = detBottom + PAD;
+    if(hasOp){ const prevBottom = hasAide ? (rowC[aideRow]+trackH[aideRow]/2) : detBottom; bandTop.op = prevBottom + PAD; }
+    const order=lanesUsed.map(a=>a.key);
+    order.forEach((k,idx)=>{ const nextTop = idx<order.length-1 ? bandTop[order[idx+1]] : poolY+poolH; laneH[k]=nextTop-bandTop[k]; });
+  } else {
+    // lane mode: one band per actor; column = step.col ?? index, row = actor's lane index
+    const used=new Set(['det',...def.steps.map(actorOf)]);
+    lanesUsed=ACTORS.filter(a=>used.has(a.key));
+    const cyL={}, rowOf={};
+    lanesUsed.forEach((a,k)=>{ bandTop[a.key]=poolY+k*LANE_H; cyL[a.key]=poolY+k*LANE_H+LANE_H/2; rowOf[a.key]=k; });
+    poolH=lanesUsed.length*LANE_H;
+    const colOf=(s,i)=> s.col!==undefined ? s.col : i;
+    geom['S']={x:SX0-STW/2, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:-0.5, ord:-1};
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
+    const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
+    if(!def.noEnd){ geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:maxC+1, ord:1e6}; }
+    poolW = (def.noEnd ? SX0+maxC*SPITCHX+STW/2 : geom['E'].x+TOK.ev) +TOK.poolMargin-poolX;  // noEnd: stop at the last node, don't reserve an end column
+  }
+  const G=id=>{const g=geom[id];return {...g,cx:g.x+g.w/2,cy:g.y+g.h/2,top:g.y,bottom:g.y+g.h,left:g.x,right:g.x+g.w};};
+
+  // data objects — placed by tokens (size, gap, label), then the POOL/LANE grows to contain them so nothing crosses a border
+  const dataBoxes = def.steps.map((s,i)=>{
+    if(!s.data) return null;
+    const d=s.data, g=G('T'+i), at=d.at||'below', W=TOK.dataW, H=TOK.dataH, out=d.dir!=='in';
+    const df=d.dock??0.5, ay=g.top+g.h*df; let dx,dy,p1,p2;
+    if(at==='below'){ dx=g.cx-W/2; dy=g.bottom+TOK.dataGap; p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
+    else if(at==='above'){ dx=g.cx-W/2; dy=g.top-TOK.dataGap-H; p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
+    else if(at==='right'){ dx=g.right+TOK.dataGapSide; dy=ay-H/2; p1=[g.right,ay]; p2=[dx,ay]; }
+    else { dx=g.left-TOK.dataGapSide-W; dy=ay-H/2; p1=[g.left,ay]; p2=[dx+W,ay]; }
+    return {i, d, at, W, H, out, dx, dy, p1, p2};
+  });
+  // grow the pool right/bottom to enclose every data box + its label, with a token margin (top/left use topBand room)
+  dataBoxes.filter(Boolean).forEach(b=>{
+    const labelBelow = b.at!=='above';
+    const boxBottom = b.dy + b.H + (labelBelow?TOK.dataLabelH:0);
+    poolW = Math.max(poolW, (b.dx + b.W) + TOK.pad - poolX);   // data clears the pool border by PAD (same as elements)
+    poolH = Math.max(poolH, boxBottom + TOK.pad - poolY);
+  });
+  // re-derive lane heights against the (possibly grown) pool — the bottom band absorbs the growth so lanes still tile the pool
+  if(grid){
+    const last = lanesUsed[lanesUsed.length-1].key;   // bottom band absorbs any data-driven growth
+    laneH[last] = poolY+poolH - bandTop[last];
+  } else {
+    lanesUsed.forEach((a,k)=> laneH[a.key] = (k===lanesUsed.length-1) ? poolH - k*LANE_H : LANE_H);
+  }
+  laneW = poolW-TOK.lanePad;
+
+  // semantic
+  const els=[]; const refs={det:['S',...(def.start2?['S2']:[]),...(def.noEnd?[]:['E']),...(def.end2?['E2']:[])],aide:[],op:[]};
+  const startDef = k => k==='timer'?'<bpmn:timerEventDefinition/>':k==='message'?'<bpmn:messageEventDefinition/>':'';
+  const edges = def.edges || [{f:'S',t:'T0'}, ...Array.from({length:n-1},(_,i)=>({f:'T'+i,t:'T'+(i+1)})), {f:'T'+(n-1),t:'E'}];
+  // incoming/outgoing flow refs per node (spec-required for connectivity; bpmn-js derives the same from sourceRef/targetRef, so the picture is unchanged)
+  const inb={}, outb={};
+  edges.forEach((e,k)=>{ (inb[e.t]=inb[e.t]||[]).push(k); (outb[e.f]=outb[e.f]||[]).push(k); });
+  const io = id => (inb[id]||[]).map(k=>`<bpmn:incoming>sf${k}</bpmn:incoming>`).join('') + (outb[id]||[]).map(k=>`<bpmn:outgoing>sf${k}</bpmn:outgoing>`).join('');
+  els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}">${io('S')}${startDef(def.startKind)}</bpmn:startEvent>`);
+  if(def.start2) els.push(`<bpmn:startEvent id="S2" name="${esc(def.start2.name||'')}">${io('S2')}${startDef(def.start2.kind)}</bpmn:startEvent>`);
+  def.steps.forEach((s,i)=>{
+    const a=actorOf(s); let tag, inner=''; const isLink = s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow';
+    if(s.kind==='gateway') tag='exclusiveGateway';
+    else if(s.kind==='sub') tag='subProcess';
+    else if(s.kind==='throw'){ tag='intermediateThrowEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
+    else if(s.kind==='mthrow'){ tag='intermediateThrowEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
+    else if(s.kind==='catch'){ tag='intermediateCatchEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
+    else if(s.kind==='end'||s.kind==='terminate'){ tag='endEvent'; if(s.kind==='terminate') inner='<bpmn:terminateEventDefinition id="T'+i+'_ted"/>'; }
+    else tag=ACTORS.find(x=>x.key===a).tag;
+    refs[a].push('T'+i);
+    const stepId = s.llmId || `${def.num}-${String(i+1).padStart(2,'0')}`;   // LLM nodes carry an LLM<X> id instead of the ND-NN-NN step id
+    els.push(`<bpmn:${tag} id="T${i}" name="${esc(stepId+'\n'+s.n)}">${io('T'+i)}${inner}</bpmn:${tag}>`);  // every node shows its ID + name (events included)
+  });
+  if(!def.noEnd) els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}">${io('E')}</bpmn:endEvent>`);
+  if(def.end2) els.push(`<bpmn:endEvent id="E2" name="${esc(def.end2.name)}">${io('E2')}</bpmn:endEvent>`);
+  const fl = edges.map((e,k)=>`<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${e.label?` name="${esc(e.label)}"`:''}/>`);
+  const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${a.name}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
+
+  // DI shapes
+  const di=[];
+  di.push(`<bpmndi:BPMNShape id="Pool_di" bpmnElement="PoolS" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`);
+  lanesUsed.forEach(a=>di.push(`<bpmndi:BPMNShape id="${a.id}_di" bpmnElement="${a.id}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${bandTop[a.key]}" width="${laneW}" height="${laneH[a.key]}"/></bpmndi:BPMNShape>`));
+  { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  if(def.start2){ const g=G('S2'); di.push(`<bpmndi:BPMNShape id="S2_di" bpmnElement="S2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'', marker=s.kind==='gateway'?' isMarkerVisible="true"':'';
+    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate';
+    const lbl = s.kind==='gateway'
+        ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
+                                     : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
+                : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`  // bottom-center (id below the diamond)
+                : `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-32}" width="90" height="26"/></bpmndi:BPMNLabel>`)  // lane: above the diamond, clear of horizontal branches
+      : ev?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${s.lblPos==='top'?g.top-34:g.bottom+4}" width="100" height="${s.lblPos==='top'?28:14}"/></bpmndi:BPMNLabel>`:'';
+    di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}${marker}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
+  if(!def.noEnd){ const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+  if(def.end2){ const g=G('E2'); di.push(`<bpmndi:BPMNShape id="E2_di" bpmnElement="E2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
+
+  // edges — lane-mode router keeps every waypoint inside the pool, staggers sibling branches,
+  // and runs cross-lane hops in the target lane's top margin (never through node rows or over the pool top)
+  const laneKeyByRow = (lanesUsed||[]).map(a=>a.key);
+  const bandTopOf = r => bandTop[laneKeyByRow[r]] ?? poolY;
+  const outBy={}; edges.forEach(e=>{ (outBy[e.f]=outBy[e.f]||[]).push(e.t); });
+  // anchor a point on a node's border: side s∈{t,r,b,l} at fraction d (TOK.dock = ¼·½·¾)
+  const dockPt=(g,sd,d)=> sd==='t'?[g.left+g.w*d,g.top] : sd==='b'?[g.left+g.w*d,g.bottom] : sd==='l'?[g.left,g.top+g.h*d] : [g.right,g.top+g.h*d];
+  const stubOut=(p,sd,k)=> sd==='t'?[p[0],p[1]-k]: sd==='b'?[p[0],p[1]+k]: sd==='l'?[p[0]-k,p[1]]:[p[0]+k,p[1]];
+  function dockRoute(a,sa,b,sb){                                       // orthogonal connector between two directed dock points
+    const K=TOK.dockStub, a1=stubOut(a,sa,K), b1=stubOut(b,sb,K);
+    if(Math.abs(a1[0]-b1[0])<2 || Math.abs(a1[1]-b1[1])<2) return [a,a1,b1,b];
+    const horizFirst = sa==='l'||sa==='r';
+    const corner = horizFirst?[b1[0],a1[1]]:[a1[0],b1[1]];
+    return [a,a1,corner,b1,b];
+  }
+  edges.forEach((e,k)=>{
+    const s=G(e.f), t=G(e.t); let wp;
+    const sameRow=Math.abs(s.cy-t.cy)<6, sameCol=Math.abs(s.cx-t.cx)<6;
+    const sibs=outBy[e.f], bi=sibs.indexOf(e.t), bn=sibs.length;       // fan-out index for this branch
+    const stag = bn>1 ? (bi-(bn-1)/2)*TOK.channelStep : 0;             // stagger siblings apart
+    if(e.from && e.to){                                                // explicit dock anchors (side + fraction) → deterministic docking
+      const fs=e.from.s, ts=e.to.s;
+      if((fs==='l'||fs==='r') && (ts==='t'||ts==='b')){                // shortest L: leave horizontally, run to the target's column, one turn into its top/bottom
+        const ax=fs==='l'?s.left:s.right, sy=e.from.d!=null?s.top+s.h*e.from.d:s.cy, ty=ts==='b'?t.bottom:t.top;
+        wp=[[ax,sy],[t.cx,sy],[t.cx,ty]];
+      } else if((fs==='t'||fs==='b') && (ts==='l'||ts==='r')){         // shortest L: leave at the from-dock x, run to the target's row, one turn into its side
+        const sx=e.from.d!=null?s.left+s.w*e.from.d:s.cx, sy=fs==='b'?s.bottom:s.top, tx=ts==='r'?t.right:t.left;
+        wp=[[sx,sy],[sx,t.cy],[tx,t.cy]];
+      } else wp = dockRoute(dockPt(s,fs,e.from.d??0.5), fs, dockPt(t,ts,e.to.d??0.5), ts);
+    } else if(grid){
+      if(e.enter==='top'){ const ex=t.cx<s.cx?s.left:s.right; wp=[[ex,s.cy],[t.cx,s.cy],[t.cx,t.top]]; }
+      else if(sameRow) wp = t.cx>=s.cx ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+      else if(sameCol) wp = t.cy>=s.cy ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
+      else if(t.cx>=s.cx){ const mx=(s.cx+t.cx)/2; wp=[[s.right,s.cy],[mx,s.cy],[mx,t.cy],[t.left,t.cy]]; }
+      else { const mx=(s.cx+t.cx)/2; wp=[[s.left,s.cy],[mx,s.cy],[mx,t.cy],[t.right,t.cy]]; }
+    } else {
+      const drow=t.row-s.row, dcol=t.col-s.col;
+      if(e.enter==='right'){                                          // back-edge → arc over the top, drop in from the target's right side
+        const yL=bandTopOf(s.row)+TOK.loopInset, xR=t.right+TOK.loopInset, sx=s.cx+stag;
+        wp=[[sx,s.top],[sx,yL],[xR,yL],[xR,t.cy],[t.right,t.cy]];
+      } else if(e.enter==='top'){                                     // up-edge → into the target lane's top margin, drop into target top-center
+        const yCh=bandTopOf(t.row)+TOK.laneTopMargin, sx=s.cx+stag;
+        wp=[[sx,s.top],[sx,yCh],[t.cx,yCh],[t.cx,t.top]];
+      } else if(sameRow && dcol<0){                                   // backward same-lane → straight (cleanest; arrives on the target's right)
+        wp=[[s.left,s.cy],[t.right,t.cy]];
+      } else if(drow===0){                                            // same lane forward → straight
+        wp = dcol>=0 ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
+      } else if(sameCol){                                             // straight vertical between lanes
+        wp = drow>0 ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
+      } else {                                                        // cross-lane hop → exit sideways toward target (never up through the source column), turn at the target column, enter top/bottom
+        const ey=s.cy+stag, exX=dcol>0?s.right:s.left, enterY=drow>0?t.top:t.bottom;
+        wp=[[exX,ey],[t.cx,ey],[t.cx,enterY]];
+      }
+    }
+    // label at the midpoint of the edge's middle segment, offset off the line — diverging branches never share an anchor
+    let lbl='';
+    if(e.label){
+      let lx,ly;
+      if(e.vlabel){                                              // vertical label beside its line, hugging the gateway (source), letter-bottoms toward the line (rotated post-render)
+        const lineX=wp[0][0], above=t.cy<s.cy, cx2=lineX+12;
+        const cy2 = above ? s.top-26 : s.bottom+40;              // repair: just above the gateway · halt: below the bottom-centre id label
+        lx=cx2-32; ly=cy2-7;
+      } else if(e.labelAt==='start'){                            // hug the source: sit at the start of the first long run after the gateway
+        const a=wp.length>3?wp[1]:wp[0], b=wp.length>3?wp[2]:wp[1], horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
+        lx=horiz?(a[0]<b[0]?a[0]+TOK.labelGap:a[0]-26-TOK.labelGap):a[0]+TOK.labelGap; ly=horiz?a[1]-16:a[1]+TOK.labelGap;
+      } else {
+        const i0=Math.floor((wp.length-1)/2), a=wp[i0], b=wp[i0+1];
+        const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2, horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
+        lx=horiz?mx-26:mx+TOK.labelGap; ly=horiz?my-16:my-7;
+      }
+      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="64" height="14"/></bpmndi:BPMNLabel>`;
+    }
+    di.push(`<bpmndi:BPMNEdge id="sf${k}_di" bpmnElement="sf${k}">${wp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}${lbl}</bpmndi:BPMNEdge>`);
+  });
+
+  // data objects — emitted from the precomputed token boxes; label on the far side so it never crosses the association
+  const dataEls=[], assoc=[];
+  dataBoxes.filter(Boolean).forEach(b=>{
+    const {i, d, at, W, H, out, dx, dy, p1, p2} = b;
+    const ref=`DOR${i}`, obj=`DO${i}`, aId=`asc${i}`;
+    dataEls.push(`<bpmn:dataObjectReference id="${ref}" name="${esc(d.name)}" dataObjectRef="${obj}"/>`);
+    dataEls.push(`<bpmn:dataObject id="${obj}"/>`);
+    const lblY = at==='above' ? dy-TOK.dataLabelH : dy+H+3;   // far side of the icon (away from the node)
+    assoc.push(`<bpmn:association id="${aId}" sourceRef="${out?'T'+i:ref}" targetRef="${out?ref:'T'+i}" associationDirection="One"/>`);
+    di.push(`<bpmndi:BPMNShape id="${ref}_di" bpmnElement="${ref}"><dc:Bounds x="${Math.round(dx)}" y="${Math.round(dy)}" width="${W}" height="${H}"/><bpmndi:BPMNLabel><dc:Bounds x="${Math.round(dx+W/2-50)}" y="${Math.round(lblY)}" width="100" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`);
+    const awp = out?[p1,p2]:[p2,p1];
+    di.push(`<bpmndi:BPMNEdge id="${aId}_di" bpmnElement="${aId}">${awp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}</bpmndi:BPMNEdge>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="D_sp" targetNamespace="http://tron/flow">
+  <bpmn:collaboration id="CollabS"><bpmn:participant id="PoolS" name="" processRef="SP"/></bpmn:collaboration>
+  <bpmn:process id="SP" isExecutable="false">
+    <bpmn:laneSet id="LS_S">${lanes}</bpmn:laneSet>
+    ${els.join('\n    ')}
+    ${dataEls.join('\n    ')}
+    ${fl.join('\n    ')}
+    ${assoc.join('\n    ')}
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Dg_sp"><bpmndi:BPMNPlane id="Pl_sp" bpmnElement="CollabS">
+    ${di.join('\n    ')}
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>`;
+}
+
+/* ════════════ RENDER ════════════ */
+// repaint node shapes after edges so sequence flows sit beneath the boxes
+// TODO(flow): edges still overlap some node boxes — appendChild reorder is partial.
+//   Real fix likely needs per-edge waypoint clipping to shape borders, or a
+//   separate connection layer. Deferred.
+function edgesBehind(viewer){
+  const er = viewer.get('elementRegistry');
+  er.forEach(el=>{
+    if(el.waypoints) return;                                   // skip connections
+    if(el.type==='bpmn:Participant' || el.type==='bpmn:Lane') return; // keep pool/lanes back
+    const g = er.getGraphics(el);
+    if(g && g.parentNode) g.parentNode.appendChild(g);         // move to front
+  });
+}
+// collapsed sub-process: bpmn-js centers the label but bottoms the [+] marker, leaving the
+// content low with empty top. Shift label + marker up as one unit so it reads centered.
+function recenterSubMarkers(viewer){
+  const er=viewer.get('elementRegistry');
+  er.filter(e=>e.type==='bpmn:SubProcess').forEach(e=>{
+    const vis=er.getGraphics(e).querySelector('.djs-visual'); if(!vis) return;
+    [...vis.children].forEach((ch,idx)=>{
+      if(idx===0) return;                                   // keep the box outline
+      const dy = idx===1 ? -12.5 : -7.5;                    // label up more, marker less → modest gap, still centered
+      ch.setAttribute('transform', `translate(0,${dy}) ${ch.getAttribute('transform')||''}`.trim());
+    });
+  });
+}
+// bpmn-js draws no divider between a lane's owner-name band and its content — add one,
+// inside the lane's own graphics group so it renders identically to the lane border
+function addLaneDividers(viewer){
+  const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg';
+  er.filter(e=>e.type==='bpmn:Lane').forEach(l=>{
+    const g=er.getGraphics(l); if(!g) return;
+    const ref=g.querySelector('rect'), cs=ref?getComputedStyle(ref):null;
+    const ln=document.createElementNS(NS,'line');
+    ln.setAttribute('x1',30); ln.setAttribute('y1',0);     // local coords (lane group is translated)
+    ln.setAttribute('x2',30); ln.setAttribute('y2',l.height);
+    ln.setAttribute('stroke', cs?cs.stroke:'rgb(34, 36, 42)');
+    ln.setAttribute('stroke-width', cs?parseFloat(cs.strokeWidth):1.5);
+    g.appendChild(ln);
+  });
+}
+// keep the viewport inside the diagram bounds (no infinite canvas)
+function clampVB(canvas){
+  const vb=canvas.viewbox(), inner=vb.inner; let {x,y,width,height}=vb;
+  x = width>=inner.width  ? inner.x-(width-inner.width)/2   : Math.min(Math.max(x,inner.x), inner.x+inner.width-width);
+  y = height>=inner.height? inner.y-(height-inner.height)/2 : Math.min(Math.max(y,inner.y), inner.y+inner.height-height);
+  canvas.viewbox({x,y,width,height});
+}
+function fitNow(viewer){ const c=viewer.get('canvas'); c.zoom('fit-viewport','auto'); c.zoom(c.zoom()*0.9); viewer._minScale=c.zoom(); clampVB(c); }
+function attachPanZoom(viewer, sel, ctlHostSel){
+  if(viewer._panzoom) return; viewer._panzoom=true;
+  const canvas=viewer.get('canvas'), c=document.querySelector(sel);
+  c.style.position='relative'; c.style.cursor='grab';
+  const min=()=>viewer._minScale||0.05, max=()=>(viewer._minScale||0.2)*6;
+  const setZoom=s=>{ s=Math.min(Math.max(s,min()),max()); canvas.zoom(s); clampVB(canvas); };
+  const ctl=document.createElement('div'); ctl.className='zoomctl';
+  ctl.innerHTML='<button data-z="in">+</button><button data-z="out">−</button><button data-z="fit">⤢</button>';
+  const host=document.querySelector(ctlHostSel); host.insertBefore(ctl, host.firstChild);   // zoom sits first in the header control cluster
+  ctl.addEventListener('click',e=>{ const z=e.target.dataset.z; if(!z)return;
+    if(z==='fit') fitNow(viewer); else setZoom(canvas.zoom()*(z==='in'?1.25:0.8)); });
+  c.addEventListener('wheel',e=>{ e.preventDefault(); setZoom(canvas.zoom()*(e.deltaY<0?1.12:0.89)); },{passive:false});
+  let drag=false;
+  c.addEventListener('mousedown',e=>{ if(e.target.closest('.zoomctl'))return; drag=true; c.style.cursor='grabbing'; });
+  window.addEventListener('mouseup',()=>{ if(drag){drag=false; c.style.cursor='grab';} });
+  c.addEventListener('mousemove',e=>{ if(!drag)return; canvas.scroll({dx:e.movementX,dy:e.movementY}); clampVB(canvas); });
+}
+// rotate marked edge labels (vlabel) to vertical, around their own centre — for labels that sit beside a vertical line
+function rotateVLabels(viewer, def){
+  const reg=viewer.get('elementRegistry');
+  (def.edges||[]).forEach((e,k)=>{
+    if(!e.vlabel) return;
+    const lbl=reg.get('sf'+k+'_label'); if(!lbl) return;
+    const gfx=reg.getGraphics(lbl); if(!gfx) return;
+    let bb; try{ bb=gfx.getBBox(); }catch(_){ return; }
+    const cx=bb.x+bb.width/2, cy=bb.y+bb.height/2, tr=gfx.getAttribute('transform')||'';
+    gfx.setAttribute('transform', (tr?tr+' ':'')+`rotate(90 ${cx} ${cy})`);  // letter-bottoms face the line
+  });
+}
+let ovViewer, ovStack=[], ovCurrent=null;
+function openFlow(key){ if(FLOW[key]){ ovStack.push(key); renderFlow(); } }
+function ovBack(){ ovStack.pop(); if(ovStack.length===0) closeOv(); else renderFlow(); }
+function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); }
+async function renderFlow(){
+  const key=ovStack[ovStack.length-1], def=FLOW[key]; ovCurrent=def;
+  document.getElementById('ovhead').innerHTML = headBar({num:def.num, name:def.name, back:true});
+  document.getElementById('ov').classList.add('open');
+  if(!ovViewer){
+    ovViewer = new BpmnJS({ container:'#ovcanvas' });
+    ovViewer.get('eventBus').on('element.click', e=>{
+      const m=/^T(\d+)$/.exec(e.element.id); if(!m) return;
+      const st=ovCurrent.steps[+m[1]]; if(st && st.opens) openFlow(st.opens);
+    });
+  }
+  await ovViewer.importXML(subXML(def));
+  const canvas=ovViewer.get('canvas');
+  def.steps.forEach((s,i)=>{
+    if(s.kind==='sub') canvas.addMarker('T'+i,'has-sub');
+    else { const a=s.actor||'det'; if(a!=='det') canvas.addMarker('T'+i,a); }
+  });
+  edgesBehind(ovViewer);
+  addLaneDividers(ovViewer);
+  recenterSubMarkers(ovViewer);
+  rotateVLabels(ovViewer, def);
+  fitNow(ovViewer);
+  attachPanZoom(ovViewer,'#ovcanvas','#ovctl');
+}
+document.getElementById('ov').addEventListener('click', e=>{ if(e.target.id==='ov') closeOv(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOv(); });
+
+// annotations panel — lazy-loads the flow notes on first open, slides in from the right
+function toggleNotes(force){
+  const p=document.getElementById('notes');
+  const open = force===undefined ? !p.classList.contains('open') : force;
+  if(open){ const f=document.getElementById('notes-frame'); if(!f.getAttribute('src')) f.setAttribute('src','flow-description.html'); }
+  p.classList.toggle('open', open);
+  document.body.classList.toggle('notes-open', open);
+}
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') toggleNotes(false); });
+
+// EXPERIMENT — render LLM nodes as the bpmn-io nyan cat (replaces the shape's visual; drops the label, like the real renderer).
+const NYAN_CAT_URL = 'https://raw.githubusercontent.com/bpmn-io/bpmn-js-nyan/main/lib/nyan/cat/cat.gif';
+function nyanify(viewer){
+  const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg', XL='http://www.w3.org/1999/xlink';
+  NODES.filter(n=>n.llm).forEach(n=>{
+    const g = er.getGraphics(n.id); if(!g) return;
+    const vis = g.querySelector('.djs-visual'); if(!vis) return;
+    while(vis.firstChild) vis.removeChild(vis.firstChild);
+    const barH = 26, catH = n.h - barH;                        // box is sized to the cat's 1.43 aspect + a 2-line label strip (LLM id + name)
+    const img = document.createElementNS(NS,'image');
+    img.setAttribute('x',0); img.setAttribute('y',0);
+    img.setAttribute('width',n.w); img.setAttribute('height',catH);
+    img.setAttribute('href', NYAN_CAT_URL);
+    img.setAttributeNS(XL,'href', NYAN_CAT_URL);
+    img.setAttribute('preserveAspectRatio','xMidYMid meet');   // whole cat, no crop (region matches the cat aspect)
+    vis.appendChild(img);
+    const mkText=(y,size,weight,txt)=>{ const t=document.createElementNS(NS,'text');
+      t.setAttribute('x', n.w/2); t.setAttribute('y', y); t.setAttribute('text-anchor','middle');
+      t.setAttribute('font-family','Space Grotesk, sans-serif'); t.setAttribute('font-size',size);
+      t.setAttribute('font-weight',weight); t.setAttribute('fill','#1C1917'); t.textContent=txt; vis.appendChild(t); };
+    mkText(n.h-15, '9', '700', n.llmId || n.id);               // LLM id on top
+    mkText(n.h-4, '10', '600', n.name);                        // descriptive name below
+  });
+}
+
+(async ()=>{
+  document.getElementById('corehead').innerHTML = headBar({name:'workflow'});   // same header component as the subs
+  layoutCore();                         // derive core geometry from the track grid (TOK is defined by now)
+  const core = new BpmnJS({ container:'#core' });
+  await core.importXML(coreXML());
+  const canvas = core.get('canvas');
+  NODES.filter(n=>n.sub).forEach(n=> canvas.addMarker(n.id,'has-sub'));
+  // (LLM nodes are rendered as nyan cats below — no emerald class on the core)
+  edgesBehind(core);
+  addLaneDividers(core);
+  recenterSubMarkers(core);
+  nyanify(core);                        // EXPERIMENT: LLM nodes → nyan cat
+  fitNow(core);
+  attachPanZoom(core,'#core','#corectl');
+  core.get('eventBus').on('element.click', e=>{
+    const n = byId[e.element.id];
+    if(n && n.sub) openFlow(n.id);
+  });
+})();
+</script>
+</body>
+</html>

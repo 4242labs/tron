@@ -1,0 +1,55 @@
+name: Publish BPMN diagram to tron-www
+
+# SSoT: docs/workflow.html + docs/flow-description.html live HERE (4242labs/tron).
+# tron-www/public/workflow/ holds a GENERATED copy, served at tron.42labs.io/workflow/.
+# On a merge that touches either source file, open a sync PR on tron-www; merging it deploys (GitHub Pages).
+# See docs/bpmn.md. Requires secret WWW_SYNC_TOKEN — a token with write + PR access to 4242labs/tron-www.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/workflow.html
+      - docs/flow-description.html
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source (tron)
+        uses: actions/checkout@v4
+
+      - name: Checkout target (tron-www)
+        uses: actions/checkout@v4
+        with:
+          repository: 4242labs/tron-www
+          token: ${{ secrets.WWW_SYNC_TOKEN }}
+          path: tron-www
+
+      - name: Sync diagram into public/workflow/ (with generated banner)
+        run: |
+          set -euo pipefail
+          mkdir -p tron-www/public/workflow
+          banner='<!-- GENERATED from 4242labs/tron docs/ — DO NOT EDIT. Edit the source, then re-sync (see docs/bpmn.md). -->'
+          cp docs/workflow.html          tron-www/public/workflow/index.html
+          cp docs/flow-description.html  tron-www/public/workflow/flow-description.html
+          for f in index.html flow-description.html; do
+            sed -i "/<head>/a\\
+$banner" "tron-www/public/workflow/$f"
+          done
+
+      - name: Open sync PR on tron-www
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.WWW_SYNC_TOKEN }}
+          path: tron-www
+          branch: sync/bpmn-diagram
+          delete-branch: true
+          title: "Sync BPMN diagram from tron"
+          commit-message: "chore: sync BPMN diagram from 4242labs/tron"
+          body: |
+            Automated publish of `docs/workflow.html` + `docs/flow-description.html` from **4242labs/tron**.
+
+            This is a **generated copy** — do not hand-edit. Merging this PR deploys to
+            `tron.42labs.io/workflow/` (GitHub Pages, on push to `main`).
