@@ -107,7 +107,6 @@
     <div class="flowhead" id="ovhead"></div>
     <div class="topctl" id="ovctl">
       <button class="annotbtn" onclick="toggleNotes()">annotations</button>
-      <button class="x" onclick="closeOv()" aria-label="close">×</button>
     </div>
   </div></header>
   <div id="ovcanvas"></div>
@@ -125,90 +124,70 @@ function headBar({num, name, back}){
     + `<span class="nname">${esc(name)}</span>`;
 }
 /* ════════════ DATA MODEL ════════════ */
-// lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–3, ARCHITECT rows 4–5, REVIEWERS row 6.
+// lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–3, ARCHITECT row 4, REVIEWERS row 5.
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
   {id:'L_ENG', name:'ENGINEER',  rows:[0,0], y:0, h:0},
-  {id:'L_TRON',name:'TRON',      rows:[1,3], y:0, h:0},
-  {id:'L_ARCH',name:'ARCHITECT', rows:[4,5], y:0, h:0},
-  {id:'L_REV', name:'REVIEWERS', rows:[6,6], y:0, h:0},
+  {id:'L_TRON',name:'TRON',      rows:[1,2], y:0, h:0},
+  {id:'L_ARCH',name:'ARCHITECT', rows:[3,3], y:0, h:0},
+  {id:'L_REV', name:'REVIEWERS', rows:[4,4], y:0, h:0},
 ];
+const SHOW_EDGE_LABELS = false;         // edge labels are implicit (docs only) — kept OFF the canvas for a clean diagram
 const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
 let LANE_X = 190, LANE_W = 1310;        // computed by layoutCore()
 
 // CORE NODES — placed on a track grid by (col,row). Same col → shared centre X (vertical alignment);
 // same row → shared centre Y. Geometry (x/y) is derived in layoutCore(); only col/row/size live here.
 const NODES = [
-  // ── ENGINEER lane · row 0 — Build → EX ──
-  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_ENG',  col:1, row:0, w:36, h:36, lblOnly:true},   // fleet intake catch (workers + architect + reviewers); writes the HOPPER store — does NOT trigger PULSE (dashed message flows from agent pools still TODO)
-  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_ENG',  col:2, row:0, w:50, h:56, lblOnly:true},   // durable sidecar store: agents drop here, PULSE drains it on its own cadence at 02-12 (pull, not push)
-  {id:'ND-11', kind:'task',  name:'Build',          lane:'L_ENG',  col:4, row:0, w:104,h:89, llm:true, llmId:'LLM-11'},
-  {id:'EX',    kind:'xor',   name:'',               lane:'L_ENG',  col:5, row:0, w:48, h:48},   // worker-outcome split → done / wall
+  // ── ENGINEER lane · row 0 — PROJECT DOCS · ENGINEER cat · INBOX (right of cat) ──
+  {id:'PD3',   kind:'datastore',name:'Project Docs',lane:'L_ENG',  col:2, row:0, w:50, h:56, lblOnly:true, lblAbove:true},   // engineer's Project Docs (same column as PULSE) — read by ENGINEER + PULSE
+  {id:'ND-11', kind:'task',  name:'ENGINEER',       lane:'L_ENG',  col:4, row:0, w:104,h:89, llm:true, llmId:'LLM-11', sub:'ENGINEER'},   // cat kept; clickable → opens the ENGINEER sub (FLOW['ND-11'])
+  {id:'EIN',   kind:'mcatch', name:'ENGINEER INBOX',lane:'L_ENG',  col:5, row:0, w:36, h:36, lblOnly:true},   // engineer's message-catch inbox — right of the cat
 
-  // ── TRON lane · rows 1–4 ──
-  // row 1 — engineer-outcome row: DONE-gate (done) · Escalate → Apply decision (wall), all straight under EX ; OPERATOR inbox catch sits here (col 3)
-  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:3, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel, off the fleet intake → PARLEY handler (ND-18)
-  {id:'ND-04', kind:'task',  name:'DONE-gate',      lane:'L_TRON', col:5, row:1, w:110,h:56},   // straight below EX; no exit yet
-  {id:'ND-06', kind:'task',  name:'Escalate',       lane:'L_TRON', col:6, row:1, w:100,h:56},
-  {id:'ND-07', kind:'task',  name:'Apply decision', lane:'L_TRON', col:7, row:1, w:120,h:56},
-  // row 2 — spine: Start → BOOTUP → PULSE → OPERATOR handler ; Release + pulse-throw tucked under the wall row
-  {id:'Start', kind:'start', name:'tron:start',     lane:'L_TRON', col:0, row:2, w:36, h:36},
+  // ── TRON lane · rows 1–2 ──
+  // row 1 — fleet intake + pulse triggers + session anchor + operator intake
+  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
+  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:1, w:50, h:56, lblOnly:true},   // TRON's durable store, right above ND-01; PULSE drains it on its cadence (pull)
+  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:3, row:1, w:36, h:36, lblOnly:true, lblAbove:true},   // session-end terminal (above SWITCHBOARD)
+  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-18, below)
+  // pulse triggers — parked in row 1 above PULSE, dock onto its top at ¼ / ¾ (special: don't size tracks)
+  {id:'TM1',   kind:'timer', name:'METRONOME',      lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¾ (cadence floor)
+  // row 2 — spine: Start → BOOTUP → PULSE → SWITCHBOARD → dispatch (ND-15)
+  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:2, w:36, h:36, lblOnly:true},
   {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:2, w:96, h:68, sub:'BOOTUP'},
   {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:2, w:96, h:68, sub:'PULSE'},
-  {id:'ND-18', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:3, row:2, w:96, h:68, sub:'PARLEY'},   // operator-message handler — fed by OPERATOR INTAKE; own channel, off PULSE
-  {id:'ND-10', kind:'task',  name:'CAST OFF',       lane:'L_TRON', col:6, row:2, w:96, h:56},   // under ND-06
-  {id:'TH1',   kind:'throw', name:'pulse',          lane:'L_TRON', col:7, row:2, w:36, h:36},   // under ND-07
-  // pulse triggers — parked in row 1 above PULSE, dock onto its top at ¼ / ¾ (special: don't size tracks)
-  {id:'TM1',   kind:'timer', name:'METRONOME',      lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¼ (cadence floor)
-  {id:'CA1',   kind:'catch', name:'pulse',          lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¾ (pulse event; catches TH1/TH2)
-  // row 3 — SWITCHBOARD → dispatch router (ND-15) ; session end
-  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:2, row:3, w:48, h:48, lblPos:'bl'},   // hub → label to the bottom-left quadrant, clear of its lines
-  {id:'ND-15', kind:'xor',   name:'',               lane:'L_TRON', col:4, row:3, w:48, h:48, lblPos:'bl'},   // dispatch router (TRON-owned): fans to worker (Build / ND-11, up) · reviewer (Review / ND-14, down) · architect (Scope / ND-12, right)
-  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:3, row:2, w:48, h:48, lblPos:'b'},   // work selector hub → dispatch or session end
+  {id:'ND-15', kind:'xor',   name:'',               lane:'L_TRON', col:4, row:2, w:48, h:48, lblPos:'b'},   // dispatch router → worker (up · ND-11) · reviewer (down · ND-14) · architect (right · ND-12)
+  {id:'ND-18', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — right of OPERATOR INTAKE; own channel, off PULSE
 
-  // ── ARCHITECT lane · rows 4–5 — Scope → converge → pulse ; Log Review on row 5 ──
-  {id:'ND-12', kind:'task',  name:'Scope block',    lane:'L_ARCH', col:5, row:4, w:120,h:100, llm:true, llmId:'LLM-12'},
-  {id:'ND-17', kind:'xor',   name:'',               lane:'L_ARCH', col:6, row:4, w:48, h:48, lblPos:'t'},   // converging: ND-12 + ND-13 → TH2
-  {id:'TH2',   kind:'throw', name:'pulse',          lane:'L_ARCH', col:7, row:4, w:36, h:36},
-  {id:'ND-13', kind:'task',  name:'Log Review',     lane:'L_ARCH', col:6, row:5, w:120,h:100, llm:true, llmId:'LLM-13'},   // under ND-17
-  {id:'ND-19', kind:'task',  name:'Confer',         lane:'L_ARCH', col:3, row:4, w:120,h:100, llm:true, llmId:'LLM-19'},   // architect called to communicate with agents (col of ND-18, row of LLM-12)
-  {id:'LOGSC', kind:'mcatch',name:'LOGS',           lane:'L_ARCH', col:7, row:5, w:36, h:36, lblOnly:true},   // logs catch (pairs with LOGS throw), under TH2
-  {id:'AIN',   kind:'mcatch',  name:'ARCHITECT INBOX', lane:'L_ARCH', col:1, row:4, w:36, h:36, lblOnly:true},   // under ND-01 (TBD wiring)
-  {id:'AHOP',  kind:'datastore',name:'ARCHITECT HOPPER',lane:'L_ARCH', col:2, row:4, w:50, h:56, lblOnly:true},   // under ND-02 (TBD wiring)
+  // ── ARCHITECT lane · row 3 — ONE row: ARCHITECT cat + PROJECT DOCS only (inbox/hopper/pulse live inside the sub) ──
+  {id:'ND-12', kind:'task',  name:'ARCHITECT',      lane:'L_ARCH', col:6, row:3, w:120,h:100, llm:true, llmId:'LLM-12', sub:'ARCHITECT'},   // cat kept; clickable → opens the ARCHITECT sub (FLOW['ND-12'])
+  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:5, row:3, w:50, h:56, lblOnly:true, lblAbove:true},   // same row as ARCHITECT; single Project Docs — read by ARCHITECT + reviewer
 
-  // ── REVIEWERS lane · row 6 ──
-  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:4, row:6, w:120,h:100, llm:true, llmId:'LLM-14'},   // same column as ND-15 → straight dispatch spine
-  {id:'PD1',   kind:'datastore',name:'Project Docs',lane:'L_REV',  col:3, row:6, w:50, h:56, lblOnly:true},   // reviewer reads Project Docs (col of ARCHITECT HOPPER, row of ND-14)
-  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:5, row:5, w:50, h:56, lblOnly:true},   // architect + log-review read Project Docs (under ND-12)
-  {id:'LOGST', kind:'mthrow',name:'LOGS',           lane:'L_REV',  col:5, row:6, w:36, h:36, lblOnly:true},   // logs throw (pairs with LOGS catch), under PROJECT DOCS (PD2)
+  // ── REVIEWERS lane · row 4 — reviewer cat (its inbox + flag/question loop live inside the REVIEW sub) ──
+  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:4, row:4, w:120,h:100, llm:true, llmId:'LLM-14', sub:'REVIEW'},   // cat kept; clickable → opens the REVIEW sub (FLOW['ND-14'])
 ];
 
 const FLOWS = [
   ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
-  ['TM1','ND-02','',{toTop:0.25}], ['CA1','ND-02','',{toTop:0.75}],   // timer + pulse event re-enter PULSE at its top
-  ['OPI','ND-18','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],          // operator inbox → OPERATOR handler (same column, straight drop)
-  ['ND-03','ND-15'], ['ND-03','End','session:end'],                   // SWITCHBOARD → dispatch router · session end
+  ['TM1','ND-02','',{toTop:0.75}],                                     // metronome timer → PULSE top-¾ (cadence floor)
+  ['OPI','ND-18','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],          // operator intake → PARLEY (right, straight)
+  ['ND-03','ND-15'], ['ND-03','End'],                                 // SWITCHBOARD → dispatch router · session end (label implicit)
   ['ND-15','ND-11','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],         // dispatch → worker Build (up the col-4 spine)
   ['ND-15','ND-14','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],         // dispatch → reviewer Review (down the col-4 spine)
-  ['ND-15','ND-12','',{from:{s:'r',d:0.5}, to:{s:'t',d:0.5}}],         // dispatch → architect Scope (right, then down)
-  ['ND-11','EX'],                                                      // Build → EX directly
-  ['EX','ND-04','done',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],        // EX → ND-04 straight down (same column)
-  ['EX','ND-06','wall',{from:{s:'r',d:0.5}, to:{s:'t',d:0.5}}],        // EX right → ND-06 top
-  ['ND-06','ND-07'], ['ND-07','TH1'],                                  // wall path → Apply decision → pulse
-  ['ND-10','TH1'],                                                     // Release → pulse (incoming still loose)
-
-  ['ND-12','ND-17'], ['ND-13','ND-17'], ['ND-17','TH2'],   // ND-12 + ND-13 converge at ND-17 → TH2
+  ['ND-15','ND-12','',{from:{s:'r',d:0.5}, to:{s:'t',d:0.5}}],         // dispatch → ARCHITECT (right, then down)
+  ['EIN','ND-11','',{from:{s:'l',d:0.5}, to:{s:'r',d:0.5}}],   // ENGINEER INBOX (right of cat) → ENGINEER (enters the cat's right side)
 ];
 
 // COMMS — non-enforcing connections (BPMN associations): communication / data read that does NOT advance a token.
 // [source, target, {from,to}] — same fractional-dock anchors as FLOWS.
 const COMMS = [
   ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
-  ['HOPPER','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],  // PULSE reads (and may write on claim/drop) — undirected, the action is PULSE's; straight, same column; not a trigger
-  ['AIN','AHOP','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],        // ARCHITECT INTAKE writes ARCHITECT HOPPER (directed, straight, same row)
-  ['PD1','ND-14','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → Review (read, no arrow; same row)
-  ['PD2','ND-12','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}, undirected:true}],   // Project Docs → Scope block (read, no arrow; straight up)
-  ['PD2','ND-13','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → Log Review (read, no arrow; same row)
+  ['HOPPER','ND-02','',{from:{s:'r',d:0.5}, to:{s:'t',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER — undirected; right then down into ND-02 top-¼
+  ['PD3','ND-11','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ENGINEER (read; same row, straight right)
+  ['PD3','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight down into top-centre)
+  ['PD2','ND-12','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ARCHITECT (read; same row, straight right into the cat)
+  ['PD2','ND-14','',{from:{s:'b',d:0.5}, to:{s:'r',d:0.5}, undirected:true}],   // Project Docs → reviewer (read; from store bottom → cat right side)
 ];
 
 const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', mthrow:'intermediateThrowEvent', datastore:'dataStoreReference'};
@@ -237,10 +216,9 @@ function layoutCore(){
   rowC[0]=POOL.y+PAD+trackH[0]/2;
   for(let r=1;r<=maxRow;r++){ const gap = laneOfRow[r]===laneOfRow[r-1] ? GR : 2*PAD; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
   placed.forEach(n=>{ n.x=Math.round(colC[n.col]-n.w/2); n.y=Math.round(rowC[n.row]-n.h/2); });
-  // pulse triggers dock above PULSE at ¼ / ¾, parked in row 1
+  // metronome timer docks above PULSE at ¾, parked in row 1
   const P=byId['ND-02'];
-  byId['TM1'].x=Math.round(P.x+P.w*0.25-18); byId['TM1'].y=Math.round(rowC[1]-18);
-  byId['CA1'].x=Math.round(P.x+P.w*0.75-18); byId['CA1'].y=Math.round(rowC[1]-18);
+  byId['TM1'].x=Math.round(P.x+P.w*0.75-18); byId['TM1'].y=Math.round(rowC[1]-18);
   // lane bands tile the pool; every boundary sits PAD below the upper lane's last content row (== PAD above
   // the lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
   const rowBot=r=>rowC[r]+trackH[r]/2;
@@ -300,7 +278,7 @@ function coreXML(){
     return `<bpmn:${tag} id="${n.id}" name="${esc(label)}">${inc}${out}${def}</bpmn:${tag}>`;
   }).join('\n    ');
 
-  const seqEls = FLOWS.map(f=>`<bpmn:sequenceFlow id="${f[0]}__${f[1]}" sourceRef="${f[0]}" targetRef="${f[1]}"${f[2]?` name="${esc(f[2])}"`:''}/>`).join('\n    ');
+  const seqEls = FLOWS.map(f=>`<bpmn:sequenceFlow id="${f[0]}__${f[1]}" sourceRef="${f[0]}" targetRef="${f[1]}"${(SHOW_EDGE_LABELS && f[2])?` name="${esc(f[2])}"`:''}/>`).join('\n    ');
 
   const laneEls = LANES.map(l=>{
     const refs = NODES.filter(n=>n.lane===l.id && n.kind!=='datastore').map(n=>`<bpmn:flowNodeRef>${n.id}</bpmn:flowNodeRef>`).join('');   // data stores are not flow nodes
@@ -328,7 +306,7 @@ function coreXML(){
     const wp = pts.map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
     // edge label — offset OFF the line: above a horizontal run, to the right of a vertical run
     let lbl='';
-    if(f[2]){ const i0=Math.floor((pts.length-1)/2), a=pts[i0], b=pts[i0+1], horiz=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
+    if(SHOW_EDGE_LABELS && f[2]){ const i0=Math.floor((pts.length-1)/2), a=pts[i0], b=pts[i0+1], horiz=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
       const mx=(a.x+b.x)/2, my=(a.y+b.y)/2, lx=horiz?mx-30:mx+TOK.labelGap, ly=horiz?my-19:my-8;
       lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="60" height="14"/></bpmndi:BPMNLabel>`; }
     return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_di" bpmnElement="${f[0]}__${f[1]}">${wp}${lbl}</bpmndi:BPMNEdge>`;
@@ -431,10 +409,10 @@ const FLOW = {
     {n:'Route messages',    pos:[1,5]},                                                  // T14 02-15  tag → recipient (worker / architect / operator)
     {n:'Drive gates',       pos:[2,5]},                                                  // T15 02-16  merge: routed + skipped; may produce sends (unblock/review/reject)
     {n:'Drain triggers',    pos:[3,5]},                                                  // T16 02-17  operator commands; may produce sends
-    {n:'Deliver', kind:'mthrow', pos:[4,5]},                                             // T17 02-18  send each message to its recipient — direct, or to the recipient's hopper (id-tagged for dedupe)
+    {n:'<AGENT-ID> INBOX', kind:'mthrow', pos:[4,5]},                                    // T17 02-18  deliver: single message-throw — every message is addressed to a specific agent by ID (one throw may carry several, to several agents) → that agent's inbox
     {n:'Save state',        pos:[4,3], data:{name:'MANIFEST', dir:'out', at:'right'}},   // T18 02-19
     {n:'Drop sidecars',     pos:[3,3]},                                                  // T19 02-20  (effects persisted before sidecars dropped)
-    {n:'', kind:'inclusive', pos:[3,1], lblPos:'bottom'},                                // T20 02-21  skip-rebuild merge: first-tick (T0) + death-cap persist (T3) → straight into Detect done
+    {n:'', kind:'gateway', pos:[3,1], lblPos:'bottom'},                                  // T20 02-21  skip-rebuild merge (exclusive): first-tick (T0) XOR death-cap persist (T3) — mutually exclusive, only one ever arrives → straight into Detect done
   ],
     edges:[
       {f:'S',t:'T0'},
@@ -461,6 +439,84 @@ const FLOW = {
       {f:'T17',t:'T18'},                                       // deliver → save
       {f:'T18',t:'T19'},                                       // save → drop (persist before drop)
       {f:'T19',t:'E'},
+    ]},
+  // REVIEW — the reviewer cat's drill-down (opened from the core ND-14). Reviewer is dispatched per
+  // milestone, reads scope + Project Docs, reviews, forms a verdict, delivers the review to the architect.
+  // ENGINEER — a worker's build drill-down (core ND-11). Dispatched per block; builds, may consult the
+  // architect (peer: worker.question_peer), reports its outcome to TRON. Same agent pattern as architect/reviewer.
+  'ND-11': { num:'ND-11', name:'ENGINEER', owner:'✦  ENGINEER', grid:true, noEnd:true,
+    start:'', startData:{name:'PMT-ENG-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn (you-are agents/engineer.md + ID); prompt file in tron/pmt
+    startPos:[-1,0],
+    steps:[
+      {n:'ENGINEER INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // T0 11-01 — message catch (left); writes the hopper
+      {n:'ENGINEER HOPPER', kind:'store', pos:[-0.2,-1]},               // T1 — durable mailbox; above the build's ¼ point
+      {n:'<build>', kind:'task', pos:[0,0], data:{name:'<PMT-ENG-*>', dir:'in', at:'above', dock:0.75}},   // T2 11-03 — builds the block; reads hopper (¼) + per-task prompt (¾)
+      {n:'', kind:'gateway', pos:[1,0], lblPos:'top'},                  // T3 11-04 — report outcome, or consult the architect
+      {n:'FLEET INTAKE', kind:'mend', pos:[2,0]},                       // T4 11-05 — report outcome to TRON (done / wall → FLEET HOPPER; PULSE pulls it)
+      {n:'ASK ARCHITECT', kind:'send', pos:[1,1]},                      // T5 11-06 — SEND: peer consult to the architect (worker.question_peer)
+      {n:'ARCHITECT REPLY', kind:'receive', pos:[0,1], data:{name:'LOGS', store:true, dir:'out', at:'below', dock:0.75}},   // T6 11-07 — RECEIVE the reply → resume; consult logged to LOGS (side:observe)
+      {n:'no reply', kind:'boundary', interrupting:false, attachTo:'T6', pos:[0,1], lblPos:'bottom'},   // T7 11-08 — NON-interrupting timer: architect silent → escalate, build keeps waiting
+      {n:'FLEET INTAKE', kind:'mend', pos:[-0.2,2]},                    // T8 11-09 — message-end: no architect answer → contact TRON (FLEET HOPPER → operator)
+    ],
+    edges:[
+      {f:'S',t:'T2'},
+      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
+      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t',d:0.25}},   // HOPPER → build (read, no arrow, top-¼)
+      {f:'T2',t:'T3'},                                                  // build → gateway
+      {f:'T3',t:'T4'},                                                  // gateway → report
+      {f:'T3',t:'T5', from:{s:'b'}, to:{s:'t'}},                        // gateway → ASK ARCHITECT (down)
+      {f:'T5',t:'T6', from:{s:'l'}, to:{s:'r'}},                        // ask → reply (sync peer consult)
+      {f:'T6',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // reply → resume the build
+      {f:'T7',t:'T8', from:{s:'b'}, to:{s:'t'}},                        // architect silent → contact TRON (build keeps waiting)
+    ]},
+  // ARCHITECT — the persistent, forward-only consultant's drill-down (core ND-12). One architect, alive
+  // throughout (tron.md R1). Loops: receive work → do it (reads Project Docs) → report to TRON.
+  'ND-12': { num:'ND-12', name:'ARCHITECT', owner:'✦  ARCHITECT', grid:true, noEnd:true,
+    start:'', startData:{name:'PMT-ARCH-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn (you-are agents/architect.md + ID); prompt file in tron/pmt
+    startPos:[-1,0],
+    steps:[
+      {n:'ARCHITECT INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},  // T0 12-01 — message catch (left); writes the hopper
+      {n:'ARCHITECT HOPPER', kind:'store', pos:[-0.2,-1]},              // T1 — durable mailbox; sits above the work's ¼ point (prompt takes ¾)
+      {n:'<work>', kind:'task', pos:[0,0], data:{name:'<PMT-ARCH-*>', dir:'in', at:'above', dock:0.75}},   // T2 12-03 — the work; reads its hopper (top-¼) + a per-task prompt from tron/pmt (top-¾)
+      {n:'', kind:'gateway', pos:[1,0], lblPos:'top'},                  // T3 12-04 — report, or ask TRON
+      {n:'FLEET INTAKE', kind:'mthrow', pos:[2,0]},                     // T4 12-05 — report to TRON: ONE message → FLEET HOPPER; PULSE pulls it (agents never wake PULSE)
+      {n:'ASK TRON', kind:'send', pos:[1,1]},                           // T5 12-06 — SEND: sync question to TRON
+      {n:'TRON REPLY', kind:'receive', pos:[0,1]},                      // T6 12-07 — RECEIVE the reply → resume the work
+    ],
+    edges:[
+      {f:'S',t:'T2'},
+      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
+      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t',d:0.25}},   // HOPPER → work (read, no arrow, top-¼)
+      {f:'T2',t:'T3'},                                                  // work → gateway
+      {f:'T3',t:'T4'},                                                  // gateway → report
+      {f:'T3',t:'T5', from:{s:'b'}, to:{s:'t'}},                        // gateway → ASK TRON (down)
+      {f:'T5',t:'T6', from:{s:'l'}, to:{s:'r'}},                        // ask → reply (sync)
+      {f:'T6',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // reply → resume the work
+    ]},
+  'ND-14': { num:'ND-14', name:'REVIEW', owner:'✦  REVIEWER', grid:true,
+    start:'', startData:{name:'BRIEF', id:'PMT-01', dir:'in', at:'below'},   // BRIEF = TRON's dispatch object on spawn (you-are agents/<role>.md + ID + task); id PMT-01 = its prompt file
+    end:'ARCHITECT INBOX', endKind:'message',                           // end-event IS the send: message-end → delivers the review to the architect
+    startPos:[-1,0], endPos:[2,0],
+    steps:[
+      {n:'REVIEWER INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // T0 14-01 — message catch (left); writes the hopper
+      {n:'REVIEWER HOPPER', kind:'store', pos:[0,-1]},                  // T1 — durable mailbox; reviewer drains it (between inbox and the cat)
+      {n:'<type> Review', kind:'task', pos:[0,0]},                      // T2 14-02 — the reviewer does the review
+      {n:'Confer?', kind:'gateway', pos:[1,0], lblPos:'top'},           // T3 14-03 — mid-review: confer with the architect (flag / question / clarify), or done
+      {n:'Ask architect', kind:'send', pos:[1,1]},                      // T4 14-04 — SEND: direct sync consult to the persisted architect (under TRON observation)
+      {n:'Architect reply', kind:'receive', pos:[0,1], data:{name:'LOGS', store:true, dir:'out', at:'below', dock:0.75}},  // T5 14-05 — RECEIVE (blocks for the reply); logged to LOGS (dock ¾), no MANIFEST touch
+      {n:'no reply', kind:'boundary', interrupting:false, attachTo:'T5', pos:[0,1], lblPos:'bottom'},   // T6 14-06 — NON-interrupting timer: bounds the wait WITHOUT cancelling the review
+      {n:'FLEET INTAKE', kind:'mend', pos:[-0.2,2]},                    // T7 14-07 — message-end: escalate to TRON (FLEET HOPPER → operator); under the ¼ boundary, straight down
+    ],
+    edges:[
+      {f:'S',t:'T2'},
+      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
+      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t'}},   // HOPPER → review (read, no arrow)
+      {f:'T2',t:'T3'},
+      {f:'T3',t:'E',label:'done'},
+      {f:'T3',t:'T4',label:'confer', from:{s:'b'}, to:{s:'t'}},
+      {f:'T4',t:'T5', from:{s:'l'}, to:{s:'r'}},                         // ask → reply (sync)
+      {f:'T5',t:'T2', from:{s:'t'}, to:{s:'b'}},                         // reply received → resume the review
+      {f:'T6',t:'T7', from:{s:'b'}, to:{s:'t'}},                         // timeout → escalate (side-token; review keeps waiting)
     ]},
   'ND-01-08': { num:'ND-01-08', name:'SET SCOPE', start:'', end:'Scope locked', grid:true, endPos:[3,0],
     steps:[
@@ -599,7 +655,7 @@ function subXML(def){
     // with a fixed grid gap. Every column/row line is evenly pitched and element centres snap to them; a
     // gateway/event just sits centred in its full-size cell (no per-column tightening).
     const PAD=TOK.pad, BAND=TOK.laneBand;
-    const dimOf = s => { const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate'; return {w:gw?TOK.gw:ev?TOK.ev:STW, h:gw?TOK.gw:ev?TOK.ev:STH}; };
+    const dimOf = s => { const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', st=s.kind==='store'; return {w:st?TOK.storeW:gw?TOK.gw:ev?TOK.ev:STW, h:st?TOK.storeH:gw?TOK.gw:ev?TOK.ev:STH}; };
     const isAide = s => actorOf(s)==='aide', isOp = s => actorOf(s)==='op';
     const hasAide = def.steps.some(isAide), hasOp = def.steps.some(isOp) || def.steps.some(s=>s.data&&s.data.lane==='op');   // an op-bound data store opens the OPERATOR lane even with no op step
     const detRows = def.steps.filter(s=>!isAide(s)&&!isOp(s)).map(s=>s.pos[1]);
@@ -645,6 +701,7 @@ function subXML(def){
     geom['S']={...cell(startPos[0],startPos[1],TOK.ev,TOK.ev), ord:-1};
     if(def.start2) geom['S2']={...cell(startPos[0],startPos[1]+1,TOK.ev,TOK.ev), ord:-0.5};
     def.steps.forEach((s,i)=>{ const d=dimOf(s); geom['T'+i]={...cell(s.pos[0],rowOf(s), d.w, d.h), ord:i}; });
+    def.steps.forEach((s,i)=>{ if(s.kind==='boundary'){ const h=geom[s.attachTo]; if(h) geom['T'+i]={x:h.x+h.w*0.25-TOK.ev/2, y:h.y+h.h-TOK.ev/2, w:TOK.ev, h:TOK.ev, ord:i+0.5}; } });   // dock boundary on host's bottom-left border
     geom['E']={...cell(endPos[0],endPos[1],TOK.ev,TOK.ev), ord:1e6};
     if(def.end2) geom['E2']={...cell(def.end2.pos[0],def.end2.pos[1],TOK.ev,TOK.ev), ord:1e6+1};
     poolW = colC[maxCol]+trackW[maxCol]/2 + PAD - poolX;
@@ -667,12 +724,20 @@ function subXML(def){
     poolH=lanesUsed.length*LANE_H;
     const colOf=(s,i)=> s.col!==undefined ? s.col : i;
     geom['S']={x:SX0-STW/2, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:-0.5, ord:-1};
-    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
     const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
     if(!def.noEnd){ geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:maxC+1, ord:1e6}; }
     poolW = (def.noEnd ? SX0+maxC*SPITCHX+STW/2 : geom['E'].x+TOK.ev) +TOK.poolMargin-poolX;  // noEnd: stop at the last node, don't reserve an end column
   }
   const G=id=>{const g=geom[id];return {...g,cx:g.x+g.w/2,cy:g.y+g.h/2,top:g.y,bottom:g.y+g.h,left:g.x,right:g.x+g.w};};
+  // HARD RULE: a below/above data object snaps to the adjacent grid row's centre, so it aligns with the elements
+  // in that row (mirrors how right/left snap to the adjacent column). Returns the data box's TOP-y, or null (no row → gap fallback).
+  const snapRowY = (cy, dir, H) => {
+    if(!(grid && gridRowC)) return null;
+    const rs = Object.keys(gridRowC).map(Number).filter(r => dir>0 ? gridRowC[r] > cy+2 : gridRowC[r] < cy-2)
+      .sort((a,b)=> dir>0 ? gridRowC[a]-gridRowC[b] : gridRowC[b]-gridRowC[a]);
+    return rs.length ? gridRowC[rs[0]] - H/2 : null;
+  };
 
   // data objects — placed by tokens (size, gap, label), then the POOL/LANE grows to contain them so nothing crosses a border
   const dataBoxes = def.steps.map((s,i)=>{
@@ -682,9 +747,9 @@ function subXML(def){
       const cxv=gridColC[s.pos[0]], ry=gridRowC[gridOpRow], dyv=ry-H/2;
       return {i, d, at:'below', W, H, out, store:isStore, dx:cxv-W/2, dy:dyv, p1:[g.cx,g.bottom], p2:[cxv,dyv]};
     }
-    const df=d.dock??0.5, ay=g.top+g.h*df; let dx,dy,p1,p2;
-    if(at==='below'){ dx=g.cx-W/2; dy=g.bottom+TOK.dataGap; p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
-    else if(at==='above'){ dx=g.cx-W/2; dy=g.top-TOK.dataGap-H; p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
+    const df=d.dock??0.5, ay=g.top+g.h*df, ax=g.left+g.w*df; let dx,dy,p1,p2;   // df docks along the edge (vertical for l/r, horizontal for above/below)
+    if(at==='below'){ dx=ax-W/2; dy=snapRowY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[ax,g.bottom]; p2=[ax,dy]; }
+    else if(at==='above'){ dx=ax-W/2; dy=snapRowY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[ax,g.top]; p2=[ax,dy+H]; }
     else if(at==='right'){
       // column-aligned: centre on the next grid column (extend past the last column at grid pitch); lane mode keeps the simple gutter offset
       const nc = grid ? s.pos[0] : null;
@@ -698,6 +763,13 @@ function subXML(def){
     }
     return {i, d, at, W, H, out, store:isStore, dx, dy, p1, p2};
   });
+  if(def.startData){   // a data object attached to the START event (e.g. the BRIEF the agent receives on spawn)
+    const d=def.startData, g=G('S'), at=d.at||'below', isStore=!!d.store, W=isStore?TOK.storeW:TOK.dataW, H=isStore?TOK.storeH:TOK.dataH, out=d.dir!=='in';
+    let dx,dy,p1,p2;
+    if(at==='above'){ dx=g.cx-W/2; dy=snapRowY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
+    else { dx=g.cx-W/2; dy=snapRowY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
+    dataBoxes.push({node:'S', d, at, W, H, out, store:isStore, dx, dy, p1, p2});
+  }
   // grow the pool right/bottom to enclose every data box + its label, with a token margin (top/left use topBand room)
   dataBoxes.filter(Boolean).forEach(b=>{
     const labelBelow = b.at!=='above';
@@ -720,7 +792,7 @@ function subXML(def){
   const edges = def.edges || [{f:'S',t:'T0'}, ...Array.from({length:n-1},(_,i)=>({f:'T'+i,t:'T'+(i+1)})), {f:'T'+(n-1),t:'E'}];
   // incoming/outgoing flow refs per node (spec-required for connectivity; bpmn-js derives the same from sourceRef/targetRef, so the picture is unchanged)
   const inb={}, outb={};
-  edges.forEach((e,k)=>{ (inb[e.t]=inb[e.t]||[]).push(k); (outb[e.f]=outb[e.f]||[]).push(k); });
+  edges.forEach((e,k)=>{ if(e.assoc) return; (inb[e.t]=inb[e.t]||[]).push(k); (outb[e.f]=outb[e.f]||[]).push(k); });   // associations aren't sequence flows — no incoming/outgoing
   const io = id => (inb[id]||[]).map(k=>`<bpmn:incoming>sf${k}</bpmn:incoming>`).join('') + (outb[id]||[]).map(k=>`<bpmn:outgoing>sf${k}</bpmn:outgoing>`).join('');
   els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}">${io('S')}${startDef(def.startKind)}</bpmn:startEvent>`);
   if(def.start2) els.push(`<bpmn:startEvent id="S2" name="${esc(def.start2.name||'')}">${io('S2')}${startDef(def.start2.kind)}</bpmn:startEvent>`);
@@ -729,19 +801,29 @@ function subXML(def){
     if(s.kind==='gateway') tag='exclusiveGateway';
     else if(s.kind==='inclusive') tag='inclusiveGateway';
     else if(s.kind==='sub') tag='subProcess';
+    else if(s.kind==='send') tag='sendTask';
+    else if(s.kind==='receive') tag='receiveTask';
     else if(s.kind==='throw'){ tag='intermediateThrowEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
     else if(s.kind==='mthrow'){ tag='intermediateThrowEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
     else if(s.kind==='catch'){ tag='intermediateCatchEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
+    else if(s.kind==='mcatch'){ tag='intermediateCatchEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
+    else if(s.kind==='boundary'){ tag='boundaryEvent'; inner=`<bpmn:timerEventDefinition id="T${i}_ted"/>`; }   // timer on its host task (interrupting unless interrupting:false)
+    else if(s.kind==='mend'){ tag='endEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }   // message-end: send + terminate in one
     else if(s.kind==='end'||s.kind==='terminate'){ tag='endEvent'; if(s.kind==='terminate') inner='<bpmn:terminateEventDefinition id="T'+i+'_ted"/>'; }
+    else if(s.kind==='store') tag='dataStoreReference';
     else tag=ACTORS.find(x=>x.key===a).tag;
-    refs[a].push('T'+i);
+    if(s.kind!=='store') refs[a].push('T'+i);   // data stores are not flow nodes (not in a lane)
     const stepId = s.llmId || `${def.num}-${String(i+1).padStart(2,'0')}`;   // LLM nodes carry an LLM<X> id instead of the ND-NN-NN step id
-    els.push(`<bpmn:${tag} id="T${i}" name="${esc(stepId+'\n'+s.n)}">${io('T'+i)}${inner}</bpmn:${tag}>`);  // every node shows its ID + name (events included)
+    const attrs = s.kind==='boundary' ? ` attachedToRef="${s.attachTo}" cancelActivity="${s.interrupting===false?'false':'true'}"` : '';   // boundary docks to its host; non-interrupting keeps it running
+    const elName = s.kind==='store' ? s.n : (stepId+'\n'+s.n);   // a store shows just its name (no ND-NN id)
+    els.push(`<bpmn:${tag} id="T${i}"${attrs} name="${esc(elName)}">${s.kind==='store'?'':io('T'+i)}${inner}</bpmn:${tag}>`);  // nodes show ID + name; stores show name only, no flow refs
   });
-  if(!def.noEnd) els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}">${io('E')}</bpmn:endEvent>`);
+  if(!def.noEnd) els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}">${io('E')}${startDef(def.endKind)}</bpmn:endEvent>`);
   if(def.end2) els.push(`<bpmn:endEvent id="E2" name="${esc(def.end2.name)}">${io('E2')}</bpmn:endEvent>`);
-  const fl = edges.map((e,k)=>`<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${e.label?` name="${esc(e.label)}"`:''}/>`);
-  const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${a.name}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
+  const fl = edges.map((e,k)=> e.assoc
+    ? `<bpmn:association id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}" associationDirection="${e.undirected?'None':'One'}"/>`
+    : `<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${(SHOW_EDGE_LABELS && e.label)?` name="${esc(e.label)}"`:''}/>`);
+  const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${esc(def.owner && a.key==='det' ? def.owner : a.name)}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
 
   // DI shapes
   const di=[];
@@ -750,14 +832,15 @@ function subXML(def){
   { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
   if(def.start2){ const g=G('S2'); di.push(`<bpmndi:BPMNShape id="S2_di" bpmnElement="S2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
   def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'', marker=s.kind==='gateway'?' isMarkerVisible="true"':'';
-    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='end'||s.kind==='terminate';
+    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate';
     const lbl = (s.kind==='gateway'||s.kind==='inclusive')
         ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
                 : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`
                                      : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
                 : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`  // bottom-center (id below the diamond)
                 : `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-32}" width="90" height="26"/></bpmndi:BPMNLabel>`)  // lane: above the diamond, clear of horizontal branches
-      : ev?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${s.lblPos==='top'?g.top-34:g.bottom+4}" width="100" height="${s.lblPos==='top'?28:14}"/></bpmndi:BPMNLabel>`:'';
+      : ev?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${s.lblPos==='top'?g.top-34:g.bottom+4}" width="100" height="${s.lblPos==='top'?28:14}"/></bpmndi:BPMNLabel>`
+      : s.kind==='store'?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${g.bottom+3}" width="100" height="26"/></bpmndi:BPMNLabel>`:'';
     di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}${marker}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
   if(!def.noEnd){ const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
   if(def.end2){ const g=G('E2'); di.push(`<bpmndi:BPMNShape id="E2_di" bpmnElement="E2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
@@ -818,7 +901,7 @@ function subXML(def){
     }
     // label at the midpoint of the edge's middle segment, offset off the line — diverging branches never share an anchor
     let lbl='';
-    if(e.label){
+    if(SHOW_EDGE_LABELS && e.label){
       let lx,ly;
       if(e.vlabel){                                              // vertical label beside its line, hugging the gateway (source), letter-bottoms toward the line (rotated post-render)
         const lineX=wp[0][0], above=t.cy<s.cy, cx2=lineX+12;
@@ -841,13 +924,15 @@ function subXML(def){
   const dataEls=[], assoc=[];
   dataBoxes.filter(Boolean).forEach(b=>{
     const {i, d, at, W, H, out, store, dx, dy, p1, p2} = b;
-    const ref=`DOR${i}`, obj=`DO${i}`, aId=`asc${i}`;
-    if(store){ dataEls.push(`<bpmn:dataStoreReference id="${ref}" name="${esc(d.name)}"/>`); }   // cylinder (shared read store)
-    else { dataEls.push(`<bpmn:dataObjectReference id="${ref}" name="${esc(d.name)}" dataObjectRef="${obj}"/>`); dataEls.push(`<bpmn:dataObject id="${obj}"/>`); }
-    const lblY = at==='above' ? dy-TOK.dataLabelH : dy+H+3;   // far side of the icon (away from the node)
+    const sfx = b.node || i, nodeRef = b.node || ('T'+i);   // node='S' for start-event data; else the step
+    const ref=`DOR${sfx}`, obj=`DO${sfx}`, aId=`asc${sfx}`;
+    const dispName = esc((d.id?d.id+'\n':'')+d.name);   // ID on top (maps to the prompt file in the folder), name below
+    if(store){ dataEls.push(`<bpmn:dataStoreReference id="${ref}" name="${dispName}"/>`); }   // cylinder (shared read store)
+    else { dataEls.push(`<bpmn:dataObjectReference id="${ref}" name="${dispName}" dataObjectRef="${obj}"/>`); dataEls.push(`<bpmn:dataObject id="${obj}"/>`); }
+    const lblH = d.id?26:14, lblY = at==='above' ? dy-lblH : dy+H+3;   // far side of the icon (away from the node)
     const undirected = store && !out;   // store READ = undirected line (the read is the node's action; store is passive) — matches core HOPPER→PULSE
-    assoc.push(`<bpmn:association id="${aId}" sourceRef="${out?'T'+i:ref}" targetRef="${out?ref:'T'+i}" associationDirection="${undirected?'None':'One'}"/>`);
-    di.push(`<bpmndi:BPMNShape id="${ref}_di" bpmnElement="${ref}"><dc:Bounds x="${Math.round(dx)}" y="${Math.round(dy)}" width="${W}" height="${H}"/><bpmndi:BPMNLabel><dc:Bounds x="${Math.round(dx+W/2-50)}" y="${Math.round(lblY)}" width="100" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`);
+    assoc.push(`<bpmn:association id="${aId}" sourceRef="${out?nodeRef:ref}" targetRef="${out?ref:nodeRef}" associationDirection="${undirected?'None':'One'}"/>`);
+    di.push(`<bpmndi:BPMNShape id="${ref}_di" bpmnElement="${ref}"><dc:Bounds x="${Math.round(dx)}" y="${Math.round(dy)}" width="${W}" height="${H}"/><bpmndi:BPMNLabel><dc:Bounds x="${Math.round(dx+W/2-50)}" y="${Math.round(lblY)}" width="100" height="${lblH}"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`);
     const awp = out?[p1,p2]:[p2,p1];
     di.push(`<bpmndi:BPMNEdge id="${aId}_di" bpmnElement="${aId}">${awp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}</bpmndi:BPMNEdge>`);
   });
@@ -989,7 +1074,7 @@ function toggleNotes(force){
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') toggleNotes(false); });
 
 // EXPERIMENT — render LLM nodes as the bpmn-io nyan cat (replaces the shape's visual; drops the label, like the real renderer).
-const NYAN_CAT_URL = 'https://raw.githubusercontent.com/bpmn-io/bpmn-js-nyan/main/lib/nyan/cat/cat.gif';
+const NYAN_CAT_URL = 'nyan-cat.gif';   // vendored locally (was raw.githubusercontent.com — remote fetch per cat was the load-time hit)
 function nyanify(viewer){
   const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg', XL='http://www.w3.org/1999/xlink';
   NODES.filter(n=>n.llm).forEach(n=>{
