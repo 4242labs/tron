@@ -39,6 +39,10 @@ templates:
     channel: worker
     slots: [type]
     text: "[TRON]  Architect — a {type} review just completed. Turn its findings into upcoming work. Forward only — never reopen what's done."
+  arch.triage:
+    channel: worker
+    slots: [detail]
+    text: "[TRON]  Architect — I can't place this: {detail}. Sort it: solvable as upcoming work? Scope it forward. Truly the operator's call? Say so and I'll raise it. I don't guess on flow."
   spawn.reviewer:
     channel: worker
     slots: [worker_id, count]
@@ -69,6 +73,10 @@ templates:
     channel: terminal
     slots: [count]
     text: "[TRON]  Reviewer scheduled over the last {count} blocks. Brace yourselves."
+  terminal.halt_bootup:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  Can't boot — trunk's unreachable. {detail}. Nothing to supervise on a dead trunk. End of line."
 
   # escalation (operator / tg channels)
   escalate.wall:

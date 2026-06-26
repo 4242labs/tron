@@ -34,12 +34,13 @@ tags:                          # REQUIRED, map of <tag> -> action
 # ── Invalid-output policy (a judgment tool that won't validate) ─────
 invalid_output:                # REQUIRED
   max_retries: <int>           # bounded retries before giving up
-  on_exhaustion: <trigger>     # what fires when retries are spent (e.g. escalate via wall:raised:<block>)
+  on_exhaustion: <trigger>     # what fires when retries are spent (e.g. -> "*" unclassified -> architect)
 
-# ── Judgment tools (the only LLM calls; schema-in / schema-out) ────
+# ── Judgment tools (the only LLM call; schema-in / schema-out) ─────
 # Output is always a tag + structured slots, never free prose to the flow.
 tools:                         # REQUIRED, map of <tool> -> { in: [...], out: [...] }
   <tool>: { in: [<field>, ...], out: [<field>, ...] }
-  # canon set: classify_message (cheap), assess_wall (strong).
+  # canon set: classify_message (cheap) — ONE judgment only (assess_wall retired: an
+  # unclassifiable input routes to the architect, who steers it, not the LLM).
   # NOT tools by design: review verdicts (milestone), findings-triage (architect skill),
   # stall detection (engine liveness side-system).

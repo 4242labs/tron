@@ -1,18 +1,18 @@
 """judge — the only place the engine calls an LLM (contracts §3, §4).
 
-The canon set is TWO bounded, typed questions:
+The canon set is ONE bounded, typed question:
   classify_message (cheap)  put an inbound worker/operator message into exactly one
                             tag from routing.yaml's closed enum (+ structured slots).
-  assess_wall (strong)      is an unexpected/ambiguous input actually the operator's
-                            problem? (the `*` SCRIPTS path).
 
 tron.md is the prompt context; the tool instruction names the decision; the model
 must return JSON in the tool's exact shape. The runner schema-validates every
 return; invalid output is retried (budget 2) then collapses to `unclassified`
--> the `*` SCRIPTS catch-all (which may wall). The LLM never sees the flow path
-and never returns free prose to the flow.
+-> the `*` SCRIPTS catch-all, which hands the input to the architect to sort.
+The LLM never sees the flow path and never returns free prose to the flow.
 
-NOT judgment tools, by design: review verdicts (review is a milestone), findings
+NOT judgment tools, by design: "is this the operator's problem?" (assess_wall —
+RETIRED; an unclassifiable input routes to the architect, who steers it — the LLM
+never makes a flow-steering call), review verdicts (review is a milestone), findings
 triage / fix scoping (the architect's log-review skill), stall detection (the
 engine's deterministic liveness sweep).
 
@@ -29,7 +29,7 @@ import util
 
 CHEAP = os.environ.get("TRON_MODEL_CHEAP", "claude-haiku-4-5")
 STRONG = os.environ.get("TRON_MODEL_STRONG", "claude-opus-4-8")
-TIER = {"classify_message": CHEAP, "assess_wall": STRONG}
+TIER = {"classify_message": CHEAP}
 
 _stub_cache = None
 _stub_idx = {}
@@ -74,15 +74,7 @@ def _v_classify(o, ctx):
     return None
 
 
-def _v_assess_wall(o, ctx):
-    if not isinstance(o.get("wall"), bool):
-        return "wall must be a bool"
-    if o.get("kind") not in ("backend", "ui", "operator-only", "external"):
-        return f"kind '{o.get('kind')}' invalid"
-    return None
-
-
-VALIDATORS = {"classify_message": _v_classify, "assess_wall": _v_assess_wall}
+VALIDATORS = {"classify_message": _v_classify}
 
 INSTRUCTIONS = {
     "classify_message":
@@ -90,10 +82,6 @@ INSTRUCTIONS = {
         "closed vocabulary (or `unclassified`). Pull any block id / reviewer type / "
         "operator decision into slots. Return JSON: "
         '{"tag": <tag>, "slots": {<pulled fields>}, "confidence": <0..1>}.',
-    "assess_wall":
-        "TOOL: assess_wall. Is this actually the operator's problem, or solvable? "
-        "Default solvable. Return JSON: "
-        '{"wall": <bool>, "kind": "backend|ui|operator-only|external", "rationale": <one line>}.',
 }
 
 

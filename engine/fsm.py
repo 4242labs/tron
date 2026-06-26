@@ -599,16 +599,13 @@ class Engine:
         self._end_session()
 
     def _h_scripts(self, m):
-        # `*` catch-all: log the unexpected input; ask assess_wall if it needs the operator.
+        # `*` catch-all: log the unexpected input and hand it to the architect to sort
+        # (solvable -> architect handles it; truly the operator's -> architect escalates).
+        # TRON makes NO flow-steering LLM judgment here (assess_wall retired).
         raw = m.get("_trigger", "*")
         text = m.get("detail", "")
         self.log("scripts", f"unmatched trigger '{raw}': {text[:160]}")
-        ok, verdict, _ = judge.call(
-            "assess_wall",
-            {"situation": text, "block_ctx": self.st.fsm, "project_operator_only": []},
-            self.ctx, self._max_retries)
-        if ok and verdict.get("wall"):
-            self.emit("escalate.unclassified", {"detail": text[:120] or raw})
+        self._triage_to_architect(text[:160] or raw)
         self._emit("pulse")
 
     # ── the DONE gate (realign §F): drive an agent through the canon 6-stage flow on EVIDENCE ──
@@ -697,6 +694,18 @@ class Engine:
         self.st.architect_queue.append({"kind": "forward", "block": block})
         self._pump_architect()
 
+    def _triage_to_architect(self, detail):
+        # Hand an unclassifiable input to the architect to sort. No architect online
+        # -> nobody can steer it but the operator, so escalate directly.
+        if any(j.get("kind") == "triage" and j.get("detail") == detail
+               for j in self.st.architect_queue):
+            return
+        if not self._architect():
+            self.emit("escalate.unclassified", {"detail": detail})
+            return
+        self.st.architect_queue.append({"kind": "triage", "detail": detail})
+        self._pump_architect()
+
     def _pump_architect(self):
         arch = self._architect()
         if not arch or arch.get("status") == "busy":
@@ -708,6 +717,8 @@ class Engine:
         sess = arch.get("session_id")
         if job["kind"] == "forward":
             self.emit("arch.forward", {"block": job["block"]}, worker_session=sess)
+        elif job["kind"] == "triage":
+            self.emit("arch.triage", {"detail": job.get("detail", "")}, worker_session=sess)
         else:
             self.emit("arch.log", {"type": job.get("type", "code")}, worker_session=sess)
         self.log("architect", f"dispatch {job}")

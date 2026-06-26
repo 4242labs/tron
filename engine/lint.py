@@ -27,7 +27,7 @@ CANON_TAGS = {
     "sweep.tick", "worker.stalled", "worker.dead",
     "unclassified",
 }
-CANON_TOOLS = {"classify_message", "assess_wall"}
+CANON_TOOLS = {"classify_message"}
 # TRON ships and requires NO agents — they are the project's (realign decision #11).
 # L13 therefore hardcodes no roster; it only checks that the roles TRON's OWN config
 # (cadence lenses, peer-consults) references resolve to a persona the project provides.

@@ -148,13 +148,13 @@ never free prose to the flow.
 | Tool | Input | Output | Called by |
 |:--|:--|:--|:--|
 | **`classify_message`** | `{text, sender:{kind:worker\|operator, id?, role?}}` | `{tag ∈ enum∪unclassified, slots:{…}, confidence:0..1}` | the engine on any inbound worker/operator/TG message |
-| **`assess_wall`** | `{situation, block_ctx, project_operator_only:[…]}` | `{wall:bool, kind:backend\|ui\|operator-only\|external, rationale}` | when a worker message is ambiguous wall-vs-solvable |
 
-**Tiering:** `classify_message` → cheap model; `assess_wall` → strong model. Wired in the engine (D2).
+**Tiering:** `classify_message` → cheap model. **One** judgment tool only. Wired in the engine (D2).
 
-**Not judgment tools, by design:** review verdicts (review is a milestone), findings-triage (→ the
-architect's `log-review` skill), and stall detection (→ the engine liveness side-system). These were
-LLM tools in the old model and are removed.
+**Not judgment tools, by design:** *"is this the operator's problem?"* (`assess_wall` — **retired**:
+an unclassifiable input routes to the architect, who steers it — TRON makes no second LLM call),
+review verdicts (review is a milestone), findings-triage (→ the architect's `log-review` skill), and
+stall detection (→ the engine liveness side-system). These were LLM tools in the old model and are removed.
 
 ---
 
@@ -165,8 +165,8 @@ The engine schema-validates every judgment-tool return.
 1. **Valid** → use it.
 2. **Invalid / malformed / out-of-enum tag** → retry the same call, appending the validation error.
    Budget: `invalid_output.max_retries` (default 2), read from `routing.yaml` by the engine.
-3. **Budget exhausted** → `unclassified` → the `*` SCRIPTS catch-all, which may escalate via
-   `assess_wall`. Raw outputs logged (`logs/invalid-output-{date}.log`).
+3. **Budget exhausted** → `unclassified` → the `*` SCRIPTS catch-all, which hands the input to the
+   architect to sort. Raw outputs logged (`logs/invalid-output-{date}.log`).
 
 TRON never guesses a flow decision from malformed output. An out-of-enum `tag` is itself a validation
 failure (the enum is closed in the tool schema).
@@ -253,7 +253,7 @@ Runs in `validate` / `doctor` (D3, implemented in `engine/lint.py`). A malformed
 - **L2** Inbound tag enum is closed (== the engine's known set) and `unclassified` maps to the `*` catch-all.
 - **L3** Total tag coverage: every tag action is exactly one of `{trigger, side, tick}`.
 - **L4** Every tag's `trigger` satisfies the grammar (2–3 legal segments, or `*`).
-- **L5** The judgment tools are exactly the canon two (`classify_message`, `assess_wall`), each with a
+- **L5** The judgment tools are exactly the canon one (`classify_message`), with a
   structured (non-prose) `out` list.
 - **L6** Invalid-output policy present: `max_retries` an int, `on_exhaustion` a grammar-valid trigger.
 - **L7** Every event-TABLE pattern satisfies the grammar.

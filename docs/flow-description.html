@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>TRON — Flow Notes</title>
+<title>TRON | 42labs</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
@@ -42,26 +44,33 @@
   .body details.node{background:var(--canvas-warm); margin:var(--sp-3) 0 0;}
   .body details.node summary{font-size:14px; padding:var(--sp-3) var(--sp-4);}
   .subhead{font-family:var(--font-heading); font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--mid-stone); margin:var(--sp-4) 0 var(--sp-2);}
+  li.grp{list-style:none; margin:var(--sp-2) 0 2px -1em; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--mid-stone);}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>TRON — <span class="accent">Flow Notes</span></h1>
   <p class="lead">Per-node detail that the diagrams intentionally leave out. The flow itself lives in
-    <a href="flow-core.html">flow-core.html</a> (core + drill-down sub-processes). IDs here match the
+    <a href="workflow.html">workflow.html</a> (core + drill-down sub-processes). IDs here match the
     diagrams (<code>ND-NN</code>, sub-steps <code>ND-NN-NN</code>). Sub-processes are folded inside
     their parent's card.</p>
 
   <div class="rule"><b class="k">Escalation invariant.</b> Anything outside the normal path is a wall:
-    TRON-DET detects it, <span class="llm">TRON-AIDE</span> informs the operator, the operator decides.
+    TRON-RELAY detects it, <span class="llm">TRON-AIDE</span> informs the operator, the operator decides.
     TRON never silently improvises a resolution.</div>
 
   <div class="rule"><b class="k">Transport is deterministic; content is free.</b> Any agent may message
     any other (agent↔agent) and <span class="llm">AIDE</span> may message the operator — but every
-    message rides the <b class="k">pipeline</b> (inbox → claim → classify → route → OUTBOX → deliver),
+    message rides the <b class="k">pipeline</b> (intake → hopper → claim → classify → route → deliver),
     never a direct side-channel. PULSE carries payloads <b class="k">opaquely</b>; the one classify call
     only <em>tags</em> a message, never reads or rewrites its body. The cost is latency (a message waits
     for the next tick); the answer to "faster" is a shorter pulse, not a back-door.</div>
+
+  <div class="rule"><b class="k">No OUTBOX — every message is sent.</b> There is no sender-side queue. A
+    produced message is <b class="k">delivered</b> straight to its recipient: <em>directly</em> to a present
+    receiver (e.g. the operator), or into the recipient's <b class="k">HOPPER</b> — the recipient-side durable
+    inbox (one message = one file). The hopper is the only buffer, and it is the recipient's, not the sender's;
+    crash-safety comes from writing the recipient's hopper, not from holding sends locally.</div>
 
   <div class="rule"><b class="k">Spawn vs Assign.</b> <b class="k">Spawn</b> = create an agent.
     <b class="k">Assign</b> = hand an existing agent its job (a block to a worker, a question-set to
@@ -70,95 +79,176 @@
   <h2>Core nodes</h2>
 
   <details class="node">
-    <summary><span class="nnum">ND-01</span> BOOTUP<span class="lane-tag">once · TRON-DET</span></summary>
+    <summary><span class="nnum">ND-01</span> BOOTUP<span class="lane-tag">once · TRON-RELAY</span></summary>
     <div class="body">
     <ul>
-      <li>Runs at every <code>tron start</code> — first run <em>and</em> every crash/restart. The spine is all TRON-DET; it <b class="k">forks on whether a run is already in progress</b>, then hands to <code>ND-02 PULSE</code>.</li>
+      <li>Runs at every <code>tron start</code> — first run <em>and</em> every crash/restart. The spine is all TRON-RELAY; it <b class="k">forks on whether a run is already in progress</b>, then hands to <code>ND-02 PULSE</code>.</li>
       <li><b class="k">ND-01-01 Spawn TRON-AIDE:</b> the operator-facing advisor boots first, ready for the gates or an escalation.</li>
       <li><b class="k">ND-01-02 Refresh trunk:</b> <code>git fetch</code> + <code>merge --ff-only</code> — read-only. TRON reads trunk; agents write it.</li>
       <li><b class="k">ND-01-03 Refresh PRs:</b> query the forge for open PRs (the other snapshot input — not in the git tree).</li>
-      <li><b class="k">ND-01-04 Build snapshot:</b> parse the pipeline doc + <code>blocks/*.md</code> + PRs into the <b class="k">snapshot</b> — TRON's disposable, rebuilt-every-tick view. Runs <em>before</em> the fork, so both exits hand PULSE a fresh snapshot.</li>
-      <li><b class="k">ND-01-05 Read MANIFEST:</b> probe the live <b class="k">MANIFEST</b> (TRON's durable run-memory — scope, counts, <b class="k">worker records incl. session handles</b>; a gitignored local file, not trunk). Present only while a run is in flight.</li>
-      <li><b class="k">ND-01-06 Resume?</b> (gateway) — MANIFEST present → <b class="k">resume</b>; absent → <b class="k">fresh</b>. A clean end archives the MANIFEST, so a leftover one means an interrupted run.</li>
-      <li><b class="k">Fresh path:</b> <b class="k">ND-01-07 Set scope</b> → <b class="k">ND-01-08 Set counts</b> → <b class="k">ND-01-09 Write MANIFEST</b> (the MANIFEST is born here).</li>
-      <li><b class="k">Resume path:</b> <b class="k">ND-01-10 Reconcile</b> loads the MANIFEST and brings it in line with reality — scope vs current pipeline, plus pinging each claimed agent. <b class="k">ND-01-11 Consistent?</b> → clean → Cap pool; irreconcilable → <code>ND-01-13 Resolve</code>.</li>
-      <li><b class="k">ND-01-12 Cap pool:</b> records the worker + architect concurrency ceiling. <b class="k">Bootup spawns no agents</b> — they are spawned reactively in <code>PULSE</code>, bounded by this cap.</li>
+      <li><b class="k">ND-01-04 Trunk fresh?</b> (gateway) — validate the fetch actually advanced <em>before</em> building: <b class="k">fresh</b> → Build; a transient failure → <b class="k">retry</b> the fetch (death-cap bounds the loop); a persistently dead trunk → <code>ND-01-17 Halt — trunk unreachable</code> (bootup can't proceed on stale trunk). No MANIFEST exists yet, so the halt emits its operator line <em>synchronously</em> on the terminal before terminating — the interactive operator is told why, never a silent death.</li>
+      <li><b class="k">ND-01-05 Build snapshot:</b> parse the pipeline doc + <code>blocks/*.md</code> + PRs into the <b class="k">snapshot</b> — TRON's disposable, rebuilt-every-tick view. Runs <em>before</em> the fork, so both exits hand PULSE a fresh snapshot.</li>
+      <li><b class="k">ND-01-06 Read MANIFEST:</b> probe the live <b class="k">MANIFEST</b> (TRON's durable run-memory — scope, counts, <b class="k">worker records incl. session handles</b>; a gitignored local file, not trunk). Present only while a run is in flight.</li>
+      <li><b class="k">ND-01-07 Resume?</b> (gateway) — MANIFEST present → <b class="k">resume</b>; absent → <b class="k">fresh</b>. A clean end archives the MANIFEST, so a leftover one means an interrupted run.</li>
+      <li><b class="k">Fresh path:</b> <b class="k">ND-01-08 Set scope</b> → <b class="k">ND-01-09 Set counts</b> → <b class="k">ND-01-10 Write MANIFEST</b> (the MANIFEST is born here).</li>
+      <li><b class="k">Resume path:</b> <b class="k">ND-01-11 Reconcile</b> loads the MANIFEST and brings it in line with reality — scope vs current pipeline, plus pinging each claimed agent. <b class="k">ND-01-12 Consistent?</b> → clean → Cap pool; irreconcilable → <code>ND-01-14 Resolve</code>.</li>
+      <li><b class="k">ND-01-13 Cap pool:</b> records the worker + architect concurrency ceiling. <b class="k">Bootup spawns no agents</b> — they are spawned reactively in <code>PULSE</code>, bounded by this cap.</li>
     </ul>
     <div class="subhead">Sub-processes</div>
 
     <details class="node">
-      <summary><span class="nnum">ND-01-07</span> SET SCOPE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
+      <summary><span class="nnum">ND-01-08</span> SET SCOPE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>An operator-input gate, three lanes. The whole conversation stays between <span class="llm">AIDE</span> and the operator; <b class="k">only a resolved, concrete set crosses to DET</b>.</li>
-        <li><b class="k">07-01 Assign TRON-AIDE</b> (DET): hands the scope question to AIDE.</li>
-        <li><b class="k">07-02 Ask scope</b> (AIDE) → <b class="k">07-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases).</li>
-        <li><b class="k">07-04 Resolved?</b> (AIDE gateway): does the answer resolve to a concrete block set? <b class="k">clarify</b> loops back to <em>Ask scope</em>. AIDE turns fuzzy prose into block ids before anything reaches DET.</li>
-        <li><b class="k">07-05 Validate scope</b> (DET): every id ∈ pipeline <em>and</em> dependencies satisfiable (each <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency is a hard fail</b>.</li>
-        <li><b class="k">07-06 Lock scope</b> (DET): ends the gate; done blocks already in scope are skipped.</li>
+        <li><b class="k">08-01 Assign TRON-AIDE</b> (DET): hands the scope question to AIDE.</li>
+        <li><b class="k">08-02 Ask scope</b> (AIDE) → <b class="k">08-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases). AIDE reads the <b class="k">Project Docs</b> store (git-tracked core files) to ground the dialogue — list available blocks/phases, map fuzzy prose → block ids.</li>
+        <li><b class="k">08-04 Resolved?</b> (AIDE gateway): does the answer resolve to a concrete block set? <b class="k">clarify</b> loops back to <em>Ask scope</em>. AIDE turns fuzzy prose into block ids before anything reaches DET.</li>
+        <li><b class="k">08-05 Validate scope</b> (DET): every id ∈ pipeline <em>and</em> dependencies satisfiable (each <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency or empty id-set is invalid → re-ask</b> (loops back to Ask scope). <b class="k">First run</b> (empty archive-history): an empty scope is legitimate — the architect hasn't authored yet — so it passes; a truly unscaffolded pipeline is an upstream concern (TRON never scaffolds).</li>
+        <li><b class="k">08-06 Lock scope</b> (DET): ends the gate; done blocks already in scope are skipped.</li>
       </ul></div>
     </details>
 
     <details class="node">
-      <summary><span class="nnum">ND-01-08</span> SET COUNTS<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
+      <summary><span class="nnum">ND-01-09</span> SET COUNTS<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>Same shape as SET SCOPE. Captures the two concurrency knobs written to the MANIFEST: <b class="k">worker_count</b> (engineers + reviewers share this pool) and <b class="k">architect_count</b> (dedicated, pool-excluded; the throughput knob).</li>
-        <li><b class="k">08-01 Assign TRON-AIDE</b> → <b class="k">08-02 Ask counts</b> → <b class="k">08-03 Answer counts</b>.</li>
-        <li><b class="k">08-04 Confirmed?</b> (AIDE gateway): <b class="k">hard floor ≥ 1 each</b> (<b class="k">revise</b> loops back below that), and <b class="k">advises</b> on unusual-but-valid counts, accepting on confirm.</li>
-        <li><b class="k">08-05 Validate counts → 08-06 Lock counts</b> (DET): only the confirmed set crosses.</li>
+        <li><b class="k">09-01 Assign TRON-AIDE</b> → <b class="k">09-02 Ask counts</b> (AIDE reads <b class="k">Project Docs</b>) → <b class="k">09-03 Answer counts</b>.</li>
+        <li><b class="k">09-04 Confirmed?</b> (AIDE gateway): <b class="k">hard floor ≥ 1 each</b> (<b class="k">revise</b> loops back below that), and <b class="k">advises</b> on unusual-but-valid counts, accepting on confirm.</li>
+        <li><b class="k">09-05 Validate counts</b> (DET): an invalid set (below floor / non-integer) is <b class="k">invalid → re-ask</b> (loops back to Ask counts). <b class="k">09-06 Lock counts</b>: only the confirmed, valid set crosses.</li>
       </ul></div>
     </details>
 
     <details class="node">
-      <summary><span class="nnum">ND-01-13</span> RESOLVE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
+      <summary><span class="nnum">ND-01-14</span> RESOLVE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
-        <li>Reached only from <code>ND-01-11 = conflict</code> — a resume whose MANIFEST can't reconcile against the current pipeline/fleet. Resolves <b class="k">entirely inside this sub — no exit to the parent</b>.</li>
-        <li><b class="k">13-01 Assign TRON-AIDE</b> → <b class="k">13-02 Brief + offer options</b> (AIDE: <em>repair / restart / halt</em>) → <b class="k">13-03 Decide</b> (OPERATOR).</li>
-        <li><b class="k">13-04 Choice?</b> (AIDE gateway): <b class="k">clarify</b> loops back to <em>Brief</em>, then <b class="k">proceed</b> to the split <b class="k">13-05</b>:</li>
-        <li><b class="k">repair → 13-06</b> (throw <code>→ 01-10</code>): the operator fixed the MANIFEST out-of-band; re-enter <b class="k">Reconcile</b> so the fix is re-validated, never trusted blind.</li>
-        <li><b class="k">restart → 13-07</b> (throw <code>→ 01-07</code>): discard, start clean at Set scope.</li>
-        <li><b class="k">halt → 13-08</b> (terminate): abandon the run. The live MANIFEST is <b class="k">archived</b> first, else the next start resumes back into the same conflict.</li>
-        <li><b class="k">OUTBOX:</b> on a resume-conflict there may be live workers, so the operator's decision can message them. RESOLVE writes those to the durable <b class="k">OUTBOX</b>; BOOTUP has no Deliver, so the <b class="k">first PULSE tick flushes them</b>. Same shared conversation skeleton as <code>ND-02-09</code>, different theme.</li>
+        <li>Reached only from <code>ND-01-12 = conflict</code> — a resume whose MANIFEST can't reconcile against the current pipeline/fleet. Resolves <b class="k">entirely inside this sub — no exit to the parent</b>.</li>
+        <li><b class="k">14-01 Assign TRON-AIDE</b> → <b class="k">14-02 Brief + offer options</b> (AIDE — reads <b class="k">Project Docs</b> to brief; offers <em>repair / restart / halt</em>) → <b class="k">14-03 Decide</b> (OPERATOR).</li>
+        <li><b class="k">14-04 Choice?</b> (AIDE gateway): <b class="k">clarify</b> loops back to <em>Brief</em>, then <b class="k">proceed</b> to the split <b class="k">14-05</b>:</li>
+        <li><b class="k">repair → 14-06</b> (link <code>repair</code> → catch at <b class="k">Reconcile</b>): the operator fixed the MANIFEST out-of-band; re-enter Reconcile so the fix is re-validated, never trusted blind.</li>
+        <li><b class="k">restart → 14-07</b> (link <code>restart</code> → catch at <b class="k">Set scope</b>): discard, start clean.</li>
+        <li><b class="k">halt → 14-08 Archive MANIFEST → 14-09</b> (terminate): the live MANIFEST is <b class="k">archived</b> before the terminate, else the next start resumes back into the same conflict.</li>
+        <li><b class="k">Sends:</b> on a resume-conflict there may be live workers, so the operator's decision can message them — delivered to each worker's hopper. <b class="k">repair / restart</b> re-enter the loop (the first PULSE tick proceeds normally). <b class="k">halt</b> has no following PULSE — so any line it must send goes out <em>synchronously</em> at the terminate (same as <code>ND-01-17</code>). Same shared conversation skeleton as <code>ND-02-10</code>, different theme.</li>
       </ul></div>
     </details>
     </div>
   </details>
 
   <details class="node">
-    <summary><span class="nnum">ND-02</span> PULSE<span class="lane-tag">tick · TRON-DET (+ AIDE)</span></summary>
+    <summary><span class="nnum">ND-02</span> PULSE<span class="lane-tag">tick · TRON-RELAY (+ AIDE)</span></summary>
     <div class="body">
     <ul>
-      <li>The recurring bounded tick, 19 steps <code>ND-02-01 … ND-02-19</code>. Each tick rebuilds the <b class="k">snapshot</b> from trunk — no drift across crash / off-session.</li>
-      <li><b class="k">Trigger (base map, not inside the sub):</b> a tick fires on a <b class="k">timer</b> (cadence floor, <code>TM1</code>) <b>OR</b> an <b class="k">event</b> (a <code>pulse</code> throw / worker message / operator trigger, caught by <code>CA1</code>) — whichever comes first. Both re-enter <b class="k">PULSE itself</b> at its top (¼ / ¾), so every tick is a fresh PULSE. Interval is tunable (seconds-scale), not fixed.</li>
-      <li><b class="k">02-01 First tick?</b> forks the entry. The <b>first</b> tick after BOOTUP already has a fresh snapshot, so the refresh trio (<code>02-02</code> trunk · <code>02-03</code> PRs · <code>02-04</code> rebuild) is skipped once, straight to <code>02-05</code>. Every <b>recurring</b> tick runs the trio. Nothing else is skippable — <code>02-05…02-19</code> are data-driven and self-skip when empty.</li>
-      <li><b class="k">02-05 Detect done:</b> blocks newly <code>✅</code> on trunk → review cadence (PULL).</li>
-      <li><b class="k">Worker lifecycle — detect then dispose.</b> <b class="k">02-06 Assess workers</b> classifies each in-flight worker by liveness probe + TTL/deadline + PR (<em>done / dead / hung / orphan-PR / in-progress</em>). <b class="k">02-07 Settle workers</b> disposes: safe cases free the slot and <b class="k">resume the worker's session if recoverable, else restart fresh</b> (the session handle lives in the MANIFEST; resuming keeps the agent's context); ambiguous cases are flagged. Settle also <b class="k">applies a resolved escalation</b> once the operator's reply has landed. PULSE only frees the block — re-dispatch happens downstream.</li>
-      <li><b class="k">02-08 Escalate?</b> (gateway): ambiguous cases (orphan PR, poison block past the death-cap, ambiguous hang, conflicting claims, scope mismatch) → <code>ND-02-09 Resolve</code>; clean → continue. A raised case is marked <b class="k">escalation-pending</b> (durable) so it isn't re-raised every tick.</li>
-      <li><b class="k">02-10 Tick cadence:</b> the review clock is <b class="k">PULL</b> — each tick checks whether a review is due and fires it; it isn't pushed on its own timer.</li>
-      <li><b class="k">Message pipeline.</b> <b class="k">02-11 Claim inboxes</b> locks the pending inbound <b class="k">sidecars</b> (one message = one file) — exactly-once this tick, and the front half of at-least-once. <b class="k">02-12 Messages?</b> gates <em>only</em> Classify + Route (skip the LLM on an empty inbox). <b class="k">02-13 Classify</b> is the <span class="llm">only LLM touch</span> in the tick: message → tag, stateless one-shot, its own AIDE lane. <b class="k">02-14 Route</b> sends each tagged message to its recipient's <b class="k">OUTBOX</b> (worker / architect / operator inbox).</li>
-      <li><b class="k">02-15 Drive gates:</b> advances each open gate one step from routed messages + the clock (review / dependency / DONE gates). It only <b class="k">advances state — it does not merge</b>; the engineer merges once a review passes.</li>
-      <li><b class="k">02-16 Drain triggers:</b> consumes queued operator/external commands (pause, halt, rescope…) — the control channel, separate from worker inboxes.</li>
-      <li><b class="k">02-17 Deliver</b> (message-throw): the <b class="k">single end-of-tick flush of the OUTBOX</b>, after every producer (Settle, Resolve, Route, gates, triggers). Ungated — sends happen even with an empty inbox. Each message is id-tagged so recipients dedupe (at-least-once may re-send after a crash). Freeform operator/agent-authored sends are written to the durable OUTBOX the moment they're authored (not the MANIFEST, which holds run-state, not payloads).</li>
-      <li><b class="k">02-18 Save state</b> (MANIFEST) → <b class="k">02-19 Drop sidecars</b>: effects are persisted <em>before</em> the claimed inbound sidecars are dropped — a crash in between simply replays them next tick.</li>
+      <li>The recurring bounded tick, 20 steps <code>ND-02-01 … ND-02-20</code>. Each tick rebuilds the <b class="k">snapshot</b> from trunk — no drift across crash / off-session.</li>
+      <li><b class="k">Trigger (base map, not inside the sub):</b> a tick fires on a <b class="k">timer</b> (cadence floor, <code>TM1</code>) <b>OR</b> a <b class="k">pulse throw</b> (internal re-arm, link catch <code>CA1</code>) — whichever comes first. Both re-enter <b class="k">PULSE itself</b> at its top, so every tick is a fresh PULSE. Interval is tunable (seconds-scale), not fixed. <b class="k">Messages do NOT trigger PULSE</b> — canon's <em>"faster = a shorter pulse, not a back-door."</em></li>
+      <li><b class="k">Fleet intake is PULL, not push.</b> Agents (workers / architect / reviewers) drop messages at the <b class="k">FLEET INTAKE</b> catch (<code>MSG</code>), which writes the <b class="k">FLEET HOPPER</b> — a durable <em>data store</em> (sidecar pile: one message = one file). PULSE drains the hopper on its own cadence at <code>02-12</code> (the undirected association <code>HOPPER ⟷ ND-02</code>: PULSE reads, and writes on claim/drop). So inbound traffic never accelerates the loop; it waits for the next pulse — bounded, crash-safe, no back-door. <em>(Dashed message flows from agent black-box pools into FLEET INTAKE still TODO.)</em></li>
+      <li><b class="k">Operator intake is a separate channel.</b> The <b class="k">OPERATOR INTAKE</b> catch (<code>OPI</code>) feeds the <b class="k">ND-18 PARLEY</b> handler directly — event-immediate, no hopper (operator is present → synchronous; nothing to batch). Detailed in the ND-18 card.</li>
+      <li><b class="k">02-01 First tick?</b> forks the entry. The <b>first</b> tick after BOOTUP already has a fresh snapshot, so the refresh trio (<code>02-02</code> trunk · <code>02-03</code> PRs · the <code>02-04</code> fresh-check · <code>02-05</code> rebuild) is skipped once, straight to <code>02-06</code>. Every <b>recurring</b> tick runs it. Nothing else is skippable — <code>02-06…02-20</code> are data-driven and self-skip when empty.</li>
+      <li><b class="k">02-04 Snapshot fresh?</b> (gateway): validate the fetch actually advanced <em>before</em> rebuilding — never plan off stale trunk. <b class="k">fresh</b> → Rebuild; a transient failure → <b class="k">retry</b> the fetch (death-cap bounds the loop); <b class="k">persist</b> → skip the rebuild straight to <code>02-06</code> (no fresh snapshot → the trunk-derived steps self-skip), having raised the alarm — the pipeline still flushes it at Deliver, since transport is filesystem, not trunk.</li>
+      <li><b class="k">02-06 Detect done:</b> blocks newly <code>✅</code> on trunk → review cadence (PULL).</li>
+      <li><b class="k">Worker lifecycle — detect then dispose.</b> <b class="k">02-07 Assess workers</b> classifies each in-flight worker by liveness probe + TTL/deadline + PR (<em>done / dead / hung / orphan-PR / in-progress</em>). <b class="k">02-08 Settle workers</b> disposes: safe cases free the slot and <b class="k">resume the worker's session if recoverable, else restart fresh</b> (the session handle lives in the MANIFEST; resuming keeps the agent's context); ambiguous cases are flagged. Settle also <b class="k">applies a resolved escalation</b> once the operator's reply has landed. PULSE only frees the block — re-dispatch happens downstream.</li>
+      <li><b class="k">02-09 Escalate?</b> (gateway): ambiguous cases (orphan PR, poison block past the death-cap, ambiguous hang, conflicting claims, scope mismatch) → <code>ND-02-10 Resolve</code>; clean → continue. A raised case is marked <b class="k">escalation-pending</b> (durable) so it isn't re-raised every tick.</li>
+      <li><b class="k">02-11 Tick cadence:</b> the review clock is <b class="k">PULL</b> — each tick checks whether a review is due and fires it; it isn't pushed on its own timer.</li>
+      <li><b class="k">Message pipeline.</b> <b class="k">02-12 Claim inboxes</b> locks the pending <b class="k">FLEET HOPPER</b> sidecars (one message = one file) — exactly-once this tick, and the front half of at-least-once. This is the <em>only</em> point PULSE touches the hopper. <b class="k">02-13 Messages?</b> gates <em>only</em> Classify + Route (skip the LLM on an empty inbox). <b class="k">02-14 Classify</b> is the <span class="llm">only LLM touch</span> in the tick: message → tag, stateless one-shot, its own AIDE lane. <b class="k">02-15 Route</b> stamps each tagged message with its recipient (worker / architect / operator).</li>
+      <li><b class="k">02-16 Drive gates:</b> advances each open gate one step from routed messages + the clock (review / dependency / DONE gates). It only <b class="k">advances state — it does not merge</b>; the engineer merges once a review passes.</li>
+      <li><b class="k">02-17 Drain triggers:</b> consumes queued operator/external commands (pause, halt, rescope…) — the control channel, separate from worker inboxes. An <b class="k">escalation reply</b> arrives here too: it's matched to the open case by the <b class="k">correlation id</b> stamped at <code>02-10</code>, then applied by Settle on this or the next tick (≤ 1-tick lag, bounded and crash-safe).</li>
+      <li><b class="k">02-18 Deliver</b> (message-throw): the <b class="k">single end-of-tick send</b>, after every producer (Settle, Resolve, Route, gates, triggers). Each message goes <b class="k">straight to its recipient — directly, or into the recipient's hopper</b>; there is no sender-side OUTBOX. Ungated — sends happen even with an empty inbox. Each message is id-tagged so recipients dedupe (at-least-once may re-send after a crash). Payloads never touch the MANIFEST (which holds run-state, not message bodies).</li>
+      <li><b class="k">02-19 Save state</b> (MANIFEST) → <b class="k">02-20 Drop sidecars</b>: effects are persisted <em>before</em> the claimed inbound sidecars are dropped — a crash in between simply replays them next tick.</li>
       <li><b class="k">In-flight = worker OR open PR OR active gate</b> (OR'd), so re-assigning is always safe across the build-before-PR window and crash-orphaned PRs.</li>
     </ul>
+    <div class="subhead">Possible inbound messages — land in the <code>FLEET HOPPER</code>, claimed 02-12 · tagged 02-14</div>
+    <ul>
+      <li class="grp"><b class="k">From workers</b></li>
+      <li><b class="k">worker.done</b> — claims its block is built + validated (a <em>claim</em>, verified on trunk, never trusted blind). Frees a slot → re-dispatch downstream.</li>
+      <li><b class="k">worker.wall</b> — stuck on something no worker can clear; needs the operator (R3) → Escalate.</li>
+      <li><b class="k">worker.review_done</b> — a reviewer handing back its findings log → drives the review gate.</li>
+      <li><b class="k">worker.progress</b> — status heartbeat, <b class="k">no action</b> (<code>side:none</code>). Generates nothing.</li>
+      <li><b class="k">worker.question_peer</b> — peer consult; logged, <b class="k">no advance</b> (<code>side:observe</code>). Generates nothing.</li>
+      <li><b class="k">worker.await_confirm</b> — <em>pause mid-block, awaiting go-ahead</em> ("phase 1 done, ready for 2 on your word"). Neither a <code>wall</code> (nothing blocks it) nor <code>progress</code> (it needs a reply). The worker is parked until cleared. <b class="k">Resolution ladder:</b> (a) checkpoint the operator <b class="k">pre-registered</b> → <b class="k">operator</b> clears (deferred ask, scoped-escalation shape); (b) a scope/blueprint judgement → <b class="k">architect</b> clears; (c) nothing substantive to confirm → <b class="k">DET auto-acks ("go ahead")</b> — no human, no architect. Routing is a downstream lookup against the <b class="k">checkpoint registry</b> (operator-declared "consult me at X", lives in MANIFEST/scope), not in classify. <b class="k">(new — to add to the grammar)</b>.</li>
+      <li class="grp"><b class="k">From architect</b></li>
+      <li><b class="k">architect.cleared</b> — forward-review done; a block file authored on trunk → dispatchable work ahead.</li>
+      <li><b class="k">architect.logged</b> — log-review done. An <b class="k">empty</b> result ("nothing") generates nothing.</li>
+      <li class="grp"><b class="k">Fallback</b></li>
+      <li><b class="k">unclassified</b> — matches no tag → catch-all (may wall). <b class="k">Logged</b> (raw body + why-no-tag) to a durable store so the tag grammar can be learned/enhanced over time.</li>
+    </ul>
+    <div class="rule"><b class="k">Not arriving here:</b> (a) <code>worker.stalled</code> / <code>worker.dead</code> are <b class="k">engine-produced</b> inside PULSE by the liveness sweep (silence past ping/escalate thresholds), never sent by an agent. (b) <b class="k">Operator messages do NOT use the fleet hopper</b> — they arrive on their own channel (<code>OPERATOR INTAKE</code> → <code>PARLEY</code> / ND-18), below.</div>
+
+    <div class="subhead">Operator messages — <code>OPERATOR INTAKE</code> → <code>PARLEY</code> (ND-18)</div>
+    <div class="rule">Own channel, off PULSE, <b class="k">no hopper</b> (operator is present → synchronous; nothing to batch). PARLEY's <code>Intent?</code> splits each message into <b class="k">act</b> (changes engine state, no reply) or <b class="k">answer</b> (produces a reply). Commands/queries are fixed-verb → deterministic (DET); only <em>ask</em> needs the LLM (AIDE).</div>
+    <ul>
+      <li class="grp"><b class="k">Commands (act → DET applies to run-state)</b></li>
+      <li><b class="k">halt</b> — terminate the run (archive-on-end; any final line sent synchronously). <em>syn: stop · terminate · kill · end · quit · abort.</em></li>
+      <li><b class="k">pause</b> — stop dispatching; ticks keep observing, no new work assigned, until resumed. <em>syn: hold · suspend · freeze · wait.</em></li>
+      <li><b class="k">resume</b> — clear the pause; dispatching restarts next tick. <b class="k">Pairs with pause.</b> <em>syn: continue · unpause · go · proceed.</em></li>
+      <li><b class="k">rescope</b> — change the in-scope phase/block range mid-run (PULSE re-reads the pipeline next tick). <em>syn: scope · refocus · retarget · narrow / widen.</em></li>
+      <li class="grp"><b class="k">Reply (act → PULSE Settle)</b></li>
+      <li><b class="k">operator.decision</b> — answers an open wall / signs off a held merge; PARLEY hands it to <code>02-08 Settle</code>, matched by the correlation id stamped at the raise (<code>02-10</code> / <code>10-03</code>). The parked case is durable in the MANIFEST, so a lost in-flight reply is simply re-issued.</li>
+      <li class="grp"><b class="k">Queries (answer → DET reads, AIDE composes)</b></li>
+      <li><b class="k">status</b> — "where are we?" from snapshot / MANIFEST. No state change. <em>syn: where · progress · report · summary · sitrep.</em></li>
+      <li><b class="k">inspect</b> — "show specifics of block X" (worker, PR, history). No state change. <em>syn: show · detail · drill · look · examine.</em></li>
+      <li class="grp"><b class="k">Free-form (answer → AIDE)</b></li>
+      <li><b class="k">ask</b> — open question ("has the API-X bug been fixed, and how?"). AIDE composes from the <b class="k">Project Docs</b> store (the project's git-tracked core files — pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs), read directly; if it can't answer from them, the question is <b class="k">sent to the architect</b> (lands in <code>ARCHITECT HOPPER</code>), answered on a later tick via the normal pipeline, AIDE relays. Answer depth is capped by what those sources record.</li>
+    </ul>
+    <div class="rule"><b class="k">Closed enum + synonyms.</b> The command/query verbs are a <b class="k">fixed set</b> (that's what lets <code>18-01 Intent?</code> branch deterministically, no LLM). Each verb has <b class="k">accepted synonyms</b> (above) the engine maps to the canonical verb before dispatch; anything outside the set isn't a command → it falls to the answer/ask path. <b class="k">pause ⇄ resume</b> must always exist as a pair.</div>
+    <div class="rule"><b class="k">Why not a fleet tag:</b> commands/queries have a fixed verb and need no body interpretation — running them through the one LLM classify would waste it on something deterministic. They also need no correlation. <code>operator.decision</code> is the one operator message that threads back into PULSE (Settle), because it must be matched to a parked case.</div>
+    <div class="rule"><b class="k">Open — 02-17 overlap:</b> PULSE still draws <code>02-17 Drain triggers</code> ("operator commands"). With PARLEY owning operator messages, 02-17's role narrows to applying the <code>operator.decision</code> correlation; the command-handling it once implied now lives in PARLEY. Reconcile when ND-04+ / the §3.N redraw lands.</div>
+
     <div class="subhead">Sub-processes</div>
 
     <details class="node">
-      <summary><span class="nnum">ND-02-09</span> RESOLVE<span class="lane-tag">DET · AIDE — raise &amp; defer</span></summary>
+      <summary><span class="nnum">ND-02-10</span> RESOLVE<span class="lane-tag">DET · AIDE — raise &amp; defer</span></summary>
       <div class="body"><ul>
-        <li>The worker-escalation conversation. Same skeleton as <code>ND-01-13</code>, different theme. It does <b class="k">not</b> decide inline — a blocking operator conversation would break the bounded tick. It <b class="k">raises and defers</b> (the Temporal-signal / task-token pattern).</li>
-        <li><b class="k">09-01 Assign TRON-AIDE</b> → <b class="k">09-02 Brief + offer options</b> (AIDE composes the operator brief).</li>
-        <li><b class="k">09-03 Send to operator</b> (message-throw → <b class="k">OUTBOX</b>): the ask is queued like any other outbound message.</li>
-        <li><b class="k">09-04 Mark pending</b> (DET) → <b class="k">End: Awaiting operator</b>. The tick continues; the operator's reply arrives as an event on a later tick, where <code>02-07 Settle</code> applies it.</li>
+        <li>The worker-escalation conversation. Same skeleton as <code>ND-01-14</code>, different theme. It does <b class="k">not</b> decide inline — a blocking operator conversation would break the bounded tick. It <b class="k">raises and defers</b> (the Temporal-signal / task-token pattern).</li>
+        <li><b class="k">10-01 Assign TRON-AIDE</b> → <b class="k">10-02 Brief + offer options</b> (AIDE composes the operator brief).</li>
+        <li><b class="k">10-03 Send to operator</b> (message-throw): the ask is sent to the operator, stamped with a <b class="k">correlation id</b> so the reply can be matched back to this case.</li>
+        <li><b class="k">10-04 Mark pending</b> (DET) → <b class="k">End: Awaiting operator</b>. The tick continues; the operator's reply arrives as a command (drained at <code>02-17</code>) on a later tick, where <code>02-08 Settle</code> applies it.</li>
         <li>Outcomes are <b class="k">case-dependent / freeform</b> (resume-session · retry-fresh · skip-block · reassign · halt), carried in the reply payload — not a fixed gateway split.</li>
       </ul></div>
     </details>
     </div>
   </details>
 
-  <p class="lead" style="margin-top:var(--sp-8)">Only walked nodes are documented here. ND-03 SWITCHBOARD
-    onward are still on the core map (<a href="flow-core.html">flow-core.html</a>) but not yet walked —
-    their notes land here as each is approved.</p>
+  <details class="node">
+    <summary><span class="nnum">ND-18</span> PARLEY<span class="lane-tag">operator channel · TRON-RELAY + AIDE</span></summary>
+    <div class="body">
+    <ul>
+      <li><b class="k">The operator-message handler.</b> Its own base-map node, fed by the <b class="k">OPERATOR INTAKE</b> catch (<code>OPI</code>) — a channel <b class="k">separate from PULSE and the fleet hopper</b>. <b class="k">Event-immediate</b> (the catch fires PARLEY per message) and <b class="k">no hopper</b>: the operator is present, so the exchange is synchronous and nothing batches. Two lanes — DET (deterministic) + AIDE (composes copy / answers).</li>
+      <li><b class="k">18-01 Intent?</b> (gateway) — splits each operator message into <b class="k">act</b> (changes engine state, no reply) or <b class="k">answer</b> (produces a reply). Commands/queries/decision are fixed-verb → deterministic; only <em>ask</em> reaches the LLM.</li>
+      <li class="grp"><b class="k">ACT arm</b></li>
+      <li><b class="k">18-02 Apply command / decision</b> (DET) — a <b class="k">command</b> (<code>halt</code>/<code>pause</code>/<code>rescope</code>) is applied to run-state (PULSE honors it next tick); a <b class="k">decision</b> (reply to a parked case) is handed to <code>02-08 Settle</code>, matched by correlation id.</li>
+      <li><b class="k">18-03 Acted</b> (end).</li>
+      <li class="grp"><b class="k">ANSWER arm</b></li>
+      <li><b class="k">18-04 Compose answer</b> (<span class="llm">AIDE</span>) — composes the reply, reading the <b class="k">Project Docs</b> store (the project's git-tracked core files — pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs). Read-only.</li>
+      <li><b class="k">18-05 Answerable?</b> (gateway) — could AIDE answer from Project Docs?</li>
+      <li><b class="k">18-06 OPERATOR INBOX</b> (message-throw, <b class="k">yes</b>) — direct send to the operator's inbox (no hopper; operator is present). Named for the recipient's inbox, like <code>ARCHITECT INBOX</code> — <em>not</em> <code>OPERATOR INTAKE</code> (that's the inbound catch, operator → TRON). → <b class="k">18-07 Replied</b> (end).</li>
+      <li><b class="k">18-08 ARCHITECT INBOX</b> (message-throw, <b class="k">no</b>) — the question is sent to the architect (the durable knowledge-holder); it lands in the <b class="k">ARCHITECT HOPPER</b>, is answered on a later tick via the normal pipeline, and AIDE relays to the operator. Named for the catch it pairs with. → <b class="k">18-09 Deferred</b> (end).</li>
+    </ul>
+    <div class="rule"><b class="k">Synchronous, not deferred.</b> Deferral (raise-and-defer) is only for unsolicited <em>worker</em> escalations, where the operator may be away. Operator-initiated exchanges here resolve live; the one async seam is the architect fallback, which rides the pipeline. <b class="k">No OUTBOX, no queue</b> — every send is direct (operator) or to a recipient hopper (architect).</div>
+    <div class="rule"><b class="k">Grid:</b> drawn in the shared grid system (DET row, AIDE row) like ND-01/ND-02; every arm is a straight run.</div>
+    </div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-03</span> SWITCHBOARD<span class="lane-tag">tick · TRON-RELAY — in review</span></summary>
+    <div class="body">
+    <ul>
+      <li><b class="k">The work selector.</b> A pure router — it performs no work; it reads the post-PULSE state and routes the tick to one destination. PULSE already did all the observing/settling; SWITCHBOARD only <em>dispatches</em>.</li>
+      <li><b class="k">Inputs it reads</b> (snapshot / MANIFEST, after PULSE): free worker slots (<code>worker_count</code> − in-flight) · a ready block to dispatch · a review due (PULL cadence) · a block cleared-ahead for the architect · the session-end condition.</li>
+      <li><b class="k">Destinations:</b>
+        <ul>
+          <li><b class="k">fill slot → ND-05</b> — a free slot + a ready engineer block.</li>
+          <li><b class="k">clear ahead → ND-15 → ND-08</b> — architect work pending.</li>
+          <li><b class="k">review → ND-15 → ND-14</b> — a review is due.</li>
+          <li><b class="k">session:end → End</b> — the end condition holds.</li>
+          <li><b class="k">monitor → ND-09</b> — <b class="k">none of the above</b> (the else arm): nothing dispatchable this tick.</li>
+        </ul>
+      </li>
+    </ul>
+    <div class="rule"><b class="k">Open (not locked).</b> (1) <b class="k">monitor / ND-09 likely redundant</b> — observation already happened in PULSE (02-06 / 02-07); an idle tick should loop back to the next PULSE, not flow into an "Observe" node. (2) <b class="k">XOR vs parallel</b> — drawn as exclusive (one destination), but a single tick may need several (fill N slots <em>and</em> fire a due review). Unresolved.</div>
+    </div>
+  </details>
+
+  <p class="lead" style="margin-top:var(--sp-8)">ND-04 onward (the engineer/done/wall cluster) are on the
+    core map (<a href="workflow.html">workflow.html</a>) but not yet locked — under the §3.N redraw. Their
+    notes land here as each is approved.</p>
 
 </div>
 </body>

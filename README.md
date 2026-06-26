@@ -59,7 +59,7 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 
 ## The flow
 
-The full workflow lives as interactive BPMN under [`docs/`](docs/): [`flow-core.html`](docs/flow-core.html) (core + drill-down sub-processes) and [`flow-description.html`](docs/flow-description.html) (per-node notes).
+The full workflow lives as interactive BPMN under [`docs/`](docs/): [`workflow.html`](docs/workflow.html) (core + drill-down sub-processes) and [`flow-description.html`](docs/flow-description.html) (per-node notes).
 
 ---
 
@@ -119,7 +119,7 @@ Inside `tron start`: type to talk to TRON; `status` / `pipeline` to look; `stop`
 tron/
 ├── tron                    # the operator entrypoint (seeder · start)
 ├── README.md · LICENSE
-├── tron.md                 # the judgment context (the two LLM calls run under this)
+├── tron.md                 # the judgment context (the one judgment LLM call runs under this)
 ├── tron-seed.md            # the seeding protocol
 ├── routing.yaml            # the trigger grammar + inbound-message map (canon, never per-project)
 ├── workflow.yaml           # the default knobs (worker/architect counts, cadence, git)
@@ -156,8 +156,8 @@ To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No othe
 
 > **Blueprint first, model second.** TRON's founding principle. The flow is a deterministic
 > *blueprint* — a closed trigger grammar and an explicit event table, lint-validated before it ever
-> runs. The *model* comes second: called only to do the building and to answer two bounded,
-> schema-checked judgments — never to choose a step. Everything below follows from this.
+> runs. The *model* comes second: called only to do the building and to answer one bounded,
+> schema-checked judgment (classify a message) — never to choose a step. Everything below follows from this.
 
 - **Deterministic spine.** Flow is decided by code and a closed trigger grammar — lint-validated at
   seed time, so a malformed workflow fails before it runs, not during.

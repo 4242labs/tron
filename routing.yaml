@@ -53,18 +53,19 @@ tags:
   worker.stalled:           { trigger: "worker:stalled" }   # engine liveness side-system
   worker.dead:              { trigger: "worker:stalled" }   # recover handles both
   # reserved
-  unclassified:             { trigger: "*" }                # -> SCRIPTS catch-all (may wall)
+  unclassified:             { trigger: "*" }                # -> SCRIPTS catch-all -> architect sorts it
 
 # ── Invalid-output policy (a judgment tool that won't validate) ─────
 invalid_output:
   max_retries: 2                         # read by the engine (judge retry budget)
-  on_exhaustion: "*"                     # -> unclassified -> SCRIPTS catch-all (may wall via assess_wall)
+  on_exhaustion: "*"                     # -> unclassified -> SCRIPTS catch-all -> architect sorts it
 
-# ── Judgment tools (the ONLY LLM calls; schema-in / schema-out) ────
+# ── Judgment tools (the ONLY LLM call; schema-in / schema-out) ─────
 # Output is always a tag + structured slots, never free prose to the flow.
 tools:
   classify_message: { in: [text, sender], out: [tag, slots, confidence] }
-  assess_wall:      { in: [situation, block_ctx, project_operator_only],    out: [wall, kind, rationale] }
-  # tiering: classify_message -> cheap ; assess_wall -> strong
-  # NOT judgment tools (by design): review verdicts (review is a milestone),
-  # findings-triage (-> architect log-review skill), stall detection (-> engine liveness).
+  # tiering: classify_message -> cheap. ONE judgment tool only.
+  # NOT judgment tools (by design): "is this the operator's problem?" (assess_wall RETIRED —
+  # an unclassifiable input routes to the architect, who steers it, not the LLM); review
+  # verdicts (review is a milestone); findings-triage (-> architect log-review skill);
+  # stall detection (-> engine liveness).

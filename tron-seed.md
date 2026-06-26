@@ -4,7 +4,7 @@ Read by the runtime on the operator's machine to seed TRON into a target project
 
 > Run from a clone of canon kept **outside** the project. Never clone canon into the project tree.
 
-TRON is a deterministic FSM: the engine runs a **fixed event table** (the PULSE dispatch loop + SWITCHBOARD work-selector) over the canon grammar (`routing.yaml`), driven by the project's **knobs** (`workflow.yaml`), and calls the model only for two bounded judgment tools (`classify_message`, `assess_wall`). The seeder's job is to lay that instance down and fill the **per-project** parts — the knobs and the pointers to the project's own canon (agents + pipeline). TRON owns no pipeline, no work-unit format, and no agents: it **reads** the project's git-tracked pipeline and blocks (agents write those via PR) and adapts to whatever agents the project defines. It never authors the TRON canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`, `scripts/`).
+TRON is a deterministic FSM: the engine runs a **fixed event table** (the PULSE dispatch loop + SWITCHBOARD work-selector) over the canon grammar (`routing.yaml`), driven by the project's **knobs** (`workflow.yaml`), and calls the model only for one bounded judgment tool (`classify_message`). The seeder's job is to lay that instance down and fill the **per-project** parts — the knobs and the pointers to the project's own canon (agents + pipeline). TRON owns no pipeline, no work-unit format, and no agents: it **reads** the project's git-tracked pipeline and blocks (agents write those via PR) and adapts to whatever agents the project defines. It never authors the TRON canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`, `scripts/`).
 
 ---
 

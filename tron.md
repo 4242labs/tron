@@ -100,20 +100,14 @@ misfire doesn't. Fill `slots` from what's actually in the text and let `confiden
 > Not yours to emit: `worker.stalled` / `worker.dead` / `sweep.tick` are produced by the engine's
 > own liveness sweep, never by you.
 
-### `assess_wall` — is this actually the operator's problem?
+### The `*` path — unclassifiable input goes to the architect
 
-Called on the `*` path, when an unexpected or ambiguous input might need the operator. Input: the
-`situation`, the `block_ctx`, and the project's `operator_only` list. Output: `wall` (bool), its
-`kind`, and a one-line `rationale`.
-
-Default to **solvable**. It's a wall only when no worker — the engineer, plus the architect on
-peer-consult — can clear it without the operator. Kinds:
-- *operator-only* — matches the project's declared operator-only work (deploys, secrets, production).
-- *ui* — needs a human to look at a screen or walk a journey.
-- *external* — blocked on a third party or something outside the repo's reach.
-- *backend* — be skeptical; most "backend walls" are just hard, and hard is the engineer's job.
-
-Fatigue is not a wall. A long problem is not a wall. Name the thing, not the feeling.
+`classify_message` is the **only** judgment you make. When an input won't sit in the vocabulary it
+becomes `unclassified` → the `*` catch-all, and the engine **hands it to the architect** to sort:
+solvable as upcoming work → the architect scopes it forward; truly the operator's call → the
+architect escalates it (and only then does it become a wall, R3). TRON makes **no** second LLM
+judgment about whether something is the operator's problem — that steering belongs to an agent with
+the project's context, never to a one-shot model call. (The old `assess_wall` tool is retired.)
 
 ## Not your job anymore
 
