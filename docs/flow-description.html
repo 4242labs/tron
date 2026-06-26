@@ -139,7 +139,7 @@
     <div class="body">
     <ul>
       <li>The recurring bounded tick, 20 steps <code>ND-02-01 … ND-02-20</code>. Each tick rebuilds the <b class="k">snapshot</b> from trunk — no drift across crash / off-session.</li>
-      <li><b class="k">Trigger (base map, not inside the sub):</b> a tick fires on the <b class="k">METRONOME timer</b> (cadence floor, <code>TM1</code>) — it re-enters <b class="k">PULSE itself</b> at its top (top-¾), so every tick is a fresh PULSE. Interval is tunable (seconds-scale), not fixed. <b class="k">Messages do NOT trigger PULSE</b> — canon's <em>"faster = a shorter pulse, not a back-door."</em> <em>(The earlier internal pulse-throw re-arm / link-catch <code>CA1</code> was removed in the restructure; re-arm currently rides the timer alone — <b class="k">Open</b>.)</em></li>
+      <li><b class="k">Trigger — the WAKE sub</b> (<code>ND-16</code>, a sub-process below PULSE on the base map): a tick fires on the <b class="k">first of</b> { a <b class="k">message</b> landing in the FLEET HOPPER · the <b class="k">CEILING</b> timer }, after a mandatory <b class="k">COOLDOWN</b> (min-gap floor). So a message wakes PULSE <em>early</em>, a burst coalesces into one tick, and the ceiling fires the tick when idle (liveness). <b class="k">Bounded both ways</b> — messages only pull latency <em>down to</em> the floor, never unbounded, so it is not a back-door (canon's <em>"faster = a shorter pulse"</em> holds: the COOLDOWN floor <em>is</em> the shortest pulse). Click <code>ND-16 WAKE</code> for the mechanism. <em>(Replaces the old timer-only re-arm — the standalone <code>TM1</code> METRONOME node and the removed <code>CA1</code> are gone; the cadence timer is now the CEILING inside WAKE.)</em></li>
       <li><b class="k">Fleet intake is PULL, not push.</b> Agents (workers / architect / reviewers) drop messages at the <b class="k">FLEET INTAKE</b> catch (<code>MSG</code>), which writes the <b class="k">FLEET HOPPER</b> — a durable <em>data store</em> (sidecar pile: one message = one file). PULSE drains the hopper on its own cadence at <code>02-12</code> (the undirected association <code>HOPPER ⟷ ND-02</code>: PULSE reads, and writes on claim/drop). So inbound traffic never accelerates the loop; it waits for the next pulse — bounded, crash-safe, no back-door. <em>(Dashed message flows from agent black-box pools into FLEET INTAKE still TODO.)</em></li>
       <li><b class="k">Operator intake is a separate channel.</b> The <b class="k">OPERATOR INTAKE</b> catch (<code>OPI</code>) feeds the <b class="k">ND-18 PARLEY</b> handler directly — event-immediate, no hopper (operator is present → synchronous; nothing to batch). Detailed in the ND-18 card.</li>
       <li><b class="k">02-01 First tick?</b> forks the entry. The <b>first</b> tick after BOOTUP already has a fresh snapshot, so the refresh trio (<code>02-02</code> trunk · <code>02-03</code> PRs · the <code>02-04</code> fresh-check · <code>02-05</code> rebuild) is skipped once, straight to <code>02-06</code>. Every <b>recurring</b> tick runs it. Nothing else is skippable — <code>02-06…02-20</code> are data-driven and self-skip when empty.</li>
@@ -263,6 +263,20 @@
     </div>
   </details>
 
+  <details class="node">
+    <summary><span class="nnum">ND-16</span> WAKE<span class="lane-tag">trigger · TRON-RELAY</span></summary>
+    <div class="body">
+    <ul>
+      <li><b class="k">How a tick is triggered</b> — a sub-process directly below PULSE. Debounced on <b class="k">both</b> ends so it's responsive but never a back-door. Entered on <b class="k">tick complete</b> (PULSE loops back); exits by re-entering <b class="k">PULSE</b>.</li>
+      <li><b class="k">WAKE-01 COOLDOWN</b> (timer) — the mandatory <b class="k">min-gap floor</b>. Messages arriving during it just pile in the FLEET HOPPER; no wake yet. This is what coalesces a burst into one tick.</li>
+      <li><b class="k">WAKE-02 First to fire?</b> (event-based gateway) — waits for whichever of the next two events fires first:</li>
+      <li><b class="k">WAKE-03 MESSAGE</b> (message-catch) — a message landed in the FLEET HOPPER → wake <b class="k">early</b> → PULSE.</li>
+      <li><b class="k">WAKE-04 CEILING</b> (timer) — no message before the max-latency ceiling → wake anyway → PULSE (<b class="k">liveness</b>; this is the old cadence timer, now living inside WAKE).</li>
+    </ul>
+    <div class="rule"><b class="k">Bounded both ways:</b> COOLDOWN ≤ inter-tick gap ≤ CEILING. Messages only pull latency <em>down to</em> the floor — never unbounded — so "faster = a shorter pulse, not a back-door" still holds. On the base map: <code>FLEET HOPPER → WAKE</code> is the message arm; <code>WAKE ⇄ PULSE</code> is the fire/loop; <code>FLEET HOPPER ⟷ PULSE</code> stays as the separate drain (02-12).</div>
+    </div>
+  </details>
+
   <h2>Agent sub-processes</h2>
 
   <div class="rule"><b class="k">Every agent the same shape.</b> Engineer, architect, and reviewer are spawned
@@ -327,9 +341,9 @@
   <ul>
     <li><b class="k">TRON:START</b> (start event) — the run's entry; → <code>ND-01 BOOTUP</code>.</li>
     <li><b class="k">ANCHOR</b> (end event) — the <b class="k">session-end terminal</b>; SWITCHBOARD's <code>session:end</code> arm lands here.</li>
-    <li><b class="k">METRONOME</b> (<code>TM1</code>, timer) — the <b class="k">cadence floor</b>; fires PULSE on its tunable interval (docks PULSE top-¾). The only core PULSE trigger (see PULSE → Trigger).</li>
-    <li><b class="k">FLEET INTAKE</b> (message-catch) — the fleet's single <b class="k">drop point</b>; every agent reports here; writes the <b class="k">FLEET HOPPER</b>.</li>
-    <li><b class="k">FLEET HOPPER</b> (data store) — TRON's durable inbound pile (one message = one file). PULSE drains it on its cadence (<b class="k">pull</b>, <code>02-12</code>). The undirected association <code>FLEET HOPPER ⟷ PULSE</code>: PULSE reads, and writes on claim/drop.</li>
+    <li><b class="k">WAKE</b> (<code>ND-16</code>, sub-process directly below PULSE) — the <b class="k">tick trigger</b>: COOLDOWN → first of { MESSAGE | CEILING } → PULSE, then PULSE loops back to it. The cadence timer is the <b class="k">CEILING inside</b> WAKE — the old standalone METRONOME/<code>TM1</code> node is gone. Drills down to the debounce (see PULSE → Trigger).</li>
+    <li><b class="k">FLEET INTAKE</b> (message-catch, on WAKE's row) — the fleet's single <b class="k">drop point</b>; every agent reports here; writes the <b class="k">FLEET HOPPER</b>.</li>
+    <li><b class="k">FLEET HOPPER</b> (data store, on WAKE's row) — TRON's durable inbound pile (one message = one file). Two readers: it <b class="k">feeds WAKE</b> (a queued message wakes the next tick, debounced) <em>and</em> PULSE <b class="k">drains</b> it on its cadence (<b class="k">pull</b>, <code>02-12</code>; the undirected <code>FLEET HOPPER ⟷ PULSE</code> association — PULSE reads, writes on claim/drop).</li>
     <li><b class="k">OPERATOR INTAKE</b> (message-catch) — the operator's own inbound channel → <code>PARLEY (ND-18)</code>; event-immediate, <b class="k">no hopper</b> (operator is present). Distinct from <code>OPERATOR INBOX</code> (the outbound throw, TRON → operator).</li>
     <li><b class="k">ENGINEER INBOX</b> (message-catch, beside the ENGINEER cat) — the engineer's inbox on the core map; the same mailbox as <code>11-01</code> inside the ENGINEER sub, surfaced one zoom level up.</li>
     <li><b class="k">Project Docs ×2</b> (data stores; <code>PD3</code> engineer-side, <code>PD2</code> architect-side) — the project's <b class="k">git-tracked core files</b> (pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs). Read-only to the fleet: <code>PD3</code> feeds <code>ENGINEER</code> + <code>PULSE</code>; <code>PD2</code> feeds <code>ARCHITECT</code> + the reviewer.</li>
