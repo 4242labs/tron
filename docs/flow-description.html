@@ -242,7 +242,7 @@
       </li>
       <li>An <b class="k">idle</b> tick (nothing ready, not ending) simply falls through to the next PULSE — there is no longer an "Observe" / monitor node (observation already happened in PULSE). SWITCHBOARD <em>routes</em>; ND-15 <em>selects</em>.</li>
     </ul>
-    <div class="rule"><b class="k">Open (not locked).</b> <b class="k">XOR vs parallel</b> — drawn as exclusive (one destination), but a single tick may legitimately need several (fill N slots <em>and</em> fire a due review). Whether SWITCHBOARD/ND-15 split parallel or PULSE loops faster is unresolved.</div>
+    <div class="rule"><b class="k">Exclusive — and correct.</b> SWITCHBOARD's two arms (<code>dispatch</code> vs <code>session:end</code>) are mutually exclusive — you can't both end the run and dispatch in the same tick — so it stays an <b class="k">exclusive (X)</b> gateway; an idle tick takes neither and falls through to the next PULSE. The "need several at once" case lives one step downstream in <code>ND-15</code>, which is <b class="k">inclusive</b>.</div>
     </div>
   </details>
 
@@ -250,8 +250,8 @@
     <summary><span class="nnum">ND-15</span> DISPATCH<span class="lane-tag">tick · TRON-RELAY</span></summary>
     <div class="body">
     <ul>
-      <li><b class="k">The dispatch router.</b> Reached from SWITCHBOARD's <code>dispatch</code> arm — SWITCHBOARD already decided there <em>is</em> work; ND-15 only <b class="k">selects which agent type</b> and spawns/assigns it with its <b class="k">BRIEF</b> (see <em>Agent sub-processes</em>).</li>
-      <li><b class="k">Three arms</b> (each a straight run off the col-4 spine):
+      <li><b class="k">The dispatch router — an inclusive (O) gateway.</b> Reached from SWITCHBOARD's <code>dispatch</code> arm. It evaluates each arm's condition independently against PULSE's state and <b class="k">fires 1..N of them this tick</b> — so a single tick can fill a worker slot <em>and</em> fire a due review <em>and</em> hand the architect cleared-ahead work. Each fired arm spawns/assigns its agent with its <b class="k">BRIEF</b> (see <em>Agent sub-processes</em>).</li>
+      <li><b class="k">Three arms</b> (each fires when its condition holds; a straight run off the col-4 spine):
         <ul>
           <li><b class="k">worker → ND-11 ENGINEER</b> (up) — a free slot + a ready engineer block.</li>
           <li><b class="k">reviewer → ND-14 REVIEW</b> (down) — a review is due.</li>
@@ -259,7 +259,7 @@
         </ul>
       </li>
     </ul>
-    <div class="rule">Same <b class="k">XOR-vs-parallel</b> open question as SWITCHBOARD (above): drawn exclusive, but a tick may need more than one arm.</div>
+    <div class="rule"><b class="k">Why inclusive, not parallel:</b> parallel (AND) would fire <em>all</em> arms every time; inclusive fires only the arms whose condition holds. <b class="k">Guaranteed ≥1:</b> ND-15 is only reached when SWITCHBOARD found work, so the inclusive split never stalls on an all-false evaluation.</div>
     </div>
   </details>
 
