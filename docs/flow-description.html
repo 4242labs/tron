@@ -138,10 +138,11 @@
     <div class="body">
     <ul>
       <li>The recurring bounded tick, 20 steps <code>ND-02-01 … ND-02-20</code>. Each tick rebuilds the <b class="k">snapshot</b> from trunk — no drift across crash / off-session.</li>
-      <li><b class="k">Trigger (base map, not inside the sub):</b> a tick fires on a <b class="k">timer</b> (cadence floor, <code>TM1</code>) <b>OR</b> a <b class="k">pulse throw</b> (internal re-arm, link catch <code>CA1</code>) — whichever comes first. Both re-enter <b class="k">PULSE itself</b> at its top, so every tick is a fresh PULSE. Interval is tunable (seconds-scale), not fixed. <b class="k">Messages do NOT trigger PULSE</b> — canon's <em>"faster = a shorter pulse, not a back-door."</em></li>
+      <li><b class="k">Trigger (base map, not inside the sub):</b> a tick fires on the <b class="k">METRONOME timer</b> (cadence floor, <code>TM1</code>) — it re-enters <b class="k">PULSE itself</b> at its top (top-¾), so every tick is a fresh PULSE. Interval is tunable (seconds-scale), not fixed. <b class="k">Messages do NOT trigger PULSE</b> — canon's <em>"faster = a shorter pulse, not a back-door."</em> <em>(The earlier internal pulse-throw re-arm / link-catch <code>CA1</code> was removed in the restructure; re-arm currently rides the timer alone — <b class="k">Open</b>.)</em></li>
       <li><b class="k">Fleet intake is PULL, not push.</b> Agents (workers / architect / reviewers) drop messages at the <b class="k">FLEET INTAKE</b> catch (<code>MSG</code>), which writes the <b class="k">FLEET HOPPER</b> — a durable <em>data store</em> (sidecar pile: one message = one file). PULSE drains the hopper on its own cadence at <code>02-12</code> (the undirected association <code>HOPPER ⟷ ND-02</code>: PULSE reads, and writes on claim/drop). So inbound traffic never accelerates the loop; it waits for the next pulse — bounded, crash-safe, no back-door. <em>(Dashed message flows from agent black-box pools into FLEET INTAKE still TODO.)</em></li>
       <li><b class="k">Operator intake is a separate channel.</b> The <b class="k">OPERATOR INTAKE</b> catch (<code>OPI</code>) feeds the <b class="k">ND-18 PARLEY</b> handler directly — event-immediate, no hopper (operator is present → synchronous; nothing to batch). Detailed in the ND-18 card.</li>
       <li><b class="k">02-01 First tick?</b> forks the entry. The <b>first</b> tick after BOOTUP already has a fresh snapshot, so the refresh trio (<code>02-02</code> trunk · <code>02-03</code> PRs · the <code>02-04</code> fresh-check · <code>02-05</code> rebuild) is skipped once, straight to <code>02-06</code>. Every <b>recurring</b> tick runs it. Nothing else is skippable — <code>02-06…02-20</code> are data-driven and self-skip when empty.</li>
+      <li><b class="k">02-21 Skip-rebuild merge</b> (exclusive gateway, unnamed): where the two skip paths rejoin the spine — the <b class="k">first-tick</b> skip (from <code>02-01</code>) <b>XOR</b> the <b class="k">death-cap persist</b> skip (from <code>02-04</code>). They're mutually exclusive (only one ever arrives), so the gateway is a clean merge → straight into <code>02-06 Detect done</code>.</li>
       <li><b class="k">02-04 Snapshot fresh?</b> (gateway): validate the fetch actually advanced <em>before</em> rebuilding — never plan off stale trunk. <b class="k">fresh</b> → Rebuild; a transient failure → <b class="k">retry</b> the fetch (death-cap bounds the loop); <b class="k">persist</b> → skip the rebuild straight to <code>02-06</code> (no fresh snapshot → the trunk-derived steps self-skip), having raised the alarm — the pipeline still flushes it at Deliver, since transport is filesystem, not trunk.</li>
       <li><b class="k">02-06 Detect done:</b> blocks newly <code>✅</code> on trunk → review cadence (PULL).</li>
       <li><b class="k">Worker lifecycle — detect then dispose.</b> <b class="k">02-07 Assess workers</b> classifies each in-flight worker by liveness probe + TTL/deadline + PR (<em>done / dead / hung / orphan-PR / in-progress</em>). <b class="k">02-08 Settle workers</b> disposes: safe cases free the slot and <b class="k">resume the worker's session if recoverable, else restart fresh</b> (the session handle lives in the MANIFEST; resuming keeps the agent's context); ambiguous cases are flagged. Settle also <b class="k">applies a resolved escalation</b> once the operator's reply has landed. PULSE only frees the block — re-dispatch happens downstream.</li>
@@ -150,7 +151,7 @@
       <li><b class="k">Message pipeline.</b> <b class="k">02-12 Claim inboxes</b> locks the pending <b class="k">FLEET HOPPER</b> sidecars (one message = one file) — exactly-once this tick, and the front half of at-least-once. This is the <em>only</em> point PULSE touches the hopper. <b class="k">02-13 Messages?</b> gates <em>only</em> Classify + Route (skip the LLM on an empty inbox). <b class="k">02-14 Classify</b> is the <span class="llm">only LLM touch</span> in the tick: message → tag, stateless one-shot, its own AIDE lane. <b class="k">02-15 Route</b> stamps each tagged message with its recipient (worker / architect / operator).</li>
       <li><b class="k">02-16 Drive gates:</b> advances each open gate one step from routed messages + the clock (review / dependency / DONE gates). It only <b class="k">advances state — it does not merge</b>; the engineer merges once a review passes.</li>
       <li><b class="k">02-17 Drain triggers:</b> consumes queued operator/external commands (pause, halt, rescope…) — the control channel, separate from worker inboxes. An <b class="k">escalation reply</b> arrives here too: it's matched to the open case by the <b class="k">correlation id</b> stamped at <code>02-10</code>, then applied by Settle on this or the next tick (≤ 1-tick lag, bounded and crash-safe).</li>
-      <li><b class="k">02-18 Deliver</b> (message-throw): the <b class="k">single end-of-tick send</b>, after every producer (Settle, Resolve, Route, gates, triggers). Each message goes <b class="k">straight to its recipient — directly, or into the recipient's hopper</b>; there is no sender-side OUTBOX. Ungated — sends happen even with an empty inbox. Each message is id-tagged so recipients dedupe (at-least-once may re-send after a crash). Payloads never touch the MANIFEST (which holds run-state, not message bodies).</li>
+      <li><b class="k">02-18 &lt;AGENT-ID&gt; INBOX</b> (message-throw): the <b class="k">single end-of-tick send</b>, after every producer (Settle, Resolve, Route, gates, triggers). Every message is <b class="k">addressed to a specific agent by its ID</b> (never by role) — one throw may carry several messages, to several agents — and goes <b class="k">straight to that agent's inbox: directly, or into the recipient's hopper</b>; there is no sender-side OUTBOX. Ungated — sends happen even with an empty inbox. Each message is id-tagged so recipients dedupe (at-least-once may re-send after a crash). Payloads never touch the MANIFEST (which holds run-state, not message bodies).</li>
       <li><b class="k">02-19 Save state</b> (MANIFEST) → <b class="k">02-20 Drop sidecars</b>: effects are persisted <em>before</em> the claimed inbound sidecars are dropped — a crash in between simply replays them next tick.</li>
       <li><b class="k">In-flight = worker OR open PR OR active gate</b> (OR'd), so re-assigning is always safe across the build-before-PR window and crash-orphaned PRs.</li>
     </ul>
@@ -227,28 +228,111 @@
   </details>
 
   <details class="node">
-    <summary><span class="nnum">ND-03</span> SWITCHBOARD<span class="lane-tag">tick · TRON-RELAY — in review</span></summary>
+    <summary><span class="nnum">ND-03</span> SWITCHBOARD<span class="lane-tag">tick · TRON-RELAY</span></summary>
     <div class="body">
     <ul>
-      <li><b class="k">The work selector.</b> A pure router — it performs no work; it reads the post-PULSE state and routes the tick to one destination. PULSE already did all the observing/settling; SWITCHBOARD only <em>dispatches</em>.</li>
+      <li><b class="k">The work selector.</b> A pure router — it performs no work; it reads the post-PULSE state and routes the tick. PULSE already did all the observing/settling; SWITCHBOARD only decides <b class="k">whether there is work to dispatch this tick</b>.</li>
       <li><b class="k">Inputs it reads</b> (snapshot / MANIFEST, after PULSE): free worker slots (<code>worker_count</code> − in-flight) · a ready block to dispatch · a review due (PULL cadence) · a block cleared-ahead for the architect · the session-end condition.</li>
-      <li><b class="k">Destinations:</b>
+      <li><b class="k">Two destinations:</b>
         <ul>
-          <li><b class="k">fill slot → ND-05</b> — a free slot + a ready engineer block.</li>
-          <li><b class="k">clear ahead → ND-15 → ND-08</b> — architect work pending.</li>
-          <li><b class="k">review → ND-15 → ND-14</b> — a review is due.</li>
-          <li><b class="k">session:end → End</b> — the end condition holds.</li>
-          <li><b class="k">monitor → ND-09</b> — <b class="k">none of the above</b> (the else arm): nothing dispatchable this tick.</li>
+          <li><b class="k">dispatch → ND-15</b> — there is work to assign; hand off to the dispatch router, which picks the agent type.</li>
+          <li><b class="k">session:end → ANCHOR</b> — the end condition holds; the run terminates.</li>
         </ul>
       </li>
+      <li>An <b class="k">idle</b> tick (nothing ready, not ending) simply falls through to the next PULSE — there is no longer an "Observe" / monitor node (observation already happened in PULSE). SWITCHBOARD <em>routes</em>; ND-15 <em>selects</em>.</li>
     </ul>
-    <div class="rule"><b class="k">Open (not locked).</b> (1) <b class="k">monitor / ND-09 likely redundant</b> — observation already happened in PULSE (02-06 / 02-07); an idle tick should loop back to the next PULSE, not flow into an "Observe" node. (2) <b class="k">XOR vs parallel</b> — drawn as exclusive (one destination), but a single tick may need several (fill N slots <em>and</em> fire a due review). Unresolved.</div>
+    <div class="rule"><b class="k">Open (not locked).</b> <b class="k">XOR vs parallel</b> — drawn as exclusive (one destination), but a single tick may legitimately need several (fill N slots <em>and</em> fire a due review). Whether SWITCHBOARD/ND-15 split parallel or PULSE loops faster is unresolved.</div>
     </div>
   </details>
 
-  <p class="lead" style="margin-top:var(--sp-8)">ND-04 onward (the engineer/done/wall cluster) are on the
-    core map (<a href="workflow.html">workflow.html</a>) but not yet locked — under the §3.N redraw. Their
-    notes land here as each is approved.</p>
+  <details class="node">
+    <summary><span class="nnum">ND-15</span> DISPATCH<span class="lane-tag">tick · TRON-RELAY</span></summary>
+    <div class="body">
+    <ul>
+      <li><b class="k">The dispatch router.</b> Reached from SWITCHBOARD's <code>dispatch</code> arm — SWITCHBOARD already decided there <em>is</em> work; ND-15 only <b class="k">selects which agent type</b> and spawns/assigns it with its <b class="k">BRIEF</b> (see <em>Agent sub-processes</em>).</li>
+      <li><b class="k">Three arms</b> (each a straight run off the col-4 spine):
+        <ul>
+          <li><b class="k">worker → ND-11 ENGINEER</b> (up) — a free slot + a ready engineer block.</li>
+          <li><b class="k">reviewer → ND-14 REVIEW</b> (down) — a review is due.</li>
+          <li><b class="k">architect → ND-12 ARCHITECT</b> (right) — a block cleared-ahead / architect work pending.</li>
+        </ul>
+      </li>
+    </ul>
+    <div class="rule">Same <b class="k">XOR-vs-parallel</b> open question as SWITCHBOARD (above): drawn exclusive, but a tick may need more than one arm.</div>
+    </div>
+  </details>
+
+  <h2>Agent sub-processes</h2>
+
+  <div class="rule"><b class="k">Every agent the same shape.</b> Engineer, architect, and reviewer are spawned
+    identically: a <b class="k">BRIEF</b> dispatch object on the start event (<em>"you are <code>agents/&lt;role&gt;.md</code>
+    + your ID + your task"</em>; per-task prompts live in <code>tron/pmt/</code>), then <b class="k">INBOX</b>
+    (a message-catch) → <b class="k">HOPPER</b> (a durable, pull-drained mailbox — one message = one file) → the
+    agent drains its hopper and works, reading the per-task prompt. Consults are synchronous
+    <b class="k">Send → Receive</b> under TRON observation, logged (<code>side:observe</code>, no advance) to
+    <b class="k">LOGS</b>, bounded by a <b class="k">non-interrupting timer</b> that escalates to <code>FLEET
+    INTAKE</code> <em>without</em> cancelling the work. Outcomes are reported by dropping a message at
+    <code>FLEET INTAKE</code> → the <b class="k">FLEET HOPPER</b>; PULSE pulls it on its cadence
+    (<b class="k">agents never wake PULSE</b>).</div>
+
+  <details class="node">
+    <summary><span class="nnum">ND-11</span> ENGINEER<span class="lane-tag">per block · ENGINEER</span></summary>
+    <div class="body">
+    <ul>
+      <li>A worker's <b class="k">build drill-down</b> (core <code>ND-11</code> cat). Spawned <b class="k">per block</b>; <b class="k">terminates</b> when its block resolves. BRIEF = <code>PMT-ENG-BRIEF</code>.</li>
+      <li><b class="k">11-01 ENGINEER INBOX</b> (message-catch) → writes <b class="k">ENGINEER HOPPER</b> (the durable mailbox). On the core map this same inbox is the <code>ENGINEER INBOX</code> event beside the cat.</li>
+      <li><b class="k">11-03 &lt;build&gt;</b> — builds the block; reads its hopper (top-¼) + the per-task prompt <code>&lt;PMT-ENG-*&gt;</code> from <code>tron/pmt</code> (top-¾).</li>
+      <li><b class="k">11-04</b> (gateway) — report the outcome, or consult the architect.</li>
+      <li><b class="k">11-05 FLEET INTAKE</b> (message-end) — <b class="k">report the outcome to TRON</b> when the build reaches a terminal result (<code>done</code> / <code>wall</code>) → the <b class="k">FLEET HOPPER</b>; PULSE pulls it. This is the normal exit.</li>
+      <li><b class="k">11-06 ASK ARCHITECT</b> (send) → <b class="k">11-07 ARCHITECT REPLY</b> (receive) → resume the build — a <b class="k">peer consult</b> to the architect (<code>worker.question_peer</code>), logged to <b class="k">LOGS</b> (<code>side:observe</code>).</li>
+      <li><b class="k">11-08 no reply</b> (non-interrupting timer on 11-07) — architect silent past the bound → <b class="k">11-09 FLEET INTAKE</b> (message-end): contact TRON (FLEET HOPPER → operator). The build <b class="k">keeps waiting</b> — the timer escalates without cancelling.</li>
+    </ul>
+    </div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-12</span> ARCHITECT<span class="lane-tag">persistent · ARCHITECT</span></summary>
+    <div class="body">
+    <ul>
+      <li>The <b class="k">persistent, forward-only</b> consultant's drill-down (core <code>ND-12</code> cat). <b class="k">One architect, alive throughout the run</b> (<code>tron.md</code> R1); pool-excluded (its own concurrency knob). <b class="k">Loops</b>: receive work → do it → report → wait for the next. BRIEF = <code>PMT-ARCH-BRIEF</code>.</li>
+      <li><b class="k">12-01 ARCHITECT INBOX</b> (message-catch) → <b class="k">ARCHITECT HOPPER</b>.</li>
+      <li><b class="k">12-03 &lt;work&gt;</b> — reads its hopper (top-¼) + a per-task prompt <code>&lt;PMT-ARCH-*&gt;</code> from <code>tron/pmt</code> (top-¾), and the <b class="k">Project Docs</b> store (git-tracked core files).</li>
+      <li><b class="k">12-04</b> (gateway) — report, or ask TRON.</li>
+      <li><b class="k">12-05 FLEET INTAKE</b> (message-<em>throw</em>) — report to TRON: ONE message → FLEET HOPPER; PULSE pulls it. A throw, <b class="k">not</b> an end — the architect <b class="k">persists and loops back</b> for the next work, it doesn't terminate.</li>
+      <li><b class="k">12-06 ASK TRON</b> (send) → <b class="k">12-07 TRON REPLY</b> (receive) → resume the work — a synchronous question to TRON. <b class="k">No escalation timer</b> here (the counterpart is TRON itself).</li>
+    </ul>
+    </div>
+  </details>
+
+  <details class="node">
+    <summary><span class="nnum">ND-14</span> REVIEW<span class="lane-tag">per milestone · REVIEWER</span></summary>
+    <div class="body">
+    <ul>
+      <li>The reviewer's drill-down (core <code>ND-14</code> cat). Dispatched <b class="k">per milestone</b>; reads scope + Project Docs, reviews, forms a verdict, <b class="k">delivers it to the architect</b>. BRIEF = <code>PMT-01</code> (the reviewer's prompt file).</li>
+      <li><b class="k">14-01 REVIEWER INBOX</b> (message-catch) → <b class="k">REVIEWER HOPPER</b>.</li>
+      <li><b class="k">14-02 &lt;type&gt; Review</b> — the review itself.</li>
+      <li><b class="k">14-03 Confer?</b> (gateway) — mid-review: confer with the architect (flag / question / clarify), or <b class="k">done</b>.</li>
+      <li><b class="k">done → ARCHITECT INBOX</b> (the <b class="k">end-event IS the send</b>: message-end) — delivers the review to the architect (lands in <b class="k">ARCHITECT HOPPER</b>).</li>
+      <li><b class="k">14-04 Ask architect</b> (send) → <b class="k">14-05 Architect reply</b> (receive) → resume the review — a synchronous consult to the persisted architect, under TRON observation; logged to <b class="k">LOGS</b>, no MANIFEST touch.</li>
+      <li><b class="k">14-06 no reply</b> (non-interrupting timer on 14-05) — bounds the wait <em>without</em> cancelling the review → <b class="k">14-07 FLEET INTAKE</b> (message-end): escalate to TRON (FLEET HOPPER → operator).</li>
+    </ul>
+    </div>
+  </details>
+
+  <h2>Core map — events, stores &amp; channels</h2>
+  <p class="lead" style="margin-top:0">The base-map elements around the spine. Most are detailed in the cards
+    above (PULSE / PARLEY); collected here so every BPMN element on the canvas has a note.</p>
+
+  <ul>
+    <li><b class="k">TRON:START</b> (start event) — the run's entry; → <code>ND-01 BOOTUP</code>.</li>
+    <li><b class="k">ANCHOR</b> (end event) — the <b class="k">session-end terminal</b>; SWITCHBOARD's <code>session:end</code> arm lands here.</li>
+    <li><b class="k">METRONOME</b> (<code>TM1</code>, timer) — the <b class="k">cadence floor</b>; fires PULSE on its tunable interval (docks PULSE top-¾). The only core PULSE trigger (see PULSE → Trigger).</li>
+    <li><b class="k">FLEET INTAKE</b> (message-catch) — the fleet's single <b class="k">drop point</b>; every agent reports here; writes the <b class="k">FLEET HOPPER</b>.</li>
+    <li><b class="k">FLEET HOPPER</b> (data store) — TRON's durable inbound pile (one message = one file). PULSE drains it on its cadence (<b class="k">pull</b>, <code>02-12</code>). The undirected association <code>FLEET HOPPER ⟷ PULSE</code>: PULSE reads, and writes on claim/drop.</li>
+    <li><b class="k">OPERATOR INTAKE</b> (message-catch) — the operator's own inbound channel → <code>PARLEY (ND-18)</code>; event-immediate, <b class="k">no hopper</b> (operator is present). Distinct from <code>OPERATOR INBOX</code> (the outbound throw, TRON → operator).</li>
+    <li><b class="k">ENGINEER INBOX</b> (message-catch, beside the ENGINEER cat) — the engineer's inbox on the core map; the same mailbox as <code>11-01</code> inside the ENGINEER sub, surfaced one zoom level up.</li>
+    <li><b class="k">Project Docs ×2</b> (data stores; <code>PD3</code> engineer-side, <code>PD2</code> architect-side) — the project's <b class="k">git-tracked core files</b> (pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs). Read-only to the fleet: <code>PD3</code> feeds <code>ENGINEER</code> + <code>PULSE</code>; <code>PD2</code> feeds <code>ARCHITECT</code> + the reviewer.</li>
+  </ul>
 
 </div>
 </body>
