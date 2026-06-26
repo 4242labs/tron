@@ -56,7 +56,7 @@
     their parent's card.</p>
 
   <div class="rule"><b class="k">Escalation invariant.</b> Anything outside the normal path is a wall:
-    TRON-DET detects it, <span class="llm">TRON-AIDE</span> informs the operator, the operator decides.
+    TRON-RELAY detects it, <span class="llm">TRON-AIDE</span> informs the operator, the operator decides.
     TRON never silently improvises a resolution.</div>
 
   <div class="rule"><b class="k">Transport is deterministic; content is free.</b> Any agent may message
@@ -79,10 +79,10 @@
   <h2>Core nodes</h2>
 
   <details class="node">
-    <summary><span class="nnum">ND-01</span> BOOTUP<span class="lane-tag">once · TRON-DET</span></summary>
+    <summary><span class="nnum">ND-01</span> BOOTUP<span class="lane-tag">once · TRON-RELAY</span></summary>
     <div class="body">
     <ul>
-      <li>Runs at every <code>tron start</code> — first run <em>and</em> every crash/restart. The spine is all TRON-DET; it <b class="k">forks on whether a run is already in progress</b>, then hands to <code>ND-02 PULSE</code>.</li>
+      <li>Runs at every <code>tron start</code> — first run <em>and</em> every crash/restart. The spine is all TRON-RELAY; it <b class="k">forks on whether a run is already in progress</b>, then hands to <code>ND-02 PULSE</code>.</li>
       <li><b class="k">ND-01-01 Spawn TRON-AIDE:</b> the operator-facing advisor boots first, ready for the gates or an escalation.</li>
       <li><b class="k">ND-01-02 Refresh trunk:</b> <code>git fetch</code> + <code>merge --ff-only</code> — read-only. TRON reads trunk; agents write it.</li>
       <li><b class="k">ND-01-03 Refresh PRs:</b> query the forge for open PRs (the other snapshot input — not in the git tree).</li>
@@ -101,7 +101,7 @@
       <div class="body"><ul>
         <li>An operator-input gate, three lanes. The whole conversation stays between <span class="llm">AIDE</span> and the operator; <b class="k">only a resolved, concrete set crosses to DET</b>.</li>
         <li><b class="k">08-01 Assign TRON-AIDE</b> (DET): hands the scope question to AIDE.</li>
-        <li><b class="k">08-02 Ask scope</b> (AIDE) → <b class="k">08-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases).</li>
+        <li><b class="k">08-02 Ask scope</b> (AIDE) → <b class="k">08-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases). AIDE reads the <b class="k">Project Docs</b> store (git-tracked core files) to ground the dialogue — list available blocks/phases, map fuzzy prose → block ids.</li>
         <li><b class="k">08-04 Resolved?</b> (AIDE gateway): does the answer resolve to a concrete block set? <b class="k">clarify</b> loops back to <em>Ask scope</em>. AIDE turns fuzzy prose into block ids before anything reaches DET.</li>
         <li><b class="k">08-05 Validate scope</b> (DET): every id ∈ pipeline <em>and</em> dependencies satisfiable (each <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency or empty id-set is invalid → re-ask</b> (loops back to Ask scope). <b class="k">First run</b> (empty archive-history): an empty scope is legitimate — the architect hasn't authored yet — so it passes; a truly unscaffolded pipeline is an upstream concern (TRON never scaffolds).</li>
         <li><b class="k">08-06 Lock scope</b> (DET): ends the gate; done blocks already in scope are skipped.</li>
@@ -112,7 +112,7 @@
       <summary><span class="nnum">ND-01-09</span> SET COUNTS<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>Same shape as SET SCOPE. Captures the two concurrency knobs written to the MANIFEST: <b class="k">worker_count</b> (engineers + reviewers share this pool) and <b class="k">architect_count</b> (dedicated, pool-excluded; the throughput knob).</li>
-        <li><b class="k">09-01 Assign TRON-AIDE</b> → <b class="k">09-02 Ask counts</b> → <b class="k">09-03 Answer counts</b>.</li>
+        <li><b class="k">09-01 Assign TRON-AIDE</b> → <b class="k">09-02 Ask counts</b> (AIDE reads <b class="k">Project Docs</b>) → <b class="k">09-03 Answer counts</b>.</li>
         <li><b class="k">09-04 Confirmed?</b> (AIDE gateway): <b class="k">hard floor ≥ 1 each</b> (<b class="k">revise</b> loops back below that), and <b class="k">advises</b> on unusual-but-valid counts, accepting on confirm.</li>
         <li><b class="k">09-05 Validate counts</b> (DET): an invalid set (below floor / non-integer) is <b class="k">invalid → re-ask</b> (loops back to Ask counts). <b class="k">09-06 Lock counts</b>: only the confirmed, valid set crosses.</li>
       </ul></div>
@@ -122,10 +122,10 @@
       <summary><span class="nnum">ND-01-14</span> RESOLVE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>Reached only from <code>ND-01-12 = conflict</code> — a resume whose MANIFEST can't reconcile against the current pipeline/fleet. Resolves <b class="k">entirely inside this sub — no exit to the parent</b>.</li>
-        <li><b class="k">14-01 Assign TRON-AIDE</b> → <b class="k">14-02 Brief + offer options</b> (AIDE: <em>repair / restart / halt</em>) → <b class="k">14-03 Decide</b> (OPERATOR).</li>
+        <li><b class="k">14-01 Assign TRON-AIDE</b> → <b class="k">14-02 Brief + offer options</b> (AIDE — reads <b class="k">Project Docs</b> to brief; offers <em>repair / restart / halt</em>) → <b class="k">14-03 Decide</b> (OPERATOR).</li>
         <li><b class="k">14-04 Choice?</b> (AIDE gateway): <b class="k">clarify</b> loops back to <em>Brief</em>, then <b class="k">proceed</b> to the split <b class="k">14-05</b>:</li>
-        <li><b class="k">repair → 14-06</b> (throw <code>→ 01-11</code>): the operator fixed the MANIFEST out-of-band; re-enter <b class="k">Reconcile</b> so the fix is re-validated, never trusted blind.</li>
-        <li><b class="k">restart → 14-07</b> (throw <code>→ 01-08</code>): discard, start clean at Set scope.</li>
+        <li><b class="k">repair → 14-06</b> (link <code>repair</code> → catch at <b class="k">Reconcile</b>): the operator fixed the MANIFEST out-of-band; re-enter Reconcile so the fix is re-validated, never trusted blind.</li>
+        <li><b class="k">restart → 14-07</b> (link <code>restart</code> → catch at <b class="k">Set scope</b>): discard, start clean.</li>
         <li><b class="k">halt → 14-08 Archive MANIFEST → 14-09</b> (terminate): the live MANIFEST is <b class="k">archived</b> before the terminate, else the next start resumes back into the same conflict.</li>
         <li><b class="k">Sends:</b> on a resume-conflict there may be live workers, so the operator's decision can message them — delivered to each worker's hopper. <b class="k">repair / restart</b> re-enter the loop (the first PULSE tick proceeds normally). <b class="k">halt</b> has no following PULSE — so any line it must send goes out <em>synchronously</em> at the terminate (same as <code>ND-01-17</code>). Same shared conversation skeleton as <code>ND-02-10</code>, different theme.</li>
       </ul></div>
@@ -134,7 +134,7 @@
   </details>
 
   <details class="node">
-    <summary><span class="nnum">ND-02</span> PULSE<span class="lane-tag">tick · TRON-DET (+ AIDE)</span></summary>
+    <summary><span class="nnum">ND-02</span> PULSE<span class="lane-tag">tick · TRON-RELAY (+ AIDE)</span></summary>
     <div class="body">
     <ul>
       <li>The recurring bounded tick, 20 steps <code>ND-02-01 … ND-02-20</code>. Each tick rebuilds the <b class="k">snapshot</b> from trunk — no drift across crash / off-session.</li>
@@ -185,7 +185,7 @@
       <li><b class="k">status</b> — "where are we?" from snapshot / MANIFEST. No state change. <em>syn: where · progress · report · summary · sitrep.</em></li>
       <li><b class="k">inspect</b> — "show specifics of block X" (worker, PR, history). No state change. <em>syn: show · detail · drill · look · examine.</em></li>
       <li class="grp"><b class="k">Free-form (answer → AIDE)</b></li>
-      <li><b class="k">ask</b> — open question ("has the API-X bug been fixed, and how?"). AIDE composes from existing sources (trunk · PR · review logs — <em>exact source TBD, no store drawn yet</em>); if it can't answer from them, the question is <b class="k">sent to the architect</b> (lands in <code>ARCHITECT HOPPER</code>), answered on a later tick via the normal pipeline, AIDE relays. Answer depth is capped by what those sources record.</li>
+      <li><b class="k">ask</b> — open question ("has the API-X bug been fixed, and how?"). AIDE composes from the <b class="k">Project Docs</b> store (the project's git-tracked core files — pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs), read directly; if it can't answer from them, the question is <b class="k">sent to the architect</b> (lands in <code>ARCHITECT HOPPER</code>), answered on a later tick via the normal pipeline, AIDE relays. Answer depth is capped by what those sources record.</li>
     </ul>
     <div class="rule"><b class="k">Closed enum + synonyms.</b> The command/query verbs are a <b class="k">fixed set</b> (that's what lets <code>18-01 Intent?</code> branch deterministically, no LLM). Each verb has <b class="k">accepted synonyms</b> (above) the engine maps to the canonical verb before dispatch; anything outside the set isn't a command → it falls to the answer/ask path. <b class="k">pause ⇄ resume</b> must always exist as a pair.</div>
     <div class="rule"><b class="k">Why not a fleet tag:</b> commands/queries have a fixed verb and need no body interpretation — running them through the one LLM classify would waste it on something deterministic. They also need no correlation. <code>operator.decision</code> is the one operator message that threads back into PULSE (Settle), because it must be matched to a parked case.</div>
@@ -207,7 +207,7 @@
   </details>
 
   <details class="node">
-    <summary><span class="nnum">ND-18</span> PARLEY<span class="lane-tag">operator channel · TRON-DET + AIDE</span></summary>
+    <summary><span class="nnum">ND-18</span> PARLEY<span class="lane-tag">operator channel · TRON-RELAY + AIDE</span></summary>
     <div class="body">
     <ul>
       <li><b class="k">The operator-message handler.</b> Its own base-map node, fed by the <b class="k">OPERATOR INTAKE</b> catch (<code>OPI</code>) — a channel <b class="k">separate from PULSE and the fleet hopper</b>. <b class="k">Event-immediate</b> (the catch fires PARLEY per message) and <b class="k">no hopper</b>: the operator is present, so the exchange is synchronous and nothing batches. Two lanes — DET (deterministic) + AIDE (composes copy / answers).</li>
@@ -216,9 +216,9 @@
       <li><b class="k">18-02 Apply command / decision</b> (DET) — a <b class="k">command</b> (<code>halt</code>/<code>pause</code>/<code>rescope</code>) is applied to run-state (PULSE honors it next tick); a <b class="k">decision</b> (reply to a parked case) is handed to <code>02-08 Settle</code>, matched by correlation id.</li>
       <li><b class="k">18-03 Acted</b> (end).</li>
       <li class="grp"><b class="k">ANSWER arm</b></li>
-      <li><b class="k">18-04 Compose answer</b> (<span class="llm">AIDE</span>) — composes the reply. <b class="k">What it reads is not yet defined</b> (it would draw on existing sources — trunk, PRs, the architect's review logs — but no store is drawn until we agree one). <em>TBD.</em></li>
-      <li><b class="k">18-05 Answerable?</b> (gateway) — could AIDE answer from those sources?</li>
-      <li><b class="k">18-06 OPERATOR INTAKE</b> (message-throw, <b class="k">yes</b>) — direct send to the present operator (no hopper). Named for the catch it pairs with. → <b class="k">18-07 Replied</b> (end).</li>
+      <li><b class="k">18-04 Compose answer</b> (<span class="llm">AIDE</span>) — composes the reply, reading the <b class="k">Project Docs</b> store (the project's git-tracked core files — pipeline, <code>blocks/*.md</code>, <code>agents/*.md</code>, project docs). Read-only.</li>
+      <li><b class="k">18-05 Answerable?</b> (gateway) — could AIDE answer from Project Docs?</li>
+      <li><b class="k">18-06 OPERATOR INBOX</b> (message-throw, <b class="k">yes</b>) — direct send to the operator's inbox (no hopper; operator is present). Named for the recipient's inbox, like <code>ARCHITECT INBOX</code> — <em>not</em> <code>OPERATOR INTAKE</code> (that's the inbound catch, operator → TRON). → <b class="k">18-07 Replied</b> (end).</li>
       <li><b class="k">18-08 ARCHITECT INBOX</b> (message-throw, <b class="k">no</b>) — the question is sent to the architect (the durable knowledge-holder); it lands in the <b class="k">ARCHITECT HOPPER</b>, is answered on a later tick via the normal pipeline, and AIDE relays to the operator. Named for the catch it pairs with. → <b class="k">18-09 Deferred</b> (end).</li>
     </ul>
     <div class="rule"><b class="k">Synchronous, not deferred.</b> Deferral (raise-and-defer) is only for unsolicited <em>worker</em> escalations, where the operator may be away. Operator-initiated exchanges here resolve live; the one async seam is the architect fallback, which rides the pipeline. <b class="k">No OUTBOX, no queue</b> — every send is direct (operator) or to a recipient hopper (architect).</div>
@@ -227,7 +227,7 @@
   </details>
 
   <details class="node">
-    <summary><span class="nnum">ND-03</span> SWITCHBOARD<span class="lane-tag">tick · TRON-DET — in review</span></summary>
+    <summary><span class="nnum">ND-03</span> SWITCHBOARD<span class="lane-tag">tick · TRON-RELAY — in review</span></summary>
     <div class="body">
     <ul>
       <li><b class="k">The work selector.</b> A pure router — it performs no work; it reads the post-PULSE state and routes the tick to one destination. PULSE already did all the observing/settling; SWITCHBOARD only <em>dispatches</em>.</li>
