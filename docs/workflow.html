@@ -154,7 +154,7 @@ const NODES = [
   {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:2, w:96, h:68, sub:'BOOTUP'},
   {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:2, w:96, h:68, sub:'PULSE'},
   {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:3, row:2, w:48, h:48, lblPos:'b'},   // work selector hub → dispatch or session end
-  {id:'ND-15', kind:'xor',   name:'',               lane:'L_TRON', col:4, row:2, w:48, h:48, lblPos:'b'},   // dispatch router → worker (up · ND-11) · reviewer (down · ND-14) · architect (right · ND-12)
+  {id:'ND-15', kind:'inc',   name:'',               lane:'L_TRON', col:4, row:2, w:48, h:48, lblPos:'b'},   // dispatch router — INCLUSIVE: fires 1..N arms per tick by condition → worker (up · ND-11) and/or reviewer (down · ND-14) and/or architect (right · ND-12)
   // row 3 — the WAKE trigger (sub-process) + the fleet intake/hopper that feed it, below PULSE
   {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
   {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:3, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
@@ -192,7 +192,7 @@ const COMMS = [
   ['PD2','ND-14','',{from:{s:'b',d:0.5}, to:{s:'r',d:0.5}, undirected:true}],   // Project Docs → reviewer (read; from store bottom → cat right side)
 ];
 
-const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', mthrow:'intermediateThrowEvent', datastore:'dataStoreReference'};
+const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', inc:'inclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', mthrow:'intermediateThrowEvent', datastore:'dataStoreReference'};
 
 /* ════════════ CORE XML ════════════ */
 const byId = Object.fromEntries(NODES.map(n=>[n.id,n]));
@@ -294,7 +294,7 @@ function coreXML(){
     let lbl='';
     if(n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch'||n.kind==='timer'||n.kind==='mcatch'||n.kind==='mthrow'||n.kind==='datastore')
       lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${cx-38}" y="${n.lblAbove?n.y-34:n.y+n.h+3}" width="76" height="28"/></bpmndi:BPMNLabel>`;   // id+name on two lines, clear of the circle
-    else if(n.kind==='xor' && n.lblPos){   // explicit gateway-label side, kept off the diamond's lines
+    else if((n.kind==='xor'||n.kind==='inc') && n.lblPos){   // explicit gateway-label side, kept off the diamond's lines
       const W=96, p={ l:[n.x-W-6, cy-14], r:[n.x+n.w+6, cy-14], t:[cx-W/2, n.y-30], b:[cx-W/2, n.y+n.h+4],
                       bl:[n.x-W+4, n.y+n.h+4], br:[n.x+n.w-4, n.y+n.h+4] }[n.lblPos];
       lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(p[0])}" y="${Math.round(p[1])}" width="${W}" height="28"/></bpmndi:BPMNLabel>`; }
