@@ -93,6 +93,7 @@
       <li><b class="k">Fresh path:</b> <b class="k">ND-01-08 Set scope</b> → <b class="k">ND-01-09 Set counts</b> → <b class="k">ND-01-10 Write MANIFEST</b> (the MANIFEST is born here).</li>
       <li><b class="k">Resume path:</b> <b class="k">ND-01-11 Reconcile</b> loads the MANIFEST and brings it in line with reality — scope vs current pipeline, plus pinging each claimed agent. <b class="k">ND-01-12 Consistent?</b> → clean → Cap pool; irreconcilable → <code>ND-01-14 Resolve</code>.</li>
       <li><b class="k">ND-01-13 Cap pool:</b> records the worker + architect concurrency ceiling. <b class="k">Bootup spawns no agents</b> — they are spawned reactively in <code>PULSE</code>, bounded by this cap.</li>
+      <li><b class="k">ND-01-15 / ND-01-16 link catches:</b> the landing points for <code>ND-01-14 RESOLVE</code>'s throws. <b class="k">01-15 repair</b> ← <code>01-14-06</code>: re-enters <b class="k">Reconcile</b> (01-11) so the operator's out-of-band MANIFEST fix is re-validated, never trusted blind. <b class="k">01-16 restart</b> ← <code>01-14-07</code>: re-enters <b class="k">Set scope</b> (01-08) for a clean start. (Link-style pairing: the throw's name matches the catch's.)</li>
     </ul>
     <div class="subhead">Sub-processes</div>
 
@@ -121,12 +122,12 @@
     <details class="node">
       <summary><span class="nnum">ND-01-14</span> RESOLVE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
-        <li>Reached only from <code>ND-01-12 = conflict</code> — a resume whose MANIFEST can't reconcile against the current pipeline/fleet. Resolves <b class="k">entirely inside this sub — no exit to the parent</b>.</li>
-        <li><b class="k">14-01 Assign TRON-AIDE</b> → <b class="k">14-02 Brief + offer options</b> (AIDE — reads <b class="k">Project Docs</b> to brief; offers <em>repair / restart / halt</em>) → <b class="k">14-03 Decide</b> (OPERATOR).</li>
-        <li><b class="k">14-04 Choice?</b> (AIDE gateway): <b class="k">clarify</b> loops back to <em>Brief</em>, then <b class="k">proceed</b> to the split <b class="k">14-05</b>:</li>
-        <li><b class="k">repair → 14-06</b> (link <code>repair</code> → catch at <b class="k">Reconcile</b>): the operator fixed the MANIFEST out-of-band; re-enter Reconcile so the fix is re-validated, never trusted blind.</li>
-        <li><b class="k">restart → 14-07</b> (link <code>restart</code> → catch at <b class="k">Set scope</b>): discard, start clean.</li>
-        <li><b class="k">halt → 14-08 Archive MANIFEST → 14-09</b> (terminate): the live MANIFEST is <b class="k">archived</b> before the terminate, else the next start resumes back into the same conflict.</li>
+        <li>Reached only from <code>ND-01-12 = conflict</code> — a resume whose MANIFEST can't reconcile against the current pipeline/fleet. Resolves <b class="k">entirely inside this sub — no exit to the parent</b>. <em>(Its steps render <code>ND-01-14-NN</code> on the canvas; shortened to <code>01-14-NN</code> here to stay distinct from <code>ND-14</code> REVIEW's <code>14-NN</code>.)</em></li>
+        <li><b class="k">01-14-01 Assign TRON-AIDE</b> → <b class="k">01-14-02 Brief + offer options</b> (AIDE — reads <b class="k">Project Docs</b> to brief; offers <em>repair / restart / halt</em>) → <b class="k">01-14-03 Decide</b> (OPERATOR).</li>
+        <li><b class="k">01-14-04 Choice?</b> (AIDE gateway): <b class="k">clarify</b> loops back to <em>Brief</em>, then <b class="k">proceed</b> to the split <b class="k">01-14-05</b>:</li>
+        <li><b class="k">repair → 01-14-06</b> (link <code>repair</code> → catch at <b class="k">Reconcile</b>): the operator fixed the MANIFEST out-of-band; re-enter Reconcile so the fix is re-validated, never trusted blind.</li>
+        <li><b class="k">restart → 01-14-07</b> (link <code>restart</code> → catch at <b class="k">Set scope</b>): discard, start clean.</li>
+        <li><b class="k">halt → 01-14-08 Archive MANIFEST → 01-14-09</b> (terminate): the live MANIFEST is <b class="k">archived</b> before the terminate, else the next start resumes back into the same conflict.</li>
         <li><b class="k">Sends:</b> on a resume-conflict there may be live workers, so the operator's decision can message them — delivered to each worker's hopper. <b class="k">repair / restart</b> re-enter the loop (the first PULSE tick proceeds normally). <b class="k">halt</b> has no following PULSE — so any line it must send goes out <em>synchronously</em> at the terminate (same as <code>ND-01-17</code>). Same shared conversation skeleton as <code>ND-02-10</code>, different theme.</li>
       </ul></div>
     </details>
@@ -199,7 +200,7 @@
       <div class="body"><ul>
         <li>The worker-escalation conversation. Same skeleton as <code>ND-01-14</code>, different theme. It does <b class="k">not</b> decide inline — a blocking operator conversation would break the bounded tick. It <b class="k">raises and defers</b> (the Temporal-signal / task-token pattern).</li>
         <li><b class="k">10-01 Assign TRON-AIDE</b> → <b class="k">10-02 Brief + offer options</b> (AIDE composes the operator brief).</li>
-        <li><b class="k">10-03 Send to operator</b> (message-throw): the ask is sent to the operator, stamped with a <b class="k">correlation id</b> so the reply can be matched back to this case.</li>
+        <li><b class="k">10-03 OPERATOR INBOX</b> (message-throw): the ask is sent to the operator's inbox (named for the recipient's inbox, like <code>ARCHITECT INBOX</code> / <code>18-06</code>), stamped with a <b class="k">correlation id</b> so the reply can be matched back to this case.</li>
         <li><b class="k">10-04 Mark pending</b> (DET) → <b class="k">End: Awaiting operator</b>. The tick continues; the operator's reply arrives as a command (drained at <code>02-17</code>) on a later tick, where <code>02-08 Settle</code> applies it.</li>
         <li>Outcomes are <b class="k">case-dependent / freeform</b> (resume-session · retry-fresh · skip-block · reassign · halt), carried in the reply payload — not a fixed gateway split.</li>
       </ul></div>
@@ -308,13 +309,13 @@
     <summary><span class="nnum">ND-14</span> REVIEW<span class="lane-tag">per milestone · REVIEWER</span></summary>
     <div class="body">
     <ul>
-      <li>The reviewer's drill-down (core <code>ND-14</code> cat). Dispatched <b class="k">per milestone</b>; reads scope + Project Docs, reviews, forms a verdict, <b class="k">delivers it to the architect</b>. BRIEF = <code>PMT-01</code> (the reviewer's prompt file).</li>
-      <li><b class="k">14-01 REVIEWER INBOX</b> (message-catch) → <b class="k">REVIEWER HOPPER</b>.</li>
-      <li><b class="k">14-02 &lt;type&gt; Review</b> — the review itself.</li>
-      <li><b class="k">14-03 Confer?</b> (gateway) — mid-review: confer with the architect (flag / question / clarify), or <b class="k">done</b>.</li>
+      <li>The reviewer's drill-down (core <code>ND-14</code> cat). Dispatched <b class="k">per milestone</b>; reads scope + Project Docs, reviews, forms a verdict, <b class="k">delivers it to the architect</b>. BRIEF = <code>PMT-REV-BRIEF</code> (its prompt file in <code>tron/pmt</code>; same form as <code>PMT-ENG-BRIEF</code> / <code>PMT-ARCH-BRIEF</code>).</li>
+      <li><b class="k">14-01 REVIEWER INBOX</b> (message-catch) → <b class="k">14-02 REVIEWER HOPPER</b> (the store takes its own step id).</li>
+      <li><b class="k">14-03 &lt;type&gt; Review</b> — the review itself.</li>
+      <li><b class="k">14-04 Confer?</b> (gateway) — mid-review: confer with the architect (flag / question / clarify), or <b class="k">done</b>.</li>
       <li><b class="k">done → ARCHITECT INBOX</b> (the <b class="k">end-event IS the send</b>: message-end) — delivers the review to the architect (lands in <b class="k">ARCHITECT HOPPER</b>).</li>
-      <li><b class="k">14-04 Ask architect</b> (send) → <b class="k">14-05 Architect reply</b> (receive) → resume the review — a synchronous consult to the persisted architect, under TRON observation; logged to <b class="k">LOGS</b>, no MANIFEST touch.</li>
-      <li><b class="k">14-06 no reply</b> (non-interrupting timer on 14-05) — bounds the wait <em>without</em> cancelling the review → <b class="k">14-07 FLEET INTAKE</b> (message-end): escalate to TRON (FLEET HOPPER → operator).</li>
+      <li><b class="k">14-05 Ask architect</b> (send) → <b class="k">14-06 Architect reply</b> (receive) → resume the review — a synchronous consult to the persisted architect, under TRON observation; logged to <b class="k">LOGS</b>, no MANIFEST touch.</li>
+      <li><b class="k">14-07 no reply</b> (non-interrupting timer on 14-06) — bounds the wait <em>without</em> cancelling the review → <b class="k">14-08 FLEET INTAKE</b> (message-end): escalate to TRON (FLEET HOPPER → operator).</li>
     </ul>
     </div>
   </details>

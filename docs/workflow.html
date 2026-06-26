@@ -449,7 +449,7 @@ const FLOW = {
     startPos:[-1,0],
     steps:[
       {n:'ENGINEER INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // T0 11-01 — message catch (left); writes the hopper
-      {n:'ENGINEER HOPPER', kind:'store', pos:[-0.2,-1]},               // T1 — durable mailbox; above the build's ¼ point
+      {n:'ENGINEER HOPPER', kind:'store', pos:[-0.2,-1]},               // T1 11-02 — durable mailbox (store takes its own step id); above the build's ¼ point
       {n:'<build>', kind:'task', pos:[0,0], data:{name:'<PMT-ENG-*>', dir:'in', at:'above', dock:0.75}},   // T2 11-03 — builds the block; reads hopper (¼) + per-task prompt (¾)
       {n:'', kind:'gateway', pos:[1,0], lblPos:'top'},                  // T3 11-04 — report outcome, or consult the architect
       {n:'FLEET INTAKE', kind:'mend', pos:[2,0]},                       // T4 11-05 — report outcome to TRON (done / wall → FLEET HOPPER; PULSE pulls it)
@@ -476,7 +476,7 @@ const FLOW = {
     startPos:[-1,0],
     steps:[
       {n:'ARCHITECT INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},  // T0 12-01 — message catch (left); writes the hopper
-      {n:'ARCHITECT HOPPER', kind:'store', pos:[-0.2,-1]},              // T1 — durable mailbox; sits above the work's ¼ point (prompt takes ¾)
+      {n:'ARCHITECT HOPPER', kind:'store', pos:[-0.2,-1]},              // T1 12-02 — durable mailbox (store takes its own step id); sits above the work's ¼ point (prompt takes ¾)
       {n:'<work>', kind:'task', pos:[0,0], data:{name:'<PMT-ARCH-*>', dir:'in', at:'above', dock:0.75}},   // T2 12-03 — the work; reads its hopper (top-¼) + a per-task prompt from tron/pmt (top-¾)
       {n:'', kind:'gateway', pos:[1,0], lblPos:'top'},                  // T3 12-04 — report, or ask TRON
       {n:'FLEET INTAKE', kind:'mthrow', pos:[2,0]},                     // T4 12-05 — report to TRON: ONE message → FLEET HOPPER; PULSE pulls it (agents never wake PULSE)
@@ -494,18 +494,18 @@ const FLOW = {
       {f:'T6',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // reply → resume the work
     ]},
   'ND-14': { num:'ND-14', name:'REVIEW', owner:'✦  REVIEWER', grid:true,
-    start:'', startData:{name:'BRIEF', id:'PMT-01', dir:'in', at:'below'},   // BRIEF = TRON's dispatch object on spawn (you-are agents/<role>.md + ID + task); id PMT-01 = its prompt file
+    start:'', startData:{name:'PMT-REV-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn (you-are agents/<role>.md + ID + task); prompt file in tron/pmt — matches PMT-ENG/ARCH-BRIEF
     end:'ARCHITECT INBOX', endKind:'message',                           // end-event IS the send: message-end → delivers the review to the architect
     startPos:[-1,0], endPos:[2,0],
     steps:[
       {n:'REVIEWER INBOX', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // T0 14-01 — message catch (left); writes the hopper
-      {n:'REVIEWER HOPPER', kind:'store', pos:[0,-1]},                  // T1 — durable mailbox; reviewer drains it (between inbox and the cat)
-      {n:'<type> Review', kind:'task', pos:[0,0]},                      // T2 14-02 — the reviewer does the review
-      {n:'Confer?', kind:'gateway', pos:[1,0], lblPos:'top'},           // T3 14-03 — mid-review: confer with the architect (flag / question / clarify), or done
-      {n:'Ask architect', kind:'send', pos:[1,1]},                      // T4 14-04 — SEND: direct sync consult to the persisted architect (under TRON observation)
-      {n:'Architect reply', kind:'receive', pos:[0,1], data:{name:'LOGS', store:true, dir:'out', at:'below', dock:0.75}},  // T5 14-05 — RECEIVE (blocks for the reply); logged to LOGS (dock ¾), no MANIFEST touch
-      {n:'no reply', kind:'boundary', interrupting:false, attachTo:'T5', pos:[0,1], lblPos:'bottom'},   // T6 14-06 — NON-interrupting timer: bounds the wait WITHOUT cancelling the review
-      {n:'FLEET INTAKE', kind:'mend', pos:[-0.2,2]},                    // T7 14-07 — message-end: escalate to TRON (FLEET HOPPER → operator); under the ¼ boundary, straight down
+      {n:'REVIEWER HOPPER', kind:'store', pos:[0,-1]},                  // T1 14-02 — durable mailbox (store takes its own step id); reviewer drains it
+      {n:'<type> Review', kind:'task', pos:[0,0]},                      // T2 14-03 — the reviewer does the review
+      {n:'Confer?', kind:'gateway', pos:[1,0], lblPos:'top'},           // T3 14-04 — mid-review: confer with the architect (flag / question / clarify), or done
+      {n:'Ask architect', kind:'send', pos:[1,1]},                      // T4 14-05 — SEND: direct sync consult to the persisted architect (under TRON observation)
+      {n:'Architect reply', kind:'receive', pos:[0,1], data:{name:'LOGS', store:true, dir:'out', at:'below', dock:0.75}},  // T5 14-06 — RECEIVE (blocks for the reply); logged to LOGS (dock ¾), no MANIFEST touch
+      {n:'no reply', kind:'boundary', interrupting:false, attachTo:'T5', pos:[0,1], lblPos:'bottom'},   // T6 14-07 — NON-interrupting timer: bounds the wait WITHOUT cancelling the review
+      {n:'FLEET INTAKE', kind:'mend', pos:[-0.2,2]},                    // T7 14-08 — message-end: escalate to TRON (FLEET HOPPER → operator); under the ¼ boundary, straight down
     ],
     edges:[
       {f:'S',t:'T2'},
