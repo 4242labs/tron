@@ -128,9 +128,9 @@ function headBar({num, name, back}){
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
   {id:'L_ENG', name:'ENGINEER',  rows:[0,0], y:0, h:0},
-  {id:'L_TRON',name:'TRON',      rows:[1,2], y:0, h:0},
-  {id:'L_ARCH',name:'ARCHITECT', rows:[3,3], y:0, h:0},
-  {id:'L_REV', name:'REVIEWERS', rows:[4,4], y:0, h:0},
+  {id:'L_TRON',name:'TRON',      rows:[1,3], y:0, h:0},
+  {id:'L_ARCH',name:'ARCHITECT', rows:[4,4], y:0, h:0},
+  {id:'L_REV', name:'REVIEWERS', rows:[5,5], y:0, h:0},
 ];
 const SHOW_EDGE_LABELS = false;         // edge labels are implicit (docs only) — kept OFF the canvas for a clean diagram
 const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
@@ -144,33 +144,34 @@ const NODES = [
   {id:'ND-11', kind:'task',  name:'ENGINEER',       lane:'L_ENG',  col:4, row:0, w:104,h:89, llm:true, llmId:'LLM-11', sub:'ENGINEER'},   // cat kept; clickable → opens the ENGINEER sub (FLOW['ND-11'])
   {id:'EIN',   kind:'mcatch', name:'ENGINEER INBOX',lane:'L_ENG',  col:5, row:0, w:36, h:36, lblOnly:true},   // engineer's message-catch inbox — right of the cat
 
-  // ── TRON lane · rows 1–2 ──
-  // row 1 — fleet intake + pulse triggers + session anchor + operator intake
-  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
-  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:1, w:50, h:56, lblOnly:true},   // TRON's durable store, right above ND-01; PULSE drains it on its cadence (pull)
+  // ── TRON lane · rows 1–3 ──
+  // row 1 — session anchor + operator intake + PARLEY (above the spine)
   {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:3, row:1, w:36, h:36, lblOnly:true, lblAbove:true},   // session-end terminal (above SWITCHBOARD)
-  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-18, below)
-  // pulse triggers — parked in row 1 above PULSE, dock onto its top at ¼ / ¾ (special: don't size tracks)
-  {id:'TM1',   kind:'timer', name:'METRONOME',      lane:'L_TRON', col:2, row:1, w:36, h:36, lblAbove:true, special:true},   // → PULSE top-¾ (cadence floor)
+  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-18)
+  {id:'ND-18', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — right of OPERATOR INTAKE; own channel, off PULSE
   // row 2 — spine: Start → BOOTUP → PULSE → SWITCHBOARD → dispatch (ND-15)
   {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:2, w:36, h:36, lblOnly:true},
   {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:2, w:96, h:68, sub:'BOOTUP'},
   {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:2, w:96, h:68, sub:'PULSE'},
   {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:3, row:2, w:48, h:48, lblPos:'b'},   // work selector hub → dispatch or session end
   {id:'ND-15', kind:'xor',   name:'',               lane:'L_TRON', col:4, row:2, w:48, h:48, lblPos:'b'},   // dispatch router → worker (up · ND-11) · reviewer (down · ND-14) · architect (right · ND-12)
-  {id:'ND-18', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — right of OPERATOR INTAKE; own channel, off PULSE
+  // row 3 — the WAKE trigger (sub-process) + the fleet intake/hopper that feed it, below PULSE
+  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
+  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:3, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
+  {id:'ND-16', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:2, row:3, w:96, h:68, sub:'WAKE'},   // the tick trigger (below PULSE); clickable → the debounce (cooldown + message|ceiling). Replaces the old METRONOME node — the timer is now the CEILING inside
 
-  // ── ARCHITECT lane · row 3 — ONE row: ARCHITECT cat + PROJECT DOCS only (inbox/hopper/pulse live inside the sub) ──
-  {id:'ND-12', kind:'task',  name:'ARCHITECT',      lane:'L_ARCH', col:6, row:3, w:120,h:100, llm:true, llmId:'LLM-12', sub:'ARCHITECT'},   // cat kept; clickable → opens the ARCHITECT sub (FLOW['ND-12'])
-  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:5, row:3, w:50, h:56, lblOnly:true, lblAbove:true},   // same row as ARCHITECT; single Project Docs — read by ARCHITECT + reviewer
+  // ── ARCHITECT lane · row 4 — ONE row: ARCHITECT cat + PROJECT DOCS only (inbox/hopper/pulse live inside the sub) ──
+  {id:'ND-12', kind:'task',  name:'ARCHITECT',      lane:'L_ARCH', col:6, row:4, w:120,h:100, llm:true, llmId:'LLM-12', sub:'ARCHITECT'},   // cat kept; clickable → opens the ARCHITECT sub (FLOW['ND-12'])
+  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:5, row:4, w:50, h:56, lblOnly:true, lblAbove:true},   // same row as ARCHITECT; single Project Docs — read by ARCHITECT + reviewer
 
-  // ── REVIEWERS lane · row 4 — reviewer cat (its inbox + flag/question loop live inside the REVIEW sub) ──
-  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:4, row:4, w:120,h:100, llm:true, llmId:'LLM-14', sub:'REVIEW'},   // cat kept; clickable → opens the REVIEW sub (FLOW['ND-14'])
+  // ── REVIEWERS lane · row 5 — reviewer cat (its inbox + flag/question loop live inside the REVIEW sub) ──
+  {id:'ND-14', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:4, row:5, w:120,h:100, llm:true, llmId:'LLM-14', sub:'REVIEW'},   // cat kept; clickable → opens the REVIEW sub (FLOW['ND-14'])
 ];
 
 const FLOWS = [
   ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
-  ['TM1','ND-02','',{toTop:0.75}],                                     // metronome timer → PULSE top-¾ (cadence floor)
+  ['ND-16','ND-02','',{from:{s:'t',d:0.75}, to:{s:'b',d:0.75}}],         // WAKE fires the tick → PULSE (up, right side)
+  ['ND-02','ND-16','',{from:{s:'b',d:0.25}, to:{s:'t',d:0.25}}],         // tick complete → back to WAKE (down, left side) — the recurrence loop
   ['OPI','ND-18','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],          // operator intake → PARLEY (right, straight)
   ['ND-03','ND-15'], ['ND-03','End'],                                 // SWITCHBOARD → dispatch router · session end (label implicit)
   ['ND-15','ND-11','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],         // dispatch → worker Build (up the col-4 spine)
@@ -183,7 +184,8 @@ const FLOWS = [
 // [source, target, {from,to}] — same fractional-dock anchors as FLOWS.
 const COMMS = [
   ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
-  ['HOPPER','ND-02','',{from:{s:'r',d:0.5}, to:{s:'t',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER — undirected; right then down into ND-02 top-¼
+  ['HOPPER','ND-16','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],                    // FLEET HOPPER → WAKE (message arm: a queued message wakes the next tick) — straight, same row
+  ['HOPPER','ND-02','',{from:{s:'r',d:0.25}, to:{s:'b',d:0.5}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; up the col gap into PULSE bottom-centre
   ['PD3','ND-11','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ENGINEER (read; same row, straight right)
   ['PD3','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight down into top-centre)
   ['PD2','ND-12','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ARCHITECT (read; same row, straight right into the cat)
@@ -203,7 +205,7 @@ const center = n => ({x:n.x+n.w/2, y:n.y+n.h/2});
 function layoutCore(){
   const G=TOK.colGap, GR=TOK.rowGap, PAD=TOK.pad, BAND=TOK.laneBand;   // one symmetric padding; lane owner strip
   const maxCol=Math.max(...NODES.map(n=>n.col)), maxRow=Math.max(...NODES.map(n=>n.row));
-  const placed=NODES.filter(n=>!n.special);               // TM1/CA1 don't drive track sizes (they dock onto PULSE)
+  const placed=NODES.filter(n=>!n.special);               // `special` nodes (none currently) would dock onto a host instead of sizing tracks
   const trackW=[], trackH=[];
   for(let c=0;c<=maxCol;c++){ const ws=placed.filter(n=>n.col===c).map(n=>n.w); trackW[c]=Math.max(TOK.colMin, ws.length?Math.max(...ws):TOK.colMin); }
   for(let r=0;r<=maxRow;r++){ const hs=NODES.filter(n=>n.row===r).map(n=>n.h); trackH[r]=Math.max(TOK.rowMin, hs.length?Math.max(...hs):TOK.rowMin); }
@@ -216,9 +218,6 @@ function layoutCore(){
   rowC[0]=POOL.y+PAD+trackH[0]/2;
   for(let r=1;r<=maxRow;r++){ const gap = laneOfRow[r]===laneOfRow[r-1] ? GR : 2*PAD; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
   placed.forEach(n=>{ n.x=Math.round(colC[n.col]-n.w/2); n.y=Math.round(rowC[n.row]-n.h/2); });
-  // metronome timer docks above PULSE at ¾, parked in row 1
-  const P=byId['ND-02'];
-  byId['TM1'].x=Math.round(P.x+P.w*0.75-18); byId['TM1'].y=Math.round(rowC[1]-18);
   // lane bands tile the pool; every boundary sits PAD below the upper lane's last content row (== PAD above
   // the lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
   const rowBot=r=>rowC[r]+trackH[r]/2;
@@ -617,6 +616,27 @@ const FLOW = {
       {f:'T5',t:'T6'},
       {f:'T7',t:'T8'},
     ]},
+
+  // ── PULSE WAKE — how a tick is triggered: debounced message-wake + timer ceiling ──
+  // Bounded on BOTH ends: a mandatory COOLDOWN (min gap) after each tick, then the tick waits for the
+  // FIRST of { a message arriving, the max-latency ceiling }. So a message wakes PULSE early — but never
+  // more than once per COOLDOWN (a burst coalesces into one tick), and the ceiling guarantees liveness even
+  // with zero traffic. Not a back-door: messages only pull latency DOWN to the floor, never unbounded.
+  'ND-16': { num:'ND-16', name:'WAKE', start:'tick complete', end:'PULSE', grid:true, startPos:[-1,0], endPos:[3,0],
+    steps:[
+      {n:'COOLDOWN', kind:'tcatch', pos:[0,0]},                           // T0 — mandatory min-gap floor: messages during this window just pile in the hopper, no wake
+      {n:'First to fire?', kind:'event', pos:[1,0], lblPos:'top'},        // T1 — event-based gateway: whichever of the two events comes first wins
+      {n:'MESSAGE', kind:'mcatch', pos:[2,-1]},                           // T2 — a message landed in the FLEET HOPPER → wake early
+      {n:'CEILING', kind:'tcatch', pos:[2,1]},                            // T3 — no message before the max-latency ceiling → wake anyway (liveness)
+    ],
+    edges:[
+      {f:'S',t:'T0'},
+      {f:'T0',t:'T1'},
+      {f:'T1',t:'T2', from:{s:'t'}, to:{s:'l'}},                          // gateway → message arm (up)
+      {f:'T1',t:'T3', from:{s:'b'}, to:{s:'l'}},                          // gateway → ceiling arm (down)
+      {f:'T2',t:'E', from:{s:'r'}, to:{s:'t'}},                           // message → re-enter PULSE
+      {f:'T3',t:'E', from:{s:'r'}, to:{s:'b'}},                           // ceiling → re-enter PULSE
+    ]},
 };
 /* ── LAYOUT TOKENS — single source of spacing for every diagram ── */
 const TOK = {
@@ -655,7 +675,7 @@ function subXML(def){
     // with a fixed grid gap. Every column/row line is evenly pitched and element centres snap to them; a
     // gateway/event just sits centred in its full-size cell (no per-column tightening).
     const PAD=TOK.pad, BAND=TOK.laneBand;
-    const dimOf = s => { const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', st=s.kind==='store'; return {w:st?TOK.storeW:gw?TOK.gw:ev?TOK.ev:STW, h:st?TOK.storeH:gw?TOK.gw:ev?TOK.ev:STH}; };
+    const dimOf = s => { const gw=s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', st=s.kind==='store'; return {w:st?TOK.storeW:gw?TOK.gw:ev?TOK.ev:STW, h:st?TOK.storeH:gw?TOK.gw:ev?TOK.ev:STH}; };
     const isAide = s => actorOf(s)==='aide', isOp = s => actorOf(s)==='op';
     const hasAide = def.steps.some(isAide), hasOp = def.steps.some(isOp) || def.steps.some(s=>s.data&&s.data.lane==='op');   // an op-bound data store opens the OPERATOR lane even with no op step
     const detRows = def.steps.filter(s=>!isAide(s)&&!isOp(s)).map(s=>s.pos[1]);
@@ -724,7 +744,7 @@ function subXML(def){
     poolH=lanesUsed.length*LANE_H;
     const colOf=(s,i)=> s.col!==undefined ? s.col : i;
     geom['S']={x:SX0-STW/2, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:-0.5, ord:-1};
-    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'||s.kind==='inclusive', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
+    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
     const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
     if(!def.noEnd){ geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:maxC+1, ord:1e6}; }
     poolW = (def.noEnd ? SX0+maxC*SPITCHX+STW/2 : geom['E'].x+TOK.ev) +TOK.poolMargin-poolX;  // noEnd: stop at the last node, don't reserve an end column
@@ -799,6 +819,7 @@ function subXML(def){
   def.steps.forEach((s,i)=>{
     const a=actorOf(s); let tag, inner=''; const isLink = s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow';
     if(s.kind==='gateway') tag='exclusiveGateway';
+    else if(s.kind==='event') tag='eventBasedGateway';   // waits on the first of its catch events (timer / message)
     else if(s.kind==='inclusive') tag='inclusiveGateway';
     else if(s.kind==='sub') tag='subProcess';
     else if(s.kind==='send') tag='sendTask';
@@ -807,6 +828,7 @@ function subXML(def){
     else if(s.kind==='mthrow'){ tag='intermediateThrowEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
     else if(s.kind==='catch'){ tag='intermediateCatchEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
     else if(s.kind==='mcatch'){ tag='intermediateCatchEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
+    else if(s.kind==='tcatch'){ tag='intermediateCatchEvent'; inner=`<bpmn:timerEventDefinition id="T${i}_ted"/>`; }   // intermediate timer-catch (cooldown floor / cadence ceiling)
     else if(s.kind==='boundary'){ tag='boundaryEvent'; inner=`<bpmn:timerEventDefinition id="T${i}_ted"/>`; }   // timer on its host task (interrupting unless interrupting:false)
     else if(s.kind==='mend'){ tag='endEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }   // message-end: send + terminate in one
     else if(s.kind==='end'||s.kind==='terminate'){ tag='endEvent'; if(s.kind==='terminate') inner='<bpmn:terminateEventDefinition id="T'+i+'_ted"/>'; }
@@ -832,8 +854,8 @@ function subXML(def){
   { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
   if(def.start2){ const g=G('S2'); di.push(`<bpmndi:BPMNShape id="S2_di" bpmnElement="S2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
   def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'', marker=s.kind==='gateway'?' isMarkerVisible="true"':'';
-    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate';
-    const lbl = (s.kind==='gateway'||s.kind==='inclusive')
+    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate';
+    const lbl = (s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event')
         ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
                 : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`
                                      : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
