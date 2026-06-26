@@ -158,7 +158,7 @@ const NODES = [
   // row 3 — the WAKE trigger (sub-process) + the fleet intake/hopper that feed it, below PULSE
   {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
   {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:3, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
-  {id:'ND-16', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:2, row:3, w:96, h:68, sub:'WAKE'},   // the tick trigger (below PULSE); clickable → the debounce (cooldown + message|ceiling). Replaces the old METRONOME node — the timer is now the CEILING inside
+  {id:'ND-16', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:3, row:3, w:96, h:68, sub:'WAKE'},   // the tick trigger (below SWITCHBOARD); connects to PULSE on its left side. Clickable → the debounce (cooldown + message|ceiling). Replaces the old METRONOME node — the timer is now the CEILING inside
 
   // ── ARCHITECT lane · row 4 — ONE row: ARCHITECT cat + PROJECT DOCS only (inbox/hopper/pulse live inside the sub) ──
   {id:'ND-12', kind:'task',  name:'ARCHITECT',      lane:'L_ARCH', col:6, row:4, w:120,h:100, llm:true, llmId:'LLM-12', sub:'ARCHITECT'},   // cat kept; clickable → opens the ARCHITECT sub (FLOW['ND-12'])
@@ -170,8 +170,8 @@ const NODES = [
 
 const FLOWS = [
   ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
-  ['ND-16','ND-02','',{from:{s:'t',d:0.75}, to:{s:'b',d:0.75}}],         // WAKE fires the tick → PULSE (up, right side)
-  ['ND-02','ND-16','',{from:{s:'b',d:0.25}, to:{s:'t',d:0.25}}],         // tick complete → back to WAKE (down, left side) — the recurrence loop
+  ['ND-16','ND-02','',{from:{s:'l',d:0.75}, to:{s:'b',d:0.75}}],         // WAKE fires the tick → PULSE — leaves WAKE's left side, into PULSE bottom-¾
+  ['ND-02','ND-16','',{from:{s:'b',d:0.5}, to:{s:'l',d:0.25}}],          // tick complete → back to WAKE — PULSE bottom-½ into WAKE's left side; the recurrence loop
   ['OPI','ND-18','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],          // operator intake → PARLEY (right, straight)
   ['ND-03','ND-15'], ['ND-03','End'],                                 // SWITCHBOARD → dispatch router · session end (label implicit)
   ['ND-15','ND-11','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],         // dispatch → worker Build (up the col-4 spine)
@@ -185,7 +185,7 @@ const FLOWS = [
 const COMMS = [
   ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
   ['HOPPER','ND-16','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],                    // FLEET HOPPER → WAKE (message arm: a queued message wakes the next tick) — straight, same row
-  ['HOPPER','ND-02','',{from:{s:'r',d:0.25}, to:{s:'b',d:0.5}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; up the col gap into PULSE bottom-centre
+  ['HOPPER','ND-02','',{from:{s:'r',d:0.25}, to:{s:'b',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; up the col gap into PULSE bottom-¼
   ['PD3','ND-11','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ENGINEER (read; same row, straight right)
   ['PD3','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight down into top-centre)
   ['PD2','ND-12','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ARCHITECT (read; same row, straight right into the cat)
