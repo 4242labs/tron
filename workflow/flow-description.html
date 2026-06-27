@@ -353,5 +353,31 @@
   </ul>
 
 </div>
+
+<script>
+// Per-diagram annotation page. Each node card gets an id from its ND-number; the badge drives
+// the parent canvas. `?d=ND-xx` filters this page down to that one diagram's notes (the panel
+// reloads with a new ?d= each time the canvas changes); no param = the full overview.
+(function(){
+  const wrap=document.querySelector('.wrap');
+  document.querySelectorAll('details.node').forEach(d=>{
+    const badge=d.querySelector('.nnum'); if(!badge) return;
+    const id=badge.textContent.trim(); d.id=id;
+    badge.style.cursor='pointer'; badge.title='show this diagram';
+    badge.addEventListener('click', ev=>{
+      ev.preventDefault(); ev.stopPropagation();          // don't toggle the <details>
+      try{ parent.postMessage({type:'tron-flow', id}, '*'); }catch(_){}
+    });
+  });
+  const want=new URLSearchParams(location.search).get('d');
+  if(!want) return;                                        // full overview
+  const target=document.getElementById(want); if(!target) return;
+  for(let p=target; p; p=p.parentElement && p.parentElement.closest('details')) p.open=true;   // open the chain so the body shows
+  for(let node=target; node && node!==wrap; node=node.parentElement){     // show only the path down to this card + its own subtree
+    [...node.parentElement.children].forEach(c=>{ if(c!==node) c.style.display='none'; });
+  }
+  target.scrollIntoView({block:'start'});
+})();
+</script>
 </body>
 </html>

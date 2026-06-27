@@ -1077,7 +1077,7 @@ function rotateVLabels(viewer, def){
 let ovViewer, ovStack=[], ovCurrent=null;
 function openFlow(key){ if(FLOW[key]){ ovStack.push(key); renderFlow(); } }
 function ovBack(){ ovStack.pop(); if(ovStack.length===0) closeOv(); else renderFlow(); }
-function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); }
+function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); syncNotesTo(null); }
 async function renderFlow(){
   const key=ovStack[ovStack.length-1], def=FLOW[key]; ovCurrent=def;
   document.getElementById('ovhead').innerHTML = headBar({num:def.num, name:def.name, back:true});
@@ -1101,15 +1101,33 @@ async function renderFlow(){
   rotateVLabels(ovViewer, def);
   fitNow(ovViewer);
   attachPanZoom(ovViewer,'#ovcanvas','#ovctl');
+  syncNotesTo(key);                     // canvas → notes: load this node's annotation page (if the panel is open)
 }
 document.getElementById('ov').addEventListener('click', e=>{ if(e.target.id==='ov') closeOv(); });
 document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOv(); });
+
+// annotations ⇄ canvas sync — the panel reloads a per-diagram page (flow-description.html?d=ND-xx)
+function notesSrcFor(id){ return 'flow-description.html' + (id ? ('?d=' + encodeURIComponent(id)) : ''); }
+function syncNotesTo(id){               // swap the annotation page to this node (overview when id is null); no-op until the panel is opened
+  const f=document.getElementById('notes-frame');
+  if(!f || !f.getAttribute('src')) return;
+  const want=notesSrcFor(id);
+  if(f.getAttribute('src')!==want) f.setAttribute('src', want);
+}
+window.addEventListener('message', e=>{ // notes → canvas: a node badge was clicked in the annotations
+  const d=e.data; if(!d || d.type!=='tron-flow') return;
+  if(FLOW[d.id]){ ovStack=[]; openFlow(d.id); }   // swap the canvas to that sub-diagram (non-sub ids have no diagram)
+});
 
 // annotations panel — lazy-loads the flow notes on first open, slides in from the right
 function toggleNotes(force){
   const p=document.getElementById('notes');
   const open = force===undefined ? !p.classList.contains('open') : force;
-  if(open){ const f=document.getElementById('notes-frame'); if(!f.getAttribute('src')) f.setAttribute('src','flow-description.html'); }
+  if(open){                              // open to the page matching whatever the canvas is showing
+    const f=document.getElementById('notes-frame');
+    const want=notesSrcFor(ovStack.length ? ovStack[ovStack.length-1] : null);
+    if(f.getAttribute('src')!==want) f.setAttribute('src', want);
+  }
   p.classList.toggle('open', open);
   document.body.classList.toggle('notes-open', open);
 }
