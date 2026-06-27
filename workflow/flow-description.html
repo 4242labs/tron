@@ -178,10 +178,14 @@
         and the fleet hopper, and synchronous (the operator is present, so nothing batches). It splits each
         message into <b class="k">act</b> (changes state, no reply) or <b class="k">answer</b> (produces a reply).
         Commands and queries are fixed verbs (deterministic); only an open <em>ask</em> reaches the LLM.</li>
-      <li class="grp"><b class="k">Commands — act on run-state, honored next tick</b></li>
-      <li><b class="k">halt</b> — terminate the run (archive-on-end). <em>syn: stop · kill · end · quit · abort.</em></li>
-      <li><b class="k">pause</b> — stop dispatching; ticks keep observing, no new work assigned. <em>syn: hold · suspend · freeze.</em></li>
-      <li><b class="k">resume</b> — clear the pause; dispatch restarts. Pairs with pause. <em>syn: continue · unpause · go.</em></li>
+      <li class="grp"><b class="k">Commands — act on run-state</b></li>
+      <li><b class="k">pause</b> — <b class="k">hard</b>: broadcast a direct prompt to every agent ("pause asap, wait
+        for instructions") and interrupt in-flight work. <em>syn: hold · suspend · freeze.</em></li>
+      <li><b class="k">drain</b> — <b class="k">soft</b>: stop dispatching new work; in-flight workers finish.
+        <em>syn: wind-down · settle · finish.</em></li>
+      <li><b class="k">resume</b> — clears either stop (pause or drain); dispatch restarts next tick.
+        <em>syn: continue · unpause · go.</em></li>
+      <li><b class="k">halt</b> — terminate the run (archive-on-end); no resume. <em>syn: stop · kill · end · quit · abort.</em></li>
       <li><b class="k">rescope</b> — change the in-scope range mid-run. <em>syn: scope · refocus · narrow / widen.</em></li>
       <li class="grp"><b class="k">Decision — act, threads into PULSE</b></li>
       <li><b class="k">operator.decision</b> — a reply to a parked escalation; handed to <code>02-08 Settle</code>,
