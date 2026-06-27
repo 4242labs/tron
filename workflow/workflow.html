@@ -386,7 +386,7 @@ const FLOW = {
       {f:'T14',t:'T10', from:{s:'b'}, to:{s:'t'}},   // → 01-11 catch (above Reconcile) → straight down (repair); MANIFEST docks left
       {f:'T15',t:'T7'},   // → 01-08 catch → Set scope (restart)
     ]},
-  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', grid:true, startPos:[-1,1], endPos:[2,3], steps:[
+  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', grid:true, startPos:[-2,1], endPos:[2,3], steps:[
     // re-invoked each tick by the BASE loop (timer cadence OR pulse event); start here is just the entry
     // 02-01 fork: first entry from BOOTUP arrives with a fresh snapshot (trunk+PRs+build ran in ND-01 before the fork),
     // so the refresh trio is skipped once; every recurring tick rebuilds from trunk (no drift across crash / off-session).
@@ -412,9 +412,15 @@ const FLOW = {
     {n:'Save state',        id:'19', pos:[4,3], data:{name:'MANIFEST', dir:'out', at:'right'}},
     {n:'Drop sidecars',     id:'20', pos:[3,3]},                                         // (effects persisted before sidecars dropped)
     {n:'', id:'21', kind:'gateway', pos:[3,1], lblPos:'bottom'},                         // skip-rebuild merge (exclusive): first-tick XOR death-cap persist → straight into Detect done
+    {n:'Msg wake?', id:'22', kind:'gateway', pos:[-1,1], lblPos:'bottom'},               // wake-source router: message-triggered tick vs ceiling/first
+    {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0]},                                   // message wake → skip the refresh trio (no git fetch); pairs with the catch
+    {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1]},                                   // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
   ],
     edges:[
-      {f:'S',t:'T0'},
+      {f:'S',t:'T21'},                                        // start → wake-source router
+      {f:'T21',t:'T0',label:'tick'},                          // ceiling/first wake → First tick? (full refresh path)
+      {f:'T21',t:'T22',label:'message', from:{s:'t'}, to:{s:'b'}},  // message wake → throw (skip refresh)
+      {f:'T23',t:'T4', from:{s:'b'}, to:{s:'t'}},             // catch (row above) → Rebuild top, straight down
       {f:'T0',t:'T1',label:'recurring', from:{s:'t'}, to:{s:'l'}},  // leave 02-01 top → 02-02 left; full rebuild from trunk
       {f:'T0',t:'T20',label:'first'},                          // fresh snapshot already in hand → skip the trio into the merge gate
       {f:'T1',t:'T2'},{f:'T2',t:'T3'},                         // refresh trio → fresh? gate
