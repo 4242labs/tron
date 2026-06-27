@@ -37,8 +37,9 @@ jobs:
           cp workflow/favicon-192x192.png     tron-www/public/workflow/favicon-192x192.png
           cp workflow/nyan-cat.gif            tron-www/public/workflow/nyan-cat.gif
           for f in index.html flow-description.html; do
-            sed -i "/<head>/a\\
-$banner" "tron-www/public/workflow/$f"
+            target="tron-www/public/workflow/$f"
+            awk -v b="$banner" '{print} /<head>/ && !done {print b; done=1}' "$target" > "$target.tmp"
+            mv "$target.tmp" "$target"
           done
 
       - name: Open sync PR on tron-www
