@@ -59,7 +59,7 @@ operator's problem?* Each is schema-in, schema-out — never free prose steering
 
 ## The flow
 
-The full workflow lives as interactive BPMN under [`docs/`](docs/): [`workflow.html`](docs/workflow.html) (core + drill-down sub-processes) and [`flow-description.html`](docs/flow-description.html) (per-node notes).
+The full workflow lives as interactive BPMN under [`workflow/`](workflow/): [`workflow.html`](workflow/workflow.html) (core + drill-down sub-processes) and [`flow-description.html`](workflow/flow-description.html) (per-node notes).
 
 ---
 
