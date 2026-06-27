@@ -390,7 +390,7 @@ const FLOW = {
     // re-invoked each tick by the BASE loop (timer cadence OR pulse event); start here is just the entry
     // 02-01 fork: first entry from BOOTUP arrives with a fresh snapshot (trunk+PRs+build ran in ND-01 before the fork),
     // so the refresh trio is skipped once; every recurring tick rebuilds from trunk (no drift across crash / off-session).
-    {n:'First tick?', id:'01', kind:'gateway', pos:[0,1], lblPos:'top'},                 // entry on row 1 (start event follows its row)
+    {n:'First tick?', id:'01', kind:'gateway', pos:[0,1], lblPos:'bottom'},              // entry on row 1 (start event follows its row)
     {n:'Refresh trunk',     id:'02', pos:[1,0]},                                         // ┐ refresh trio
     {n:'Refresh PRs',       id:'03', pos:[2,0]},                                         // ┘  (recurring only)
     {n:'Snapshot fresh?', id:'04', kind:'gateway', pos:[3,0], lblPos:'top'},             // validate the fetch advanced BEFORE rebuilding (never build off stale trunk)
@@ -399,13 +399,13 @@ const FLOW = {
     // worker lifecycle — detect (Assess) then dispose (Settle); ambiguous cases escalate
     {n:'Assess workers',    id:'07', pos:[4,2]},                                         // liveness + TTL + PR → done/dead/hung/orphan
     {n:'Settle workers',    id:'08', pos:[3,2]},                                         // release safe (resume-session / fresh); flag ambiguous; APPLY any resolved escalation whose reply landed
-    {n:'Escalate?', id:'09', kind:'gateway', pos:[1,2]},
+    {n:'Escalate?', id:'09', kind:'gateway', pos:[1,2], lblPos:'top'},
     {n:'Resolve', id:'10', kind:'sub', opens:'ND-02-10', pos:[0,3]},                     // raise-and-defer escalation (brief operator → send → mark pending → await)
     {n:'Tick cadence',      id:'11', pos:[0,2]},                                         // merge: clean + resolved
     {n:'Claim inboxes',     id:'12', pos:[-1,2]},
-    {n:'Messages?', id:'13', kind:'gateway', pos:[-1,4]},                                // empty inbox → skip ONLY classify+route (sends still happen)
+    {n:'Messages?', id:'13', kind:'gateway', pos:[-1,4], lblPos:'left'},                 // empty inbox → skip ONLY classify+route (sends still happen)
     {n:'Classify messages', id:'14', pos:[-1,5], actor:'aide', llmId:'LLM-02-14'},       // the one LLM touch per tick; directly below 02-13 (straight drop)
-    {n:'Route messages',    id:'15', pos:[1,5]},                                         // tag → recipient (worker / architect / operator)
+    {n:'Route messages',    id:'15', pos:[0,5]},                                         // tag → recipient (worker / architect / operator); same column as 02-10
     {n:'Drive gates',       id:'16', pos:[2,5]},                                         // merge: routed + skipped; may produce sends (unblock/review/reject)
     {n:'Match decision',    id:'17', pos:[3,5]},                                         // thread operator.decision back in: match the reply to its parked case by correlation id → Settle applies
     {n:'<AGENT-ID> INBOX', id:'18', kind:'mthrow', pos:[4,5]},                           // deliver: single message-throw — every message is ID-addressed → that agent's inbox
@@ -413,8 +413,10 @@ const FLOW = {
     {n:'Drop sidecars',     id:'20', pos:[3,3]},                                         // (effects persisted before sidecars dropped)
     {n:'', id:'21', kind:'gateway', pos:[3,1], lblPos:'bottom'},                         // skip-rebuild merge (exclusive): first-tick XOR death-cap persist → straight into Detect done
     {n:'Msg wake?', id:'22', kind:'gateway', pos:[-1,1], lblPos:'bottom'},               // wake-source router: message-triggered tick vs ceiling/first
-    {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0]},                                   // message wake → skip the refresh trio (no git fetch); pairs with the catch
-    {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1]},                                   // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
+    {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0], lblPos:'top'},                     // message wake → skip the refresh trio (no git fetch); pairs with the catch
+    {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1], lblPos:'top'},                     // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
+    {n:'Wall?', id:'25', kind:'gateway', pos:[1,5], lblPos:'bottom'},                     // split (A, right of Route): worker.wall → escalate to operator; else → drive gates
+    {n:'', id:'26', kind:'gateway', pos:[1,3]},                                           // merge (B, below 02-09): liveness escalation (02-09) + message-wall (A) → 02-10 Resolve
   ],
     edges:[
       {f:'S',t:'T21'},                                        // start → wake-source router
@@ -431,14 +433,17 @@ const FLOW = {
       {f:'T4',t:'T5'},                                         // rebuild → detect done
       {f:'T5',t:'T6'},{f:'T6',t:'T7'},{f:'T7',t:'T8'},          // detect → assess → settle → escalate?
       {f:'T8',t:'T10',label:'ok'},                             // clean → continue the tick
-      {f:'T8',t:'T9',label:'escalate', from:{s:'b'}, to:{s:'r'}},  // leave 02-09 bottom → into 02-10 right
+      {f:'T8',t:'T25',label:'escalate', from:{s:'b'}, to:{s:'t'}},  // 02-09 bottom → merge B (top)
+      {f:'T25',t:'T9', from:{s:'l'}, to:{s:'r'}},                   // merge B → 02-10 Resolve (right)
       {f:'T9',t:'T10'},                                        // resolved → rejoin (straight up into cadence)
       {f:'T10',t:'T11'},                                       // cadence → claim inboxes
       {f:'T11',t:'T12'},                                       // claim → messages? gateway (down)
       {f:'T12',t:'T13',label:'yes', from:{s:'b'}, to:{s:'t'}},                 // messages → classify (straight drop, same column)
       {f:'T12',t:'T15',label:'no', from:{s:'r'}, to:{s:'t'}},    // 02-13 right → straight to 02-16 column → turn down into its top-centre
-      {f:'T13',t:'T14', from:{s:'r'}, to:{s:'b'}},             // classify right → route bottom
-      {f:'T14',t:'T15'},                                       // route → drive gates (merge)
+      {f:'T13',t:'T14', from:{s:'r'}, to:{s:'b',d:0.5}},       // classify right → route bottom-center
+      {f:'T14',t:'T24', from:{s:'r'}, to:{s:'l'}},             // route → split A
+      {f:'T24',t:'T15',label:'no'},                            // A → drive gates (not a wall)
+      {f:'T24',t:'T25',label:'wall', from:{s:'t'}, to:{s:'b'}}, // A → merge B (worker.wall → operator)
       {f:'T15',t:'T16'},                                       // gates → triggers
       {f:'T16',t:'T17'},                                       // triggers → deliver (single flush, after all producers)
       {f:'T17',t:'T18'},                                       // deliver → save
@@ -878,6 +883,7 @@ function subXML(def){
     const lbl = (s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event')
         ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
                 : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`
+                : s.lblPos==='left' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.x-96}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`
                                      : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
                 : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`  // bottom-center (id below the diamond)
                 : `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-32}" width="90" height="26"/></bpmndi:BPMNLabel>`)  // lane: above the diamond, clear of horizontal branches
