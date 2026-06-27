@@ -103,11 +103,11 @@
       <summary><span class="nnum">ND-01-08</span> SET SCOPE<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>An operator-input gate, three lanes. The whole conversation stays between <span class="llm">AIDE</span> and the operator; <b class="k">only a resolved, concrete set crosses to DET</b>.</li>
-        <li><b class="k">08-01 Assign TRON-AIDE</b> (DET): hands the scope question to AIDE.</li>
-        <li><b class="k">08-02 Ask scope</b> (AIDE) → <b class="k">08-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases). AIDE reads the <b class="k">Project Docs</b> store (git-tracked core files) to ground the dialogue — list available blocks/phases, map fuzzy prose → block ids.</li>
-        <li><b class="k">08-04 Resolved?</b> (AIDE gateway): does the answer resolve to a concrete block set? <b class="k">clarify</b> loops back to <em>Ask scope</em>. AIDE turns fuzzy prose into block ids before anything reaches DET.</li>
-        <li><b class="k">08-05 Validate scope</b> (DET): every id ∈ pipeline <em>and</em> dependencies satisfiable (each <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency or empty id-set is invalid → re-ask</b> (loops back to Ask scope). <b class="k">First run</b> (empty archive-history): an empty scope is legitimate — the architect hasn't authored yet — so it passes; a truly unscaffolded pipeline is an upstream concern (TRON never scaffolds).</li>
-        <li><b class="k">08-06 Lock scope</b> (DET): ends the gate; done blocks already in scope are skipped.</li>
+        <li><b class="k">01-08-01 Assign TRON-AIDE</b> (DET): hands the scope question to AIDE.</li>
+        <li><b class="k">01-08-02 Ask scope</b> (AIDE) → <b class="k">01-08-03 Answer scope</b> (OPERATOR): free-form (a block, a range like <code>02-01..02-04</code>, or whole phases). AIDE reads the <b class="k">Project Docs</b> store (git-tracked core files) to ground the dialogue — list available blocks/phases, map fuzzy prose → block ids.</li>
+        <li><b class="k">01-08-04 Resolved?</b> (AIDE gateway): does the answer resolve to a concrete block set? <b class="k">clarify</b> loops back to <em>Ask scope</em>. AIDE turns fuzzy prose into block ids before anything reaches DET.</li>
+        <li><b class="k">01-08-05 Validate scope</b> (DET): every id ∈ pipeline <em>and</em> dependencies satisfiable (each <code>✅</code> on trunk, or also in scope). A <b class="k">dangling dependency or empty id-set is invalid → re-ask</b> (loops back to Ask scope). <b class="k">First run</b> (empty archive-history): an empty scope is legitimate — the architect hasn't authored yet — so it passes; a truly unscaffolded pipeline is an upstream concern (TRON never scaffolds).</li>
+        <li><b class="k">01-08-06 Lock scope</b> (DET): ends the gate; done blocks already in scope are skipped.</li>
       </ul></div>
     </details>
 
@@ -115,9 +115,9 @@
       <summary><span class="nnum">ND-01-09</span> SET COUNTS<span class="lane-tag">DET · AIDE · OPERATOR</span></summary>
       <div class="body"><ul>
         <li>Same shape as SET SCOPE. Captures the two concurrency knobs written to the MANIFEST: <b class="k">worker_count</b> (engineers + reviewers share this pool) and <b class="k">architect_count</b> (dedicated, pool-excluded; the throughput knob).</li>
-        <li><b class="k">09-01 Assign TRON-AIDE</b> → <b class="k">09-02 Ask counts</b> (AIDE reads <b class="k">Project Docs</b>) → <b class="k">09-03 Answer counts</b>.</li>
-        <li><b class="k">09-04 Confirmed?</b> (AIDE gateway): <b class="k">hard floor ≥ 1 each</b> (<b class="k">revise</b> loops back below that), and <b class="k">advises</b> on unusual-but-valid counts, accepting on confirm.</li>
-        <li><b class="k">09-05 Validate counts</b> (DET): an invalid set (below floor / non-integer) is <b class="k">invalid → re-ask</b> (loops back to Ask counts). <b class="k">09-06 Lock counts</b>: only the confirmed, valid set crosses.</li>
+        <li><b class="k">01-09-01 Assign TRON-AIDE</b> → <b class="k">01-09-02 Ask counts</b> (AIDE reads <b class="k">Project Docs</b>) → <b class="k">01-09-03 Answer counts</b>.</li>
+        <li><b class="k">01-09-04 Confirmed?</b> (AIDE gateway): <b class="k">hard floor ≥ 1 each</b> (<b class="k">revise</b> loops back below that), and <b class="k">advises</b> on unusual-but-valid counts, accepting on confirm.</li>
+        <li><b class="k">01-09-05 Validate counts</b> (DET): an invalid set (below floor / non-integer) is <b class="k">invalid → re-ask</b> (loops back to Ask counts). <b class="k">01-09-06 Lock counts</b>: only the confirmed, valid set crosses.</li>
       </ul></div>
     </details>
 
@@ -184,7 +184,7 @@
       <li><b class="k">resume</b> — clear the pause; dispatching restarts next tick. <b class="k">Pairs with pause.</b> <em>syn: continue · unpause · go · proceed.</em></li>
       <li><b class="k">rescope</b> — change the in-scope phase/block range mid-run (PULSE re-reads the pipeline next tick). <em>syn: scope · refocus · retarget · narrow / widen.</em></li>
       <li class="grp"><b class="k">Reply (act → PULSE Settle)</b></li>
-      <li><b class="k">operator.decision</b> — answers an open wall / signs off a held merge; PARLEY hands it to <code>02-08 Settle</code>, matched by the correlation id stamped at the raise (<code>02-10</code> / <code>10-03</code>). The parked case is durable in the MANIFEST, so a lost in-flight reply is simply re-issued.</li>
+      <li><b class="k">operator.decision</b> — answers an open wall / signs off a held merge; PARLEY hands it to <code>02-08 Settle</code>, matched by the correlation id stamped at the raise (<code>02-10-03</code>). The parked case is durable in the MANIFEST, so a lost in-flight reply is simply re-issued.</li>
       <li class="grp"><b class="k">Queries (answer → DET reads, AIDE composes)</b></li>
       <li><b class="k">status</b> — "where are we?" from snapshot / MANIFEST. No state change. <em>syn: where · progress · report · summary · sitrep.</em></li>
       <li><b class="k">inspect</b> — "show specifics of block X" (worker, PR, history). No state change. <em>syn: show · detail · drill · look · examine.</em></li>
@@ -201,9 +201,9 @@
       <summary><span class="nnum">ND-02-10</span> RESOLVE<span class="lane-tag">DET · AIDE — raise &amp; defer</span></summary>
       <div class="body"><ul>
         <li>The worker-escalation conversation. Same skeleton as <code>ND-01-14</code>, different theme. It does <b class="k">not</b> decide inline — a blocking operator conversation would break the bounded tick. It <b class="k">raises and defers</b> (the Temporal-signal / task-token pattern).</li>
-        <li><b class="k">10-01 Assign TRON-AIDE</b> → <b class="k">10-02 Brief + offer options</b> (AIDE composes the operator brief).</li>
-        <li><b class="k">10-03 OPERATOR INBOX</b> (message-throw): the ask is sent to the operator's inbox (named for the recipient's inbox, like <code>ARCHITECT INBOX</code> / <code>09-06</code>), stamped with a <b class="k">correlation id</b> so the reply can be matched back to this case.</li>
-        <li><b class="k">10-04 Mark pending</b> (DET) → <b class="k">End: Awaiting operator</b>. The tick continues; the operator's reply arrives on a later tick and is correlated to this case at <code>02-17</code>, where <code>02-08 Settle</code> applies it.</li>
+        <li><b class="k">02-10-01 Assign TRON-AIDE</b> → <b class="k">02-10-02 Brief + offer options</b> (AIDE composes the operator brief).</li>
+        <li><b class="k">02-10-03 OPERATOR INBOX</b> (message-throw): the ask is sent to the operator's inbox (named for the recipient's inbox, like <code>ARCHITECT INBOX</code> / <code>09-06</code>), stamped with a <b class="k">correlation id</b> so the reply can be matched back to this case.</li>
+        <li><b class="k">02-10-04 Mark pending</b> (DET) → <b class="k">End: Awaiting operator</b>. The tick continues; the operator's reply arrives on a later tick and is correlated to this case at <code>02-17</code>, where <code>02-08 Settle</code> applies it.</li>
         <li>Outcomes are <b class="k">case-dependent / freeform</b> (resume-session · retry-fresh · skip-block · reassign · halt), carried in the reply payload — not a fixed gateway split.</li>
       </ul></div>
     </details>
