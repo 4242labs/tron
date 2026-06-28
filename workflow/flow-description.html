@@ -176,23 +176,12 @@
     <div class="body">
     <ul>
       <li><b class="k">What it does:</b> the work selector. After PULSE has done all the observing/settling,
-        SWITCHBOARD just decides whether there's work to dispatch this tick (→ <code>ND-04</code>) or the run's
-        end condition holds (→ <b class="k">ANCHOR</b>, terminate). An idle tick takes neither and falls through
-        to the next pulse.</li>
-    </ul>
-    </div>
-  </details>
-
-  <details class="node">
-    <summary><span class="nnum">ND-04</span> DISPATCH<span class="lane-tag">tick · TRON-RELAY</span></summary>
-    <div class="body">
-    <ul>
-      <li><b class="k">What it does:</b> the dispatch router. It fires <b class="k">one or more</b> arms per tick
-        by condition — a single tick can fill a worker slot <em>and</em> fire a due review <em>and</em> hand the
-        architect cleared-ahead work. Each fired arm spawns/assigns its agent with its <b class="k">BRIEF</b>.</li>
-      <li><b class="k">worker → LLM-05 ENGINEER</b> — a free slot + a ready block.</li>
-      <li><b class="k">reviewer → LLM-07 REVIEW</b> — a review is due.</li>
-      <li><b class="k">architect → LLM-06 ARCHITECT</b> — a block cleared-ahead / architect work pending.</li>
+        SWITCHBOARD decides whether there's work to dispatch this tick or the run's end condition holds
+        (→ <b class="k">ANCHOR</b>, terminate). An idle tick takes neither and falls through to the next pulse.</li>
+      <li><b class="k">On work → AGENT.</b> It dispatches the agent the tick needs — a <b class="k">worker</b>
+        for a ready block, a <b class="k">reviewer</b> for a due milestone, or the persistent
+        <b class="k">architect</b> for cleared-ahead work — each spawned/assigned with its <b class="k">BRIEF</b>.
+        All three run the identical process, so the flow draws it once as the <b class="k">AGENT</b>.</li>
     </ul>
     </div>
   </details>
@@ -210,45 +199,27 @@
     </div>
   </details>
 
-  <h2>Agent sub-processes</h2>
+  <h2>Agent sub-process</h2>
 
-  <div class="rule"><b class="k">One shape, all three.</b> Each agent sub is the same loop —
-    <b class="k">INBOX → HOPPER → work → FLEET INTAKE → wait at INBOX → resume</b>. Outbound (the outcome
-    <em>or</em> an in-flight problem) leaves via FLEET INTAKE; the reply, or the next work, lands back at the
-    INBOX. No agent ends its own process — the sub has no end of its own.</div>
-
-  <details class="node">
-    <summary><span class="nnum">LLM-05</span> ENGINEER<span class="lane-tag">per block · ENGINEER</span></summary>
-    <div class="body">
-    <ul>
-      <li><b class="k">What it does:</b> a worker's build, spawned <b class="k">per block</b>. It builds from its
-        hopper + the per-task prompt, sends its outcome — or an in-flight problem — via <b class="k">FLEET
-        INTAKE</b>, then waits at its inbox for the reply or next work.</li>
-      <li><b class="k">No self-end.</b> The sub has no end of its own; PULSE disposes the worker (Settle).</li>
-    </ul>
-    </div>
-  </details>
+  <div class="rule"><b class="k">One shape, every role.</b> The fleet's roles — <b class="k">engineer</b>,
+    <b class="k">architect</b>, <b class="k">reviewer</b> — run the identical process, so the flow draws it
+    <em>once</em> as the <b class="k">AGENT</b>; only the variables (name, work, prompts) differ. A spawn
+    <em>or</em> an inbox message merges in, the agent does its work, and the outcome — or an in-flight problem —
+    leaves via <b class="k">FLEET INTAKE</b>; the reply, or the next work, lands back at the inbox. No agent
+    ends its own process.</div>
 
   <details class="node">
-    <summary><span class="nnum">LLM-06</span> ARCHITECT<span class="lane-tag">persistent · ARCHITECT</span></summary>
+    <summary><span class="nnum">LLM</span> AGENT<span class="lane-tag">per dispatch · AGENT</span></summary>
     <div class="body">
     <ul>
-      <li><b class="k">What it does:</b> the single, <b class="k">persistent</b> consultant — one architect, alive
-        the whole run (its own count, pool-excluded). Same loop: it takes work from its hopper + the per-task
-        prompt, emits its result or a question via <b class="k">FLEET INTAKE</b>, waits at its inbox, resumes.</li>
-      <li><b class="k">Persistent.</b> Not per-task — it stays for the whole run, and never ends itself.</li>
-    </ul>
-    </div>
-  </details>
-
-  <details class="node">
-    <summary><span class="nnum">LLM-07</span> REVIEW<span class="lane-tag">per milestone · REVIEWER</span></summary>
-    <div class="body">
-    <ul>
-      <li><b class="k">What it does:</b> a reviewer, dispatched <b class="k">per milestone</b>. It reviews from its
-        hopper + the per-task prompt, then emits its verdict via <b class="k">FLEET INTAKE</b> — TRON routes it
-        to the architect. Same loop; it waits at its inbox for a reply or next work.</li>
-      <li><b class="k">No self-end.</b> Like the others, the sub has no end of its own.</li>
+      <li><b class="k">What it does:</b> the one LLM agent — dispatched as a <b class="k">worker</b> (per block),
+        a <b class="k">reviewer</b> (per milestone), or the <b class="k">architect</b> (one, persistent, alive
+        the whole run). A merge gateway takes either the spawn <b class="k">BRIEF</b> or an inbox message into
+        the work; the work reads its per-task prompt; the outcome — a result, an in-flight problem, a question,
+        or a verdict — leaves via <b class="k">FLEET INTAKE</b>, then it waits at its inbox for the reply or next
+        work.</li>
+      <li><b class="k">No self-end.</b> The sub has no end of its own; PULSE disposes a worker (Settle), and TRON
+        routes each outcome onward (e.g. a reviewer's verdict to the architect).</li>
     </ul>
     </div>
   </details>

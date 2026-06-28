@@ -124,7 +124,7 @@ function headBar({num, name, back}){
     + `<span class="nname">${esc(name)}</span>`;
 }
 /* ════════════ DATA MODEL ════════════ */
-// lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–3, ARCHITECT row 4, REVIEWERS row 5.
+// lanes tile the pool top→bottom; TRON owns grid-rows 0–1, AGENT row 2.
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
   {id:'L_TRON',name:'TRON',  rows:[0,1], y:0, h:0},
