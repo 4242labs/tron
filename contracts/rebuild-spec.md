@@ -10,9 +10,9 @@ This is the **written behavior model**: the situations the engine answers (T1), 
 boundary (T2), the sentry↔PMT map (T3), DONE as a prompted exchange (T4), and SENTRY's internal design
 (T5). **Spec only** — no engine code; implementation is 01-02…01-06.
 
-> Replaces, as the live reference, the stale `blueprint-contracts.md` (2026-06-05, on ADR §5's *replace*
-> list — it still describes SCRIPTS, cron, and `block:next:done` against the pre-rebuild model). That file
-> is rewritten in 01-03; until then this spec is the behavior authority.
+> Bridges to code alongside `blueprint-contracts.md` (2026-06-05, on ADR §5's *replace* list — it described
+> the pre-rebuild reactive layer, cron, and `block:next:done`). That file was reconciled to the rebuilt
+> engine in 01-03; on any conflict this spec + the built engine win.
 
 ---
 
@@ -132,16 +132,15 @@ step is the model touch*, not a per-tick count. The R-MOD seal depends on this b
 | Bootup scope/count validation (A3/A4) | id-exists + deps-satisfiable checks (AIDE *converses* to gather intent, but the **validation that crosses to the engine** is deterministic) |
 
 ### Not a judgment tool, by design (retired/never)
-`assess_wall` — **retired**. An unclassifiable input routes to the **architect** (T5), who steers it with
-project context; TRON makes **no** second LLM judgment about whether something is the operator's problem.
-Also not judgment calls: review verdicts (review is a milestone → architect log-review), findings-triage
-(architect's log-review skill), stall detection (engine liveness side-system).
+**The second LLM judgment — retired.** An unclassifiable input routes to the **architect** (T5), who steers
+it with project context; TRON makes **no** second LLM judgment about whether something is the operator's
+problem. Also not judgment calls: review verdicts (review is a milestone → architect log-review),
+findings-triage (architect's log-review skill), stall detection (engine liveness side-system).
 
-> **Drift to fix (01-03), surfaced not reconciled:** `tron.md` currently says "exactly **two**" judgment
-> calls (a residue of the retired `assess_wall`), while describing only `classify_message` and stating "the
-> only judgment you make." `routing.yaml`, `blueprint-contracts.md`, `context.md`, and ADR-0001 all say
-> **one**. The settled model is **one**; the `tron.md` "two" is stale copy on ADR §5's *replace* list — fix
-> it when `tron.md`'s judgment sections are rewritten in 01-03.
+> **Drift fixed (01-03):** `tron.md` and `README.md` previously said "exactly **two**" judgment calls
+> (a residue of the retired second judgment) while describing only `classify_message`; `routing.yaml`,
+> `blueprint-contracts.md`, `context.md`, and ADR-0001 all say **one**. The settled model is **one** —
+> `tron.md` + `README.md` were corrected to "one" in 01-03.
 
 ---
 
@@ -203,8 +202,8 @@ Flag candidate (ND-02)
 - **PULSE never merges** — gates only advance state; the engineer merges once a review passes (the
   two-gate merge model is 01-05's; this gate is the *DONE* challenge, not the merge act).
 - **No operator-approve-before-merge** (D5 / TD-02): a completed review fans out (release reviewer +
-  architect log-review); the operator gate is the wall/escalation path only. `escalate.merge` /
-  `operator.decision = approve(merge)` are **removed**, not modeled here.
+  architect log-review); the operator gate is the wall/escalation path only. The retired merge-escalation
+  message and its merge sign-off decision are **removed**, not modeled here.
 
 01-03 builds the engine gate from this section.
 
@@ -213,7 +212,7 @@ Flag candidate (ND-02)
 ## T5 — SENTRY internal design
 
 SENTRY is the **reactive element** of the standing trio (PULSE · SWITCHBOARD · SENTRY) — the `*` catch-all,
-**redrafted from scratch**, replacing SCRIPTS. It is the path every inbound message takes once classified,
+**redrafted from scratch**, replacing the prior reactive layer. It is the path every inbound message takes once classified,
 and the safety net for anything that doesn't fit. (ADR §8's one deferred piece; resolves ADR §12 item 2.)
 
 ### Classify grammar (the closed tag enum)
@@ -222,7 +221,8 @@ advances), `side` (a handler runs, no advance), or `tick` (run one bounded tick)
 coverage, lint-enforced.
 
 **Trigger grammar (closed)** — every trigger matches exactly one form:
-`domain:object` (dispatch) · `subject:event` (completion) · `subject:object:event` (qualified completion);
+`domain:object` (dispatch) · `subject:event` (completion) · `subject:object:event` (qualified completion) ·
+`subject:event:object` (qualified event — e.g. `wall:raised:<block>`, `worker:await:<block>`);
 plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Match is **most-specific-wins**
 (literal > `<type>`/`<block>` > `*`).
 
@@ -236,7 +236,7 @@ plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Matc
 | worker | `worker.question_peer` | side: observe (R2 peer-consult; no advance) |
 | worker | `worker.question_tron` | side: answer-from-context |
 | worker | `worker.progress` | side: none (heartbeat) |
-| architect | `architect.reconciled` | trigger `block:<block>:reconciled` (**renamed** from `cleared`/`clear`, M-05) |
+| architect | `architect.reconciled` | trigger `block:<block>:reconciled` (**renamed** off the prior clear-event, M-05) |
 | architect | `architect.logged` | trigger → adhoc blocks authored |
 | operator | `operator.decision` | trigger → Settle (02-08) |
 | operator | `operator.status_query` | side: reply digest |
@@ -246,11 +246,12 @@ plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Matc
 | reserved | `unclassified` | trigger `*` → SENTRY catch-all → **architect triage** |
 
 **Changes from the current (drifted) tag map, per ADR §5:**
-- `architect.cleared` → **`architect.reconciled`**; `block:<block>:clear` → `block:<block>:reconciled`
-  (M-05 — "reconciled" = re-checked an upcoming block against the just-finished one's drift; `cleared`
-  collided with the retired done-status).
+- The architect completion tag → **`architect.reconciled`**; its trigger → `block:<block>:reconciled`
+  (M-05 — "reconciled" = re-checked an upcoming block against the just-finished one's drift; the prior
+  clear-event name collided with the retired done-status).
 - **Add `worker.await_confirm`** (D7 / R-AWAIT) — terminal always, +TG if opted in.
-- **Remove** the operator merge-approve path (`escalate.merge`, `operator.decision = approve(merge)`) (D5).
+- **Remove** the operator merge-approve path — its retired escalation message and the merge sign-off
+  decision are gone; `operator.decision` is now `resume | amend | abandon` only (D5).
 - **`operator.knob_change`** (operator side-action) — named off the "workflow" misnomer the rebuild is
   killing (M-01 / ADR §12.1); it edits a per-project knob, not "the workflow".
 - Every message is **ID-addressed** to a specific agent (D4) — delivery targets `<AGENT-ID>`'s inbox, never
@@ -274,7 +275,7 @@ validation error appended (budget `invalid_output.max_retries`, default 2) · **
 ### Locked vs. movable
 **Locked** (canon — a change here is a diagram/ADR change, consult-first):
 - the four-layer architecture (transport / control / judgment / content) and the **single-classify** boundary (T2);
-- the `unclassified → architect` rule (no second LLM judgment; `assess_wall` stays retired);
+- the `unclassified → architect` rule (no second LLM judgment; the retired second judgment stays retired);
 - the trigger grammar **forms** + most-specific-wins matching;
 - **ID-addressing** every message (D4); **prompted-DONE** (T4); reviews are **PULL**; raise-and-defer escalation.
 

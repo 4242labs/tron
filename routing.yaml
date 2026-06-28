@@ -14,14 +14,15 @@ grammar:
     - "domain:object"          # imperative dispatch     e.g. build:block:next
     - "subject:event"          # completion              e.g. review:next, session:end
     - "subject:object:event"   # qualified completion    e.g. block:next:done, review:<type>:done
+    - "subject:event:object"   # qualified event         e.g. wall:raised:<block>, worker:await:<block>
   subjects: [tron, build, block, review, cadence, session, worker, operator, wall]
-  events:   [start, build, done, clear, stalled, next, end, adhoc, raised, decision]
+  events:   [start, build, done, reconciled, stalled, next, end, adhoc, raised, decision, await]
   params:
     "<type>":  "reviewer type: code | security | data | …  (never the reserved literal 'next')"
     "<block>": "a pipeline block ID, e.g. NN-NN-NN"
   reserved:
     next: "the next block to dispatch (literal segment; never a <type>)"
-  wildcard: "*"                # fallback trigger (the SCRIPTS catch-all row)
+  wildcard: "*"                # fallback trigger (the SENTRY catch-all row)
   alternatives: "|"            # alternatives within one cell
   terminals: ["end", "-"]      # end = session over ; - = no trigger
   control: "pulse"             # the dispatch-loop signal; NOT a table-listener trigger
@@ -38,12 +39,13 @@ tags:
   worker.done:              { trigger: "block:next:done" }
   worker.wall:              { trigger: "wall:raised:<block>" }
   worker.review_done:       { trigger: "review:<type>:done" }
+  worker.await_confirm:     { trigger: "worker:await:<block>" }   # pause mid-block for go-ahead; ALWAYS reaches the operator (D7/R-AWAIT)
   worker.progress:          { side: none }
   worker.question_peer:     { side: observe }            # peer consult; logged, no advance
   worker.question_tron:     { side: answer_from_context }
   # architect-origin (the persistent, forward-only consultant's reports)
-  architect.cleared:        { trigger: "block:<block>:clear" }   # forward-review done -> block file authored on trunk
-  architect.logged:         { trigger: "block:adhoc:clear" }     # log-review done -> adhoc block files authored
+  architect.reconciled:     { trigger: "block:<block>:reconciled" }   # forward/reconcile done -> upcoming block re-checked & ready on trunk (M-05)
+  architect.logged:         { trigger: "block:adhoc:reconciled" }     # log-review done -> adhoc block files authored
   # operator-origin
   operator.decision:        { trigger: "operator:decision:<block>" }
   operator.status_query:    { side: reply_digest }
@@ -54,19 +56,19 @@ tags:
   worker.stalled:           { trigger: "worker:stalled" }   # engine liveness side-system
   worker.dead:              { trigger: "worker:stalled" }   # recover handles both
   # reserved
-  unclassified:             { trigger: "*" }                # -> SCRIPTS catch-all -> architect sorts it
+  unclassified:             { trigger: "*" }                # -> SENTRY catch-all -> architect sorts it
 
 # ── Invalid-output policy (a judgment tool that won't validate) ─────
 invalid_output:
   max_retries: 2                         # read by the engine (judge retry budget)
-  on_exhaustion: "*"                     # -> unclassified -> SCRIPTS catch-all -> architect sorts it
+  on_exhaustion: "*"                     # -> unclassified -> SENTRY catch-all -> architect sorts it
 
 # ── Judgment tools (the ONLY LLM call; schema-in / schema-out) ─────
 # Output is always a tag + structured slots, never free prose to the flow.
 tools:
   classify_message: { in: [text, sender], out: [tag, slots, confidence] }
   # tiering: classify_message -> cheap. ONE judgment tool only.
-  # NOT judgment tools (by design): "is this the operator's problem?" (assess_wall RETIRED —
-  # an unclassifiable input routes to the architect, who steers it, not the LLM); review
+  # NOT judgment tools (by design): "is this the operator's problem?" (that second judgment is
+  # RETIRED — an unclassifiable input routes to the architect, who steers it, not the LLM); review
   # verdicts (review is a milestone); findings-triage (-> architect log-review skill);
   # stall detection (-> engine liveness).

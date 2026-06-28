@@ -52,7 +52,8 @@ TABLE = [
     ("block:next:build",           None),               # engineer building
     ("block:next:done",            "_h_worker_done"),   # done is a trigger -> DONE gate (§F)
     ("review:next:<block>",        "_h_forward_review"),     # not emitted in normal flow (SWITCHBOARD calls directly)
-    ("block:*:clear",              "_h_checkpoint"),
+    ("block:<block>:reconciled",   "_h_reconcile"),     # architect re-checked/authored the path ahead (M-05)
+    ("worker:await:<block>",       "_h_await"),         # worker paused for go-ahead -> await ladder (R-AWAIT)
     ("cadence:<type>",             "_h_dispatch_reviewer"),   # not emitted in normal flow (SWITCHBOARD calls directly)
     ("review:<type>",              None),               # reviewer reviewing
     ("review:<type>:done",         "_h_release_reviewer"),
@@ -60,7 +61,7 @@ TABLE = [
     ("operator:decision:<block>",  "_h_apply_decision"),
     ("worker:stalled",             "_h_recover"),
     ("session:end",                "_h_session_end"),
-    ("*",                          "_h_scripts"),
+    ("*",                          "_h_sentry"),        # SENTRY: the reactive catch-all (the `*` row)
 ]
 
 OPEN_STATUSES = ("to-do", "in-progress")   # work that still counts as not-done
@@ -120,7 +121,12 @@ class Engine:
             return self.ended
         self._tq = []
         self._refresh_from_trunk()                       # canon is truth — rebuild the read cache
-        self._sweep()                                    # engine liveness -> worker:stalled
+        if self.ended:                                   # refresh hit the trunk-fail death-cap -> halted loud (T6)
+            self.st.save()
+            return self.ended
+        rc = self.st.run_control
+        if rc != "pause":                                # PAUSE freezes liveness pings + gate nudges; DRAIN keeps them
+            self._sweep()                                # engine liveness -> worker:stalled
         claimed, msgs = self._claim_inboxes()            # rotate each inbox to a .proc sidecar, read it
         for msg in msgs:
             # One malformed message must not abort the tick: that would leave it in the sidecar
@@ -130,7 +136,8 @@ class Engine:
                 self._ingest(tag, slots, msg.get("sender", {}))
             except Exception as e:
                 self.log("flow", f"ingest dropped a message: {e}")
-        self._drive_gates()                              # advance in-flight DONE gates on fresh evidence
+        if rc != "pause":
+            self._drive_gates()                          # advance in-flight DONE gates on fresh evidence
         self._drain_triggers()
         last = self.st.data.setdefault("last_sweep", {})
         last["at"] = util.now_iso()
@@ -147,8 +154,20 @@ class Engine:
         `count=False` (the initial load at start) skips the done-counting so pre-existing
         ✅ history is NOT mistaken for fresh completions — _seed_seen_done primes it instead."""
         ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry)
-        if not ok:
-            self.log("trunk", f"refresh degraded: {detail}")
+        if ok:
+            self.st.counters["refresh_fail"] = 0
+        else:
+            # Fail LOUD, never silent (T6/S1-10): a swallowed ff-failure leaves a stale snapshot
+            # -> duplicate dispatch. Count consecutive failures; bootup (count=False) has no
+            # MANIFEST yet (A2) so a single failure halts synchronously; ticks tolerate a flaky
+            # network up to the death-cap, then halt loud.
+            fails = self.st.counters.get("refresh_fail", 0) + 1
+            self.st.counters["refresh_fail"] = fails
+            cap = int(self.knobs.get("trunk_refresh_deathcap", 3))
+            self.log("trunk", f"refresh FAILED ({fails}/{cap}): {detail}")
+            if not count or fails >= cap:
+                self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
+                return
         try:
             view = reader.load(self.paths["pipeline"], self.paths["blocks"])
             self.st.set_pipeline(view)
@@ -182,7 +201,45 @@ class Engine:
             self.st.blocked.remove(block)
         self.emit("terminal.block_done", {"block": block})
         self.log("flow", f"{block} ✅ on trunk -> done, cadence++")
+        self._reconcile_ahead(block)                     # re-check the next scoped block vs this one's drift (M-05)
         self._emit("pulse")
+
+    def _reconcile_ahead(self, done_block):
+        """A block landed ✅. The next already-scoped, not-yet-done block downstream must be
+        RE-checked against this one's learnings/drift before it dispatches (M-05) — a reconcile,
+        a DISTINCT architect job from `forward` (which authors a missing file). Enqueue it and
+        gate that block's readiness (`_available`) on the reconcile completing. No architect ->
+        no reconcile gate (nothing can re-check it), so the block stays directly dispatchable."""
+        if not self._architect():
+            return
+        nxt = self._next_reconcile_target(done_block)
+        if not nxt or nxt in self.st.reconciled:
+            return
+        if any(j.get("kind") == "reconcile" and j.get("block") == nxt
+               for j in self.st.architect_queue):
+            return
+        arch = self._architect()
+        cur = arch.get("current_job") if arch else None
+        if cur and cur.get("kind") == "reconcile" and cur.get("block") == nxt:
+            return
+        self.st.architect_queue.append({"kind": "reconcile", "block": nxt, "after": done_block})
+        self._pump_architect()
+
+    def _next_reconcile_target(self, done_block):
+        """The next in-scope, not-done block (by pipeline order) after `done_block` that already
+        has a block file — the one a just-finished block's drift could invalidate."""
+        rows = sorted(self._in_scope_rows(), key=lambda r: r.get("order") or 1e9)
+        seen = False
+        for r in rows:
+            if r["id"] == done_block:
+                seen = True
+                continue
+            if not seen:
+                continue
+            if (r.get("status") in OPEN_STATUSES and r.get("has_block_file")
+                    and r["id"] not in self._dropped() and r["id"] not in self.st.blocked):
+                return r["id"]
+        return None
 
     # ── trigger queue + routing ──
     def _emit(self, trigger, slots=None):
@@ -247,11 +304,17 @@ class Engine:
                 best = (handler, caps, score)
         if best:
             return best[0], best[1]
-        return "_h_scripts", {}           # the `*` SCRIPTS catch-all
+        return "_h_sentry", {}            # the `*` SENTRY catch-all
 
     # ── PULSE / SWITCHBOARD (the dispatch loop) ──
     def _switchboard(self):
         """One pulse: FILL SLOTS -> CLEAR AHEAD -> WAIT -> SESSION END."""
+        # 0. RUN-CONTROL (R-HALT / T10) — the operator flag PULSE checks every pulse.
+        #    PAUSE freezes all dispatch (hard, resumable); DRAIN starts nothing new but lets
+        #    in-flight finish (soft, resumable). Neither ends the run — only RESUME or HALT do,
+        #    so a drained-to-empty fleet idles awaiting the operator rather than auto-closing.
+        if self.st.run_control in ("pause", "drain"):
+            return
         # 1. FILL SLOTS — one dispatch per free worker slot, in priority order.
         while self._free_slots() > 0:
             pick = self._select_work()
@@ -307,7 +370,21 @@ class Engine:
             return False
         if self._branch(bid) in (self.st.open_prs or {}):
             return False
+        if self._reconcile_pending(bid):                 # gated until the architect reconciles it (M-05)
+            return False
         return True
+
+    def _reconcile_pending(self, bid):
+        """True while a reconcile job for this block is queued/in-flight and not yet completed
+        (the readiness gate a predecessor's ✅ raised). Cleared when `_h_reconcile` records it."""
+        if bid in self.st.reconciled:
+            return False
+        if any(j.get("kind") == "reconcile" and j.get("block") == bid
+               for j in self.st.architect_queue):
+            return True
+        arch = self._architect()
+        cur = arch.get("current_job") if arch else None
+        return bool(cur and cur.get("kind") == "reconcile" and cur.get("block") == bid)
 
     def _due_cadence(self):
         for typ, thresh in self.cadence_cfg.items():
@@ -518,12 +595,68 @@ class Engine:
         if m.get("block"):
             self._forward_review(m["block"])
 
-    def _h_checkpoint(self, m):
-        # block:*:clear — the architect reports it AUTHORED a block file (forward) or shaped
-        # adhoc blocks (logged). No status write: the new file lands on trunk via the
-        # architect's PR and TRON sees it on the next refresh. Just advance the queue.
+    def _h_reconcile(self, m):
+        # block:<block>:reconciled — the architect finished clearing the path ahead (M-05):
+        # `forward` authored a missing block file, `reconcile` re-checked an existing one against
+        # a just-finished block's drift, `logged` shaped adhoc blocks. No status write: the file
+        # lands on trunk via the architect's PR, seen on the next refresh. Record the block as
+        # reconciled (lifts its readiness gate, _reconcile_pending), advance the queue, pulse.
+        arch = self._architect()
+        cur = arch.get("current_job") if arch else None
+        blk = m.get("block") or (cur or {}).get("block")
+        if blk and blk != "adhoc" and blk not in self.st.reconciled:
+            self.st.reconciled.append(blk)
         self._architect_advance()
         self._emit("pulse")
+
+    def _h_await(self, m):
+        # worker:await:<block> — a worker paused mid-block for go-ahead (R-AWAIT / TD-03). The
+        # rung is chosen DETERMINISTICALLY (no second LLM judgment); classify only tagged + pulled
+        # slots. Three rungs, and rung (a) NEVER auto-clears:
+        #   (a) operator pre-registered a checkpoint here  -> operator (parked case);
+        #   (b) a scope/blueprint judgement                -> the architect;
+        #   (c) nothing substantive                        -> deterministic auto-ack (proceed).
+        block = m.get("block")
+        worker_id = m.get("worker_id")
+        detail = m.get("detail", "")
+        kind = (m.get("kind") or "").lower()
+        sess = self._session_for_worker(worker_id) or self._session_for_block(block)
+        if self._is_checkpoint(block, m):                                   # rung (a)
+            case_id = self._open_case(block, "await", worker_id, detail)
+            self.emit("escalate.await",
+                      {"worker_id": worker_id or "?", "block": block or "?",
+                       "detail": detail, "case": case_id})
+            if self._tg_on():
+                self.emit("tg.escalate", {"worker_id": worker_id or "?", "detail": detail})
+        elif kind in ("scope", "blueprint", "design") or (self._architect() and kind != "trivial"):
+            self._triage_to_architect(f"await[{block or '?'}]: {detail}")    # rung (b)
+        else:                                                               # rung (c)
+            if sess and sess != "dry" and not self.dry:
+                jobs.send(sess, "Proceed — no checkpoint registered here and nothing to escalate.")
+            self.log("await", f"auto-ack {worker_id or '?'} on {block or '?'}")
+        self._emit("pulse")
+
+    def _is_checkpoint(self, block, m):
+        """Rung (a): an operator-pre-registered checkpoint. Registered out-of-band (a project/
+        block declaration or an operator `checkpoint <block>` command -> st.checkpoints), or the
+        classifier pulled an explicit `checkpoint` flag. Deterministic state lookup, never a model
+        call. This rung always reaches the operator — it must never auto-clear."""
+        if m.get("checkpoint") is True:
+            return True
+        return bool(block) and block in (self.st.data.get("checkpoints") or [])
+
+    def _session_for_worker(self, worker_id):
+        w = next((w for w in self.st.workers if w.get("id") == worker_id), None)
+        return w.get("session_id") if w else None
+
+    def _open_case(self, block, kind, worker_id, detail):
+        """Stamp a correlation id on a parked operator case (02-10). The reply carries it back and
+        02-08 Settle applies it ≤1 tick later (_h_apply_decision)."""
+        case_id = self.st.next_case_id(block or kind)
+        self.st.pending_cases[case_id] = {
+            "block": block, "kind": kind, "worker_id": worker_id,
+            "detail": detail, "raised_at": util.now_iso(), "decision": None}
+        return case_id
 
     def _h_escalate(self, m):
         # wall:raised:<block> — Escalate: free the slot, park the block (runtime), contact operator.
@@ -543,16 +676,26 @@ class Engine:
                 self.st.blocked.append(block)
             self.st.gate.pop(block, None)
         detail = m.get("detail", "wall")
-        self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?", "detail": detail})
+        case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
+        self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
+                                    "detail": detail, "case": case_id})
         if self._tg_on():
             self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
         self._emit("pulse")
 
     def _h_apply_decision(self, m):
-        # operator:decision:<block> — resume | amend | abandon | approve(merge).
-        block = m.get("block")
+        # operator:decision:<block> — 02-08 SETTLE: apply the operator's reply to a parked case.
+        # The reply carries the correlation id stamped at escalation (02-10); resolve the case by
+        # it (or by block), write the decision onto the record, then act — in THIS tick (≤1 tick
+        # after the reply landed in the hopper). resume | amend | abandon. (No merge sign-off
+        # decision: the operator-approves-before-merge model is removed — D5/TD-02.)
         decision = (m.get("decision") or "").lower()
+        case = self._resolve_case(m.get("case"), m.get("block"))
+        block = (case or {}).get("block") or m.get("block")
+        if case is not None:
+            case["decision"] = decision                  # Settle writes the reply onto the pending record
         if not block:
+            self._close_case(m.get("case"), case)
             self._emit("pulse"); return
         if decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
@@ -565,14 +708,28 @@ class Engine:
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
             self.st.gate.pop(block, None)
-        elif decision in ("approve", "merge"):
-            self.st.approvals.setdefault("granted", [])
-            if block not in self.st.approvals["granted"]:
-                self.st.approvals["granted"].append(block)
-            if block in self.st.gate:
-                self._drive_gate(block, self.st.gate[block], reason="operator approved merge")
+        self._close_case(m.get("case"), case)
         self.log("flow", f"operator:decision:{block} -> {decision}")
         self._emit("pulse")
+
+    def _resolve_case(self, case_id, block):
+        """Find the parked case the reply settles — by correlation id (preferred) or by block."""
+        if case_id and case_id in self.st.pending_cases:
+            return self.st.pending_cases[case_id]
+        if block:
+            for c in self.st.pending_cases.values():
+                if c.get("block") == block and c.get("decision") is None:
+                    return c
+        return None
+
+    def _close_case(self, case_id, case):
+        if case_id and case_id in self.st.pending_cases:
+            self.st.pending_cases.pop(case_id, None)
+            return
+        for cid, c in list(self.st.pending_cases.items()):
+            if c is case:
+                self.st.pending_cases.pop(cid, None)
+                return
 
     def _h_recover(self, m):
         # worker:stalled — Recover: free the slot, then re-arm the lost work.
@@ -598,13 +755,14 @@ class Engine:
     def _h_session_end(self, m):
         self._end_session()
 
-    def _h_scripts(self, m):
-        # `*` catch-all: log the unexpected input and hand it to the architect to sort
-        # (solvable -> architect handles it; truly the operator's -> architect escalates).
-        # TRON makes NO flow-steering LLM judgment here (assess_wall retired).
+    def _h_sentry(self, m):
+        # SENTRY — the `*` reactive catch-all. Log the unexpected input and hand it to the architect
+        # to sort (solvable -> architect handles it; truly the operator's -> architect escalates).
+        # TRON makes NO flow-steering LLM judgment here (the old second-judgment tool was retired);
+        # the architect, with project context, is the only thing that steers it.
         raw = m.get("_trigger", "*")
         text = m.get("detail", "")
-        self.log("scripts", f"unmatched trigger '{raw}': {text[:160]}")
+        self.log("sentry", f"unmatched trigger '{raw}': {text[:160]}")
         self._triage_to_architect(text[:160] or raw)
         self._emit("pulse")
 
@@ -614,10 +772,11 @@ class Engine:
             self._drive_gate(block, self.st.gate[block])
 
     def _drive_gate(self, block, g, reason=None):
-        """Bounce the worker forward until the block lands ✅ on trunk. TRON judges on
-        evidence (PR existence, CI rollup, trunk state), never the agent's word. It only
-        nudges when the stage changes — no per-tick spam. Finalization (cadence, release)
-        happens in _on_block_done when ✅ appears on trunk."""
+        """Drive the worker through the DONE gate (T4) on EVIDENCE — never its `✅`, never bare
+        trunk presence: validate-local -> authorize-push (PR open) -> CI green on trunk ->
+        deploy-if-declared -> ✅. Re-prompt the specific gap on each stage change (gate.step /
+        PMT-GATE-DONE). PULSE never merges; the engineer lands it all via PR. Finalization (cadence,
+        release) happens in _on_block_done when ✅ actually appears on trunk."""
         row = self.st.row(block)
         if row and row.get("status") == "done":
             return                                       # refresh finalizes; nothing to drive
@@ -627,29 +786,43 @@ class Engine:
         branch = self._branch(block)
         pr = (self.st.open_prs or {}).get(branch)
         sess = self._session_for_block(block)
+        deploy = (row or {}).get("deploy")               # honour the block's Deploy: (T2)
+        deploy_tail = (f"run the declared deploy ({deploy}) and verify it, then " if deploy else "")
+        renudge = False
 
         if not pr:
-            stage, instr = "pr", ("Local ACs validated? Open the PR for "
-                                  f"{branch} (CI must be green).")
+            if g.get("pr"):
+                # No-silent-stuck (T7/S1-05): the PR is gone but the block isn't ✅ — merged-but-
+                # not-landed (deploy failed / ✅ not flipped). Keep a driver, never go quiet; after
+                # a cap of unheeded re-nudges, escalate rather than nudge into the void.
+                n = g.get("post_merge_nudges", 0)
+                if n >= int(self.knobs.get("gate_post_merge_cap", 3)):
+                    self.st.gate.pop(block, None)
+                    self._emit("wall:raised:" + block,
+                               {"block": block, "worker_id": self._worker_id("engineer", block),
+                                "detail": "merged but not landed on trunk (deploy/✅ pending)"})
+                    return
+                g["post_merge_nudges"] = n + 1
+                renudge = True                           # re-nudge each tick until it lands or escalates
+                stage = "post-merge"
+                instr = (f"PR #{g.get('pr')} merged but {block} isn't ✅ on trunk yet — "
+                         f"{deploy_tail}flip ✅ and archive the block, all via PR.")
+            else:
+                stage, instr = "validate-local", (
+                    f"Validate the block's acceptance suite locally and show the evidence "
+                    f"(not just a claim). Then push and open the PR for {branch} — CI must be green.")
         elif pr.get("checks") == "failing":
             stage, instr = "ci", f"CI is RED on PR #{pr.get('number')}. Fix it, push, keep me posted."
         elif pr.get("checks") == "pending":
             stage, instr = "ci-wait", None               # wait for CI; no nudge
         else:
-            # CI clean -> merge gate (§8): per-session knob + block Merge:needs-user (raise-only).
-            if self._merge_needs_user(block) and not self._merge_granted(block):
-                stage = "merge-hold"
-                self.emit("escalate.merge",
-                          {"block": block, "pr": str(pr.get("number") or "?"),
-                           "detail": "CI green; merge needs your sign-off"})
-                instr = None
-            else:
-                stage, instr = "merge", (
-                    f"CI green on PR #{pr.get('number')}. Merge, re-validate on trunk, "
-                    "deploy-clean + verify, then flip ✅ and archive the block — all via PR.")
+            stage = "merge"
+            instr = (f"CI green on PR #{pr.get('number')}. Merge, re-validate on trunk, "
+                     f"{deploy_tail}flip ✅ and archive the block — all via PR."
+                     + ("" if deploy else " (No deploy declared.)"))
 
-        if stage != g.get("stage"):                      # nudge only on change
-            g["stage"], g["pr"] = stage, (pr or {}).get("number")
+        if stage != g.get("stage") or renudge:           # nudge on change, or each tick while post-merge
+            g["stage"], g["pr"] = stage, ((pr or {}).get("number") or g.get("pr"))
             if instr and sess:
                 self.emit("gate.step", {"worker_id": self._worker_id("engineer", block),
                                         "block": block, "detail": instr}, worker_session=sess)
@@ -659,17 +832,6 @@ class Engine:
         w = next((w for w in self.st.workers
                   if w.get("role") == "engineer" and w.get("block") == block), None)
         return w.get("session_id") if w else None
-
-    def _merge_needs_user(self, block):
-        """Raise-only (§8): the session gate ASKs, OR the block stamps Merge: needs-user."""
-        row = self.st.row(block) or {}
-        if (row.get("merge") or "self").lower() == "needs-user":
-            return True
-        gate_key = "promote_main" if self.paths.get("staging") == "none" else "merge_staging"
-        return str(self.st.approvals.get(gate_key, "APPROVED")).upper() == "ASK"
-
-    def _merge_granted(self, block):
-        return block in (self.st.approvals.get("granted") or [])
 
     # ── the architect (persistent, queued, forward-only) ──
     def _architect(self):
@@ -715,7 +877,7 @@ class Engine:
         job = self.st.architect_queue.pop(0)
         arch["status"], arch["current_job"] = "busy", job
         sess = arch.get("session_id")
-        if job["kind"] == "forward":
+        if job["kind"] in ("forward", "reconcile"):      # both re-check/clear the path ahead (PMT-ARCH-FORWARD)
             self.emit("arch.forward", {"block": job["block"]}, worker_session=sess)
         elif job["kind"] == "triage":
             self.emit("arch.triage", {"detail": job.get("detail", "")}, worker_session=sess)
@@ -875,15 +1037,21 @@ class Engine:
     def _reset_session_runtime(self):
         """A fresh `tron start` (started_at was None — not a reconnect) begins a clean run:
         drop the disposable per-session state (stale worker records from the prior run, gates,
-        parks, drops, approvals, cadence) and keep only `seen_done`, so already-✅ blocks never
-        re-trigger a review. The pipeline cache is rebuilt by the refresh that follows."""
+        parks, drops, approvals, cadence, counters, parked cases, reconcile gates, run-control)
+        and keep only `seen_done`, so already-✅ blocks never re-trigger a review. The pipeline
+        cache is rebuilt by the refresh that follows."""
         self.st.data["active_workers"] = []
         self.st.data["architect_queue"] = []
         self.st.data["gate"] = {}
         self.st.data["blocked"] = []
         self.st.data["dropped"] = []
         self.st.data["cadence"] = {}
+        self.st.data["counters"] = {}            # T9/S1-12: stall-count (+ case-seq, refresh-fail) must not leak across sessions
+        self.st.data["pending_cases"] = {}
+        self.st.data["reconciled"] = []
+        self.st.data["checkpoints"] = []
         self.st.data["approvals"] = dict(DEFAULT_APPROVALS)
+        self.st.run_control = None
 
     def start(self, worker_count):
         self.st.data.setdefault("session", {})["started_at"] = util.now_iso()
@@ -891,12 +1059,127 @@ class Engine:
         self.knobs["worker_count"] = worker_count
         self._reset_session_runtime()        # clean slate; no stale architect/approvals carry over
         self._refresh_from_trunk(count=False)  # load the view + PRs WITHOUT counting ✅ history
+        if self.ended:                       # bootup refresh hit a dead trunk (A2) -> halted loud
+            self.st.save()
+            return
+        # ── first-run gateway (ND-01): is there anything to supervise? ──
+        gate = self._bootup_gateway()
+        if gate is not None:                 # empty-pipeline | scope-typo -> clean end, spawn no agents
+            self.emit("terminal.plan_first" if gate == "empty-pipeline" else "terminal.scope_unknown",
+                      {"detail": self._scope_detail()})
+            self._end_session()              # archives the barely-born MANIFEST, resets started_at
+            self.st.save()
+            return
         self._seed_seen_done()               # pre-existing ✅ are already-counted, never re-reviewed
         self._tq = []
         self.emit("session.start", {})
         self._emit("tron:start")             # _h_bootup now spawns a live architect (no stale record)
         self._drain_triggers()
         self.st.save()
+
+    # ── bootup gateway + clean-end archive (ND-01 / T3) ──
+    def _bootup_gateway(self):
+        """First-run gateway. Returns a reason NOT to start, or None to proceed:
+          'empty-pipeline' — no canon work exists yet (no block files) -> operator must plan first;
+          'scope-typo'     — a range/phase scope names something the pipeline doesn't contain.
+        An *empty but valid* scope (e.g. everything in range already ✅) is legitimate on a first
+        run (A3) -> None; the run starts, idles, and ends cleanly."""
+        rows = self.st.pipeline
+        if not rows or not any(r.get("has_block_file") for r in rows):
+            return "empty-pipeline"
+        sc = self.st.scope or {}
+        mode, val = sc.get("mode", "all"), sc.get("value")
+        if mode == "phase":
+            want = str(val or "").strip().lower()
+            if want and not any(want in str(r.get("phase") or "").lower() for r in rows):
+                return "scope-typo"
+        elif mode == "range":
+            ids = [r["id"] for r in rows]
+            for end in (val or [])[:2]:
+                if end and end not in ids:
+                    return "scope-typo"
+        return None
+
+    def _scope_detail(self):
+        sc = self.st.scope or {}
+        return f"{sc.get('mode', 'all')}:{sc.get('value')}" if sc.get("value") else sc.get("mode", "all")
+
+    def _is_first_run(self):
+        """Empty-archive signal: no prior MANIFEST archived -> this is a first run, not a resume."""
+        adir = self.ctx.p("archive")
+        return not (os.path.isdir(adir) and any(n.startswith("manifest-") for n in os.listdir(adir)))
+
+    def _archive_manifest(self):
+        """Clean-end / halt archive step (ND-01-14-08 / H4): snapshot the MANIFEST into the archive
+        dir before the run closes — a forensic record, and the empty-archive signal for the next run."""
+        try:
+            if not os.path.exists(self.ctx.state):
+                return
+            adir = self.ctx.p("archive")
+            os.makedirs(adir, exist_ok=True)
+            stamp = util.now_iso().replace(":", "").replace("-", "").replace(".", "")
+            with open(self.ctx.state) as src, open(os.path.join(adir, f"manifest-{stamp}.yaml"), "w") as out:
+                out.write(src.read())
+        except OSError as e:
+            self.log("flow", f"manifest archive skipped: {e}")
+
+    def _halt_loud(self, detail, bootup=False):
+        """Loud, synchronous halt (A2/T6): never a silent death. Emit the operator line in-band
+        (no MANIFEST may exist yet at bootup), archive what state there is, terminate the run."""
+        self.emit("terminal.halt_bootup" if bootup else "terminal.halt_trunk", {"detail": detail})
+        if self._tg_on():
+            self.emit("tg.escalate", {"worker_id": "TRON", "detail": detail})
+        self._archive_manifest()
+        self.ended = True
+        sess = self.st.data.setdefault("session", {})
+        sess["ended_at"] = util.now_iso()
+        sess["started_at"] = None
+        self.st.run_control = "halt"
+
+    # ── operator run-control (PARLEY ND-09 / R-HALT / T10) ──
+    def pause(self):
+        """Hard freeze (F1): broadcast pause to every agent, stop all dispatch. Resumable."""
+        self.st.run_control = "pause"
+        self._broadcast("Pause as soon as you safely can — hold for go-ahead. (TRON)")
+        self.emit("terminal.run_control", {"detail": "PAUSED — dispatch frozen; resume to continue."})
+        self.st.save()
+        return "paused"
+
+    def drain(self):
+        """Soft stop (F2): dispatch nothing new; in-flight finishes. Resumable."""
+        self.st.run_control = "drain"
+        self.emit("terminal.run_control", {"detail": "DRAINING — finishing in-flight, starting nothing new."})
+        self.st.save()
+        return "draining"
+
+    def resume(self):
+        """Lift pause/drain (F3): dispatch restarts on the next tick."""
+        self.st.run_control = None
+        self._broadcast("Resume. (TRON)")
+        self.emit("terminal.run_control", {"detail": "RESUMED — back to normal dispatch."})
+        self.st.save()
+        return "resumed"
+
+    def halt(self):
+        """Terminal stop (F4): end the run, archive the MANIFEST, no resume."""
+        self.emit("terminal.run_control", {"detail": "HALT — stopping everything. End of line."})
+        self._end_session()
+        self.st.save()
+        return "halted"
+
+    def rescope(self, mode, value=None):
+        """Change the in-scope range mid-run (F5)."""
+        self.set_scope(mode, value)
+        self.emit("terminal.run_control", {"detail": f"RESCOPED to {mode}:{value}."})
+        return "rescoped"
+
+    def _broadcast(self, line):
+        if self.dry:
+            return
+        for w in self._pool():
+            sess = w.get("session_id")
+            if sess and sess != "dry":
+                jobs.send(sess, line)
 
     def set_scope(self, mode, value=None):
         self.st.data["scope"] = {"mode": mode, "value": value}
@@ -929,6 +1212,8 @@ class Engine:
         sess["started_at"] = None            # so the next `tron start` bootstraps fresh, not reconnect
         if os.path.exists(self.ctx.current_id):
             os.remove(self.ctx.current_id)
+        self.st.save()                       # persist the closing state, then snapshot it
+        self._archive_manifest()             # clean-end archive (H4) + empty-archive signal for next run
 
     def recover(self):
         """Reattach: rebuild live workers from the host job store, re-arm lost work, and

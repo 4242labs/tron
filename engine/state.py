@@ -96,6 +96,40 @@ class State:
         Held in runtime, reset each session; TRON never writes it to git."""
         return self.data.setdefault("approvals", dict(DEFAULT_APPROVALS))
 
+    @property
+    def run_control(self):
+        """Operator run-control flag PULSE checks each tick (R-HALT, 01-03 T10):
+        None/'running' | 'pause' (freeze dispatch, resumable) | 'drain' (finish in-flight,
+        start nothing new, resumable) | 'halt' (terminate, no resume)."""
+        return self.data.get("run_control")
+
+    @run_control.setter
+    def run_control(self, value):
+        if value in (None, "running"):
+            self.data.pop("run_control", None)
+        else:
+            self.data["run_control"] = value
+
+    @property
+    def pending_cases(self):
+        """Open operator escalations keyed by correlation id (02-10 stamps it; the reply
+        carries it back; 02-08 Settle applies it ≤1 tick later). {case_id: {block, kind,
+        worker_id, detail, raised_at, decision}}."""
+        return self.data.setdefault("pending_cases", {})
+
+    @property
+    def reconciled(self):
+        """Block ids the architect has reconciled forward (re-checked against a just-finished
+        block's drift) — readiness gate for dispatch once a predecessor has landed (M-05)."""
+        return self.data.setdefault("reconciled", [])
+
+    def next_case_id(self, block):
+        """A monotonic correlation id for an escalation (stable across a retried tick by the
+        counter, not the clock)."""
+        n = self.counters.get("case_seq", 0) + 1
+        self.counters["case_seq"] = n
+        return f"CASE-{n:03d}"
+
     # ── idempotency guards (contracts §5) ──
     def has_active_worker_for_block(self, block_id, role=None):
         for w in self.workers:

@@ -27,9 +27,9 @@ from fsm import TABLE, Engine
 
 # The closed tag enum the engine knows how to route (mirrors routing.yaml tags).
 CANON_TAGS = {
-    "worker.done", "worker.wall", "worker.review_done", "worker.progress",
-    "worker.question_peer", "worker.question_tron",
-    "architect.cleared", "architect.logged",
+    "worker.done", "worker.wall", "worker.review_done", "worker.await_confirm",
+    "worker.progress", "worker.question_peer", "worker.question_tron",
+    "architect.reconciled", "architect.logged",
     "operator.decision", "operator.status_query", "operator.knob_change",
     "operator.directive",
     "sweep.tick", "worker.stalled", "worker.dead",

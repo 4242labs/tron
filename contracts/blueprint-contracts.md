@@ -1,9 +1,9 @@
 # Blueprint contracts — TRON deterministic FSM (B0 · reconciled to the converged flow)
 
-**Status:** STALE (2026-06-05) — superseded as the live reference by `contracts/rebuild-spec.md`;
-on ADR-0001 §5's *replace* list, rewritten in block 01-03. Names below are kept current for grep
-hygiene, but the behavior model here is the pre-rebuild shape — trust `rebuild-spec.md` on any conflict.
-· **Block:** D1 (canon shape) · **Date:** 2026-06-05
+**Status:** RECONCILED to the rebuilt engine in block 01-03 — the behavior model below matches the built
+`engine/fsm.py`, `routing.yaml`, and `messages.yaml`. Companion to `contracts/rebuild-spec.md` (the 01-01
+behavior spec); on any conflict the spec + the built engine win.
+· **Block:** 01-03 (reconcile) · **Date:** 2026-06-28
 **Implements:** `42hq/agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
 **Conforms to:** the frozen flow — `42hq/agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
 
@@ -67,7 +67,7 @@ trigger → step (actor, skill) → outputs → on-complete (== a trigger)
 
 ### Standing layer
 - **PULSE** — runs at `tron:start` and on every `pulse` return. It keeps every worker slot busy and
-  hands off to SWITCHBOARD; any unexpected input → SCRIPTS (the `*` catch-all). It is the loop, not a row.
+  hands off to SWITCHBOARD; any unexpected input → SENTRY (the `*` catch-all). It is the loop, not a row.
 - **SWITCHBOARD** — per free worker slot, in priority: (a) oldest available **adhoc** block →
   (b) a **due cadence** reviewer (consume its counter) → (c) next available block by pipeline order.
   Then **clear-ahead**: enqueue the architect (`review:next:<block>`) to author the block file for every
@@ -75,22 +75,38 @@ trigger → step (actor, skill) → outputs → on-complete (== a trigger)
   **iff** its file is `📋` with every `Depends on` already `✅` on trunk and it isn't already in flight
   (no live worker, no open PR). Dispatch writes **no status** — TRON owns no pipeline; the spawned
   worker record is the in-flight marker (idempotent against concurrent passes).
+- **SENTRY** — the reactive third of the standing trio (**PULSE · SWITCHBOARD · SENTRY**): the `*` catch-all
+  every classified message ultimately falls through, and the safety net for anything that doesn't fit. An
+  out-of-enum input takes `unclassified` → `*` → the SENTRY catch-all → **the architect** to sort (no second
+  LLM judgment).
 
 ### Roles
-- **Architect** — a **persistent, dedicated** agent, **excluded from the worker slot pool**, with a FIFO
-  queue. Architect rows ENQUEUE (never need a free slot, never contend with workers). The architect is
-  **forward-looking only**: it clears the path ahead by **authoring** the next block file (`forward-review`,
-  PR'd to trunk) and turns reviewer findings into **upcoming** adhoc block files (`log-review`); it never
-  reopens a done block. `architect-count` is the knob that drains the queue faster (the throughput bottleneck).
+- **Architect** — a **persistent, dedicated** agent, **excluded from the worker slot pool**, draining a FIFO
+  `architect_queue` (MANIFEST). Architect jobs ENQUEUE (never need a free slot, never contend with workers)
+  in two **distinct job-kinds**: `forward` — **author** a missing upcoming block file (PR'd to trunk); and
+  `reconcile` — re-check the next scoped block against a just-finished block's drift, then report it good to
+  dispatch. A landed `✅` enqueues a `reconcile` (M-05), and the next scoped block's dispatch readiness is
+  **gated until that reconcile completes**. The architect is **forward-looking only**: it also turns reviewer
+  findings into **upcoming** adhoc block files (`log-review`) and never reopens a done block. `architect-count`
+  is the knob that drains the queue faster (the throughput bottleneck).
 - **Engineers + reviewers** share the worker slot pool. Reviewer types are open (code / security / data / …).
 - **Review is a milestone, not a verdict.** A reviewer delivers a log + "done"; the architect's
   log-review decides what becomes work.
 - **Cadence is PULL** — SWITCHBOARD checks the clock; a `<type>` counter increments on every block that
   lands `✅` on trunk (deduped via `seen_done`) and is reset on dispatch. Never auto-fired.
-- **Wall → operator.** A wall parks its block `blocked` + frees the slot; `operator:decision:<block>`
-  resumes / amends / abandons it. Liveness (stall / dead worker) is the engine's side-system; it feeds a
-  single `worker:stalled` trigger into the table.
-- **Bootup & Session-End are protocols** (TRON lifecycle), not rows; SCRIPTS handle the `*` catch-all.
+- **Wall → operator.** A wall parks its block `blocked` + frees the slot; `operator.decision` then
+  **resumes / amends / abandons** it (those three only — the operator-approves-before-merge path is gone).
+  Every escalation stamps a correlation **`case` id**; parked cases live in the MANIFEST keyed by that id, and
+  the operator reply carries the id back so Settle (02-08) clears the right case within ≤1 tick. Liveness
+  (stall / dead worker) is the engine's side-system; it feeds a single `worker:stalled` trigger into the table.
+- **Bootup & Session-End are protocols** (TRON lifecycle), not rows; SENTRY handles the `*` catch-all.
+  **Bootup is a first-run gateway:** a truly-empty pipeline exits with a "plan first" message; a range/phase
+  scope naming a block the pipeline lacks is refused as a typo; an empty-but-valid scope is legitimate. A
+  clean end / `halt` archives the MANIFEST.
+- **Operator run-control (PARLEY commands, not classified messages).** `PAUSE` (hard-freeze dispatch,
+  resumable) · `DRAIN` (finish in-flight, start nothing new, resumable) · `RESUME` · `HALT` (terminal,
+  archives the MANIFEST). The engine checks these via a per-tick **run-state flag in the MANIFEST** (R-HALT) —
+  they are operator-channel commands, never `classify_message` tags.
 
 The canon-invariant part is the **trigger grammar** (`routing.yaml`) + the engine's fixed event table.
 Projects set only **knobs** (counts, cadence, git, WAKE) in `knobs.yaml` — never the table itself; a
@@ -110,15 +126,20 @@ genuinely new *shape* of control (beyond the grammar) is the only thing that is 
 | `worker.done` | block built | `block:next:done` |
 | `worker.wall` | hit a wall needing the operator | `wall:raised:<block>` |
 | `worker.review_done` | reviewer delivered its log | `review:<type>:done` |
+| `worker.await_confirm` | pause mid-block for go-ahead | `worker:await:<block>` |
 | `worker.question_peer` | peer consult (e.g. architect) | side: observe (no advance) |
 | `worker.question_tron` | question for TRON | side: answer from context |
 | `worker.progress` | heartbeat | side: none |
 
+`worker.await_confirm` picks its rung **deterministically** (no LLM): (a) an operator-registered checkpoint →
+the operator (a parked case, never auto-resolved); (b) a scope/blueprint question → the architect; (c) nothing
+substantive → a deterministic auto-ack. When a checkpoint is registered it **always reaches the operator** (R-AWAIT).
+
 ### Architect-origin (the persistent, forward-only consultant)
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `architect.cleared` | forward-review done — block file authored on trunk | `block:<block>:clear` |
-| `architect.logged` | log-review done — findings shaped into adhoc block files | `block:adhoc:clear` |
+| `architect.reconciled` | forward/reconcile done — upcoming block re-checked & signed off on trunk (M-05) | `block:<block>:reconciled` |
+| `architect.logged` | log-review done — findings shaped into adhoc block files | `block:adhoc:reconciled` |
 
 ### Operator-origin (session or TG)
 | Tag | Meaning | Maps to |
@@ -137,7 +158,7 @@ genuinely new *shape* of control (beyond the grammar) is the only thing that is 
 ### Reserved
 | Tag | Meaning | Maps to |
 |:--|:--|:--|
-| `unclassified` | out-of-enum, or invalid-output budget exhausted (§4) | `*` → SCRIPTS (may wall) |
+| `unclassified` | out-of-enum, or invalid-output budget exhausted (§4) | `*` → SENTRY catch-all → architect triage |
 
 "Side" actions are global engine handlers that do not advance the FSM; the active step is re-entered.
 
@@ -154,7 +175,7 @@ never free prose to the flow.
 
 **Tiering:** `classify_message` → cheap model. **One** judgment tool only. Wired in the engine (D2).
 
-**Not judgment tools, by design:** *"is this the operator's problem?"* (`assess_wall` — **retired**:
+**Not judgment tools, by design:** *"is this the operator's problem?"* (the old second judgment — **retired**:
 an unclassifiable input routes to the architect, who steers it — TRON makes no second LLM call),
 review verdicts (review is a milestone), findings-triage (→ the architect's `log-review` skill), and
 stall detection (→ the engine liveness side-system). These were LLM tools in the old model and are removed.
@@ -168,8 +189,8 @@ The engine schema-validates every judgment-tool return.
 1. **Valid** → use it.
 2. **Invalid / malformed / out-of-enum tag** → retry the same call, appending the validation error.
    Budget: `invalid_output.max_retries` (default 2), read from `routing.yaml` by the engine.
-3. **Budget exhausted** → `unclassified` → the `*` SCRIPTS catch-all, which hands the input to the
-   architect to sort. Raw outputs logged (`logs/invalid-output-{date}.log`).
+3. **Budget exhausted** → `unclassified` → the `*` SENTRY catch-all, which hands the input to the
+   architect to sort (no second LLM judgment). Raw outputs logged (`logs/invalid-output-{date}.log`).
 
 TRON never guesses a flow decision from malformed output. An out-of-enum `tag` is itself a validation
 failure (the enum is closed in the tool schema).
@@ -184,10 +205,12 @@ Turn-based, no daemon. **One wake = one bounded tick.**
   drained in the same tick.
 - **A tick:**
   1. **Load** the MANIFEST `manifest.yaml` (the FSM cursor, counters, trunk-read cache, worker/architect-queue state).
-  2. **One bounded pass:** refresh from trunk (`git` ff + read `pipeline.md`/`blocks/*.md` + `gh pr list`,
-     best-effort); poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck);
-     drain inbound → `classify_message` → trigger or side; drive in-flight DONE gates; then run **PULSE**
-     (which calls SWITCHBOARD) to fill free slots, clear ahead, wait, or end.
+  2. **One bounded pass:** refresh from trunk (`git` ff + read `pipeline.md`/`blocks/*.md` + `gh pr list`) — a
+     failed refresh is **never swallowed into a stale snapshot**: consecutive failures are counted and the
+     engine halts **loud** (at bootup, synchronously, before any MANIFEST exists; or at a death-cap during
+     ticks); poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck); drain inbound
+     → `classify_message` → trigger or side; drive in-flight **DONE gates** (the prompted challenge, below);
+     then run **PULSE** (which calls SWITCHBOARD) to fill free slots, clear ahead, wait, or end.
   3. **Persist atomically.**
   4. **Exit.**
 - **Atomic writes:** write `*.tmp`, then `mv` over the live file (atomic rename). Never half-written.
@@ -201,6 +224,12 @@ Turn-based, no daemon. **One wake = one bounded tick.**
 - A tick with no actionable signal persists `last_sweep_at` and exits — no transition.
 
 Atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
+
+**The DONE gate (the prompted challenge, T4 of `rebuild-spec.md`).** A `worker.done` only *flags a candidate*;
+the gate then judges on **evidence** at each stage — never the worker's `✅`, never bare trunk presence:
+validate-local → authorize-push (PR open) → CI green on trunk → deploy-if-declared (only when the block header
+declares `Deploy:`) → `✅`. A failed stage re-prompts with the specific gap (`gate.step`), never advancing.
+**PULSE never merges** — the engineer lands it all via PR; there is **no operator-approve-before-merge**.
 
 ---
 
@@ -237,7 +266,8 @@ project's pipeline or blocks.
 
 The pipeline is the project's **git-tracked** canon, written by agents via PR — not TRON state. TRON
 holds only a **disposable read cache** (`manifest.yaml › pipeline`), rebuilt every wake from trunk
-+ open PRs + alive workers, so a crash, an off-session, or tron→no-tron→tron leaves **no drift**. TRON
++ open PRs + alive workers, so a crash, an off-session, or tron→no-tron→tron leaves **no drift** — and a
+failed refresh halts **loud** rather than caching a stale snapshot (§5). TRON
 writes **nothing** to git: it never sets status. A block is done only when it shows `✅` on trunk
 (merged, re-validated, deployed-clean — all landed by an agent). Status *history* is version-controlled
 in the project repo, as it should be.

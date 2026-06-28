@@ -70,7 +70,7 @@ def parse_pipeline(path):
             if s.startswith("## "):
                 section, phase, header = s[3:].strip(), None, None
                 continue
-            m = re.match(r"^###\s+Phase\s+([^:]+):\s*(.*)$", s)
+            m = re.match(r"^###\s*Phase\s+([^:]+):\s*(.*)$", s)
             if m:
                 phase = f"Phase {m.group(1).strip()}: {m.group(2).strip()}".rstrip(": ")
                 header = None

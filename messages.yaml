@@ -23,6 +23,7 @@ slots:
   detail: <str>         # free-text judgment payload (the one slot the LLM may fill with prose)
   reason: <str>
   count: <int>
+  case: <str>           # escalation correlation id (e.g. CASE-001) — reply with it to settle
 
 # ── Templates, grouped by channel/situation ──
 templates:
@@ -83,20 +84,36 @@ templates:
     channel: terminal
     slots: [detail]
     text: "[TRON]  Can't boot — trunk's unreachable. {detail}. Nothing to supervise on a dead trunk. End of line."
+  terminal.halt_trunk:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  Trunk went dark mid-run and stayed dark. {detail}. I won't dispatch blind. Halting. End of line."
+  terminal.plan_first:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  Nothing to build — the pipeline's empty ({detail}). Plan first, then call me. End of line."
+  terminal.scope_unknown:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  That scope ({detail}) matches nothing on trunk. Typo, or a plan that doesn't exist yet. Fix it and try again. End of line."
+  terminal.run_control:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  {detail}"
 
   # escalation (operator / tg channels)
   escalate.wall:
     channel: operator
-    slots: [worker_id, block, detail]
-    text: "[TRON]  Above my pay grade. {worker_id} walled on {block}: {detail}. Peer-consult exhausted. Your call."
+    slots: [worker_id, block, detail, case]
+    text: "[TRON]  Above my pay grade [{case}]. {worker_id} walled on {block}: {detail}. Peer-consult exhausted. Your call — reply with the case id."
+  escalate.await:
+    channel: operator
+    slots: [worker_id, block, detail, case]
+    text: "[TRON]  Checkpoint [{case}]. {worker_id} is holding on {block} for your go-ahead: {detail}. It won't move until you say so — reply with the case id."
   escalate.unclassified:
     channel: operator
     slots: [detail]
     text: "[TRON]  Got something I can't parse: {detail}. I don't guess on flow decisions. Tell me what to do with it."
-  escalate.merge:
-    channel: operator
-    slots: [block, pr, detail]
-    text: "[TRON]  {block} (PR {pr}) is at the merge gate. {detail}. Approve and I'll let it land — say the word."
   tg.escalate:
     channel: tg
     slots: [worker_id, detail]

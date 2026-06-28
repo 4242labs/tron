@@ -40,7 +40,7 @@ invalid_output:                # REQUIRED
 # Output is always a tag + structured slots, never free prose to the flow.
 tools:                         # REQUIRED, map of <tool> -> { in: [...], out: [...] }
   <tool>: { in: [<field>, ...], out: [<field>, ...] }
-  # canon set: classify_message (cheap) — ONE judgment only (assess_wall retired: an
-  # unclassifiable input routes to the architect, who steers it, not the LLM).
+  # canon set: classify_message (cheap) — ONE judgment only (the old second judgment was
+  # retired: an unclassifiable input routes to the architect, who steers it, not the LLM).
   # NOT tools by design: review verdicts (milestone), findings-triage (architect skill),
   # stall detection (engine liveness side-system).

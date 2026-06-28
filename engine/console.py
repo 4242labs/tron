@@ -165,11 +165,50 @@ class Console:
             elif c == "log":
                 for ev in self._events()[-15:]:
                     print(f"{DIM}{ev.get('at','')}{RST}  {ev.get('text','')}")
+            elif c in ("pause", "drain", "resume", "halt"):
+                self._run_control(c)
+                if c == "halt":
+                    break
+            elif c == "rescope":
+                self._rescope(arg.strip())
+            elif c == "checkpoint":
+                self._checkpoint(arg.strip())
             elif c == "help":
-                print(f"{DIM}  status · pipeline · tick · attach <id> · log · stop [--force] · "
-                      f"help · or talk to TRON{RST}")
+                print(f"{DIM}  status · pipeline · tick · attach <id> · log · "
+                      f"pause · drain · resume · halt · rescope · checkpoint <block> · "
+                      f"stop [--force] · help · or talk to TRON{RST}")
             else:
                 self._say(line)
+
+    # ── run-control (PARLEY ND-09 / R-HALT) — commands, not classified messages ──
+    def _run_control(self, verb):
+        getattr(Engine(self.ctx), verb)()     # pause | drain | resume | halt — emits live
+
+    def _rescope(self, arg):
+        parts = arg.split()
+        if not parts:
+            print(f"{DIM}  rescope all | rescope phase <name> | rescope range <lo> <hi>{RST}")
+            return
+        mode = parts[0].lower()
+        if mode == "phase" and len(parts) >= 2:
+            Engine(self.ctx).rescope("phase", " ".join(parts[1:]))
+        elif mode == "range" and len(parts) >= 3:
+            Engine(self.ctx).rescope("range", [parts[1], parts[2]])
+        else:
+            Engine(self.ctx).rescope("all")
+
+    def _checkpoint(self, block):
+        """Pre-register an operator checkpoint (await ladder rung a): a worker pausing on this
+        block reaches the operator, never an auto-ack."""
+        if not block:
+            print(f"{DIM}  checkpoint <block-id>{RST}")
+            return
+        st = self._state()
+        cps = st.data.setdefault("checkpoints", [])
+        if block not in cps:
+            cps.append(block)
+            st.save()
+        print(f"{DIM}  checkpoint registered: {block}{RST}")
 
     def _tick(self):
         ended = Engine(self.ctx).tick()       # emits live to stdout

@@ -9,7 +9,7 @@
 # trunk and only agents write it (via PR).
 
 session:
-  started_at: null            # set at bootup; cleared at session-end
+  started_at: null            # set at bootup; reset to null at session-end
   ended_at: null
 
 # ── FSM context (passed to judgment tools as block_ctx) ──
@@ -32,10 +32,16 @@ counters: {}
 cadence: {}
 seen_done: []                 # block IDs already counted toward cadence (trunk dedup)
 
-# ── Architect FIFO queue: queued {kind: forward|log, block, [type]} jobs ──
+# ── Architect FIFO queue: queued {kind: forward|reconcile|log|triage, block, [type]} jobs ──
+# forward = author a missing block file; reconcile = re-check the next scoped block vs a
+# just-finished block's drift (M-05); log = log-review; triage = sort an unclassified input.
 architect_queue: []
 
-# ── DONE-gate progress per block: {block_id: {stage, pr, detail}} (runtime only) ──
+# ── Blocks the architect has reconciled forward (readiness gate lifted, M-05) ──
+reconciled: []
+
+# ── DONE-gate progress per block: {block_id: {stage, pr, post_merge_nudges}} (runtime only) ──
+# stage in: validate-local | ci | ci-wait | merge | post-merge
 gate: {}
 
 # ── In-flight PRs keyed by head branch (trunk.open_prs cache) ──
@@ -43,6 +49,16 @@ open_prs: {}
 
 # ── Blocks parked on an operator decision (runtime escalation; never git) ──
 blocked: []
+
+# ── Parked operator cases keyed by correlation id (02-10 stamps it; reply settles by it) ──
+# {CASE-NNN: {block, kind: wall|await, worker_id, detail, raised_at, decision}}
+pending_cases: {}
+
+# ── Operator-pre-registered await checkpoints (rung a of the await ladder, R-AWAIT) ──
+checkpoints: []
+
+# ── Operator run-control flag PULSE checks each tick (R-HALT): absent | pause | drain | halt ──
+# run_control: pause   # set/reset by PARLEY commands (pause/drain/resume/halt); not a classify tag
 
 # ── Per-session merge knob (realign §8): APPROVED | ASK. Reset each session. ──
 approvals:

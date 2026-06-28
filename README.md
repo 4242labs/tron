@@ -54,8 +54,9 @@ before it ever runs.
   bounded tick — fill free slots, clear ahead, wait, or end — and surfaces to you only what matters.
 
 The engine spine (the dispatch loop + the work-selector) is code and never an LLM call. The LLM is
-asked exactly two questions: *classify this inbound message* and, rarely, *is this really the
-operator's problem?* Each is schema-in, schema-out — never free prose steering the flow.
+asked exactly one question: *classify this inbound message* — schema-in, schema-out, never free
+prose steering the flow. (Anything it can't classify goes to the architect to sort, not to a second
+model call.)
 
 ## The flow
 
@@ -162,8 +163,8 @@ To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No othe
 
 - **Deterministic spine.** Flow is decided by code and a closed trigger grammar — lint-validated at
   seed time, so a malformed blueprint fails before it runs, not during.
-- **Two bounded judgments.** The only LLM calls into the flow are typed and schema-checked; the model
-  never returns prose that steers a transition.
+- **One bounded judgment.** The only LLM call into the flow (classify a message) is typed and
+  schema-checked; the model never returns prose that steers a transition.
 - **Architect out of the pool, forward-only.** Clearing throughput is the one knob that bounds speed;
   finished work is never reopened.
 - **Every word is canon copy.** All operator- and worker-facing text comes from one registry — no
