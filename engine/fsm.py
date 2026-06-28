@@ -70,13 +70,13 @@ class Engine:
     def __init__(self, ctx):
         self.ctx = ctx
         self.routing = ctx.load_routing()
-        self.workflow = ctx.load_workflow()
+        self.comp = ctx.load_knobs()
         self.project = ctx.load_project()
         self.renderer = Renderer(ctx)
         self.st = State(ctx)
         self.tags = self.routing.get("tags", {})
-        self.knobs = self.workflow.get("knobs", {})
-        self.cadence_cfg = self.workflow.get("cadence", {}) or {}
+        self.knobs = self.comp.get("knobs", {})
+        self.cadence_cfg = self.comp.get("cadence", {}) or {}
         self._max_retries = int((self.routing.get("invalid_output") or {}).get("max_retries", 2))
         self.ended = False
         self.dry = bool(os.environ.get("TRON_DRY"))
@@ -470,7 +470,7 @@ class Engine:
     # ── table handlers (trigger -> step) ──
     def _h_bootup(self, m):
         # tron:start: the deterministic part of protocol:bootup, then pulse.
-        if (self.workflow.get("session", {}).get("persistent_architect")
+        if (self.comp.get("session", {}).get("persistent_architect")
                 and not self._architect()):
             self._spawn_architect()
         self._emit("pulse")
@@ -949,7 +949,7 @@ class Engine:
                     self._redispatch(blk)              # re-arm the lost block (recovery override)
         self.st.data["active_workers"] = [w for w in self.st.workers
                                           if w in rebuilt or w.get("status") == "spawning"]
-        if (self.workflow.get("session", {}).get("persistent_architect")
+        if (self.comp.get("session", {}).get("persistent_architect")
                 and not any(w.get("role") == "architect" for w in self.st.workers)):
             self._spawn_architect()
         self.log("recover", f"recovered={alive} purged={purged}")

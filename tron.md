@@ -90,7 +90,7 @@ Read the sender first, then the intent.
 - `operator.decision` — answers an open wall, or signs off a held merge. Pull `block` and
   `decision` ∈ `resume | amend | abandon | approve` (approve = let the held merge land).
 - `operator.status_query` — wants the current state.
-- `operator.workflow_change` — change a rule or a knob.
+- `operator.knob_change` — change a rule or a knob.
 - `operator.directive` — a general instruction that isn't any of the above.
 
 When the message won't sit cleanly in the vocabulary, return **`unclassified`**. Do not force-fit,

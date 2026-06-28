@@ -1,8 +1,11 @@
-# Blueprint contracts — TRON deterministic FSM (B0 · reconciled to the converged workflow)
+# Blueprint contracts — TRON deterministic FSM (B0 · reconciled to the converged flow)
 
-**Status:** canon · **Block:** D1 (canon shape) · **Date:** 2026-06-05
+**Status:** STALE (2026-06-05) — superseded as the live reference by `contracts/rebuild-spec.md`;
+on ADR-0001 §5's *replace* list, rewritten in block 01-03. Names below are kept current for grep
+hygiene, but the behavior model here is the pre-rebuild shape — trust `rebuild-spec.md` on any conflict.
+· **Block:** D1 (canon shape) · **Date:** 2026-06-05
 **Implements:** `42hq/agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
-**Conforms to:** the frozen workflow — `42hq/agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
+**Conforms to:** the frozen flow — `42hq/agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
 
 This is the authoritative contract set the rest of TRON is built against. **Design only** — no real
 copy. It locks: the event-table model, the standing layer (PULSE + SWITCHBOARD), the trigger
@@ -10,7 +13,7 @@ grammar, the closed inbound-tag map, the judgment-tool contracts, the invalid-ou
 tick model, copy scope, the `pipeline: host` accepted format, the pipeline-tracking decision, and
 the blueprint-lint rules.
 
-Schema stubs live in `contracts/schema/` (`project`, `workflow`, `routing`, `messages`).
+Schema stubs live in `contracts/schema/` (`project`, `knobs`, `routing`, `messages`).
 
 ---
 
@@ -20,15 +23,15 @@ Schema stubs live in `contracts/schema/` (`project`, `workflow`, `routing`, `mes
 cron ──> sweep.sh ──> [SWEEP] tick ──> engine (the spine, deterministic)
                                           │  PULSE — the dispatch loop
                                           │  SWITCHBOARD — per-slot work selection
-                                          │  executes workflow.yaml (the event table)
-                                          │  against routing.yaml (grammar + inbound tag map)
+                                          │  runs the engine's event table (the fixed TABLE)
+                                          │  with knobs.yaml knobs + routing.yaml (grammar + tag map)
                                           │  calls the LLM ONLY for a typed judgment tool (schema-in/out)
                                           ▼
                                    advance ──> persist (atomic) ──> exit
 ```
 
 - **The engine** is the only executor (Python core + thin `tron`/`sweep.sh` shell connectors). It reads
-  the project's **event table** (`workflow.yaml`) and the canon **grammar + tag map** (`routing.yaml`)
+  the engine's fixed **event table** (the TABLE), the project's **knobs** (`knobs.yaml`), and the canon **grammar + tag map** (`routing.yaml`)
   and drives the flow. The LLM never reads the routing path.
 - **PULSE** = the standing dispatch loop (the engine spine). **SWITCHBOARD** = the deterministic
   per-slot work selector PULSE calls. Both are code — **never** an LLM call.
@@ -89,9 +92,9 @@ trigger → step (actor, skill) → outputs → on-complete (== a trigger)
   single `worker:stalled` trigger into the table.
 - **Bootup & Session-End are protocols** (TRON lifecycle), not rows; SCRIPTS handle the `*` catch-all.
 
-The canon-invariant part is the **trigger grammar** (`routing.yaml`) + this model. Projects compose the
-*table* (rows, actors, skills, knobs) in `workflow.yaml`; a genuinely new *shape* of control (beyond the
-grammar) is the only thing that is a canon change here.
+The canon-invariant part is the **trigger grammar** (`routing.yaml`) + the engine's fixed event table.
+Projects set only **knobs** (counts, cadence, git, WAKE) in `knobs.yaml` — never the table itself; a
+genuinely new *shape* of control (beyond the grammar) is the only thing that is a canon change here.
 
 ---
 
@@ -122,7 +125,7 @@ grammar) is the only thing that is a canon change here.
 |:--|:--|:--|
 | `operator.decision` | reply to a wall | `operator:decision:<block>` |
 | `operator.status_query` | asking for state | side: reply digest |
-| `operator.workflow_change` | change a rule/knob | side: edit_self |
+| `operator.knob_change` | change a rule/knob | side: edit_self |
 | `operator.directive` | general instruction | side: best-effort |
 
 ### System (engine-produced, not from classify)
@@ -180,7 +183,7 @@ Turn-based, no daemon. **One wake = one bounded tick.**
 - **Trigger:** cron → `sweep.sh` → resume the TRON session with `[SWEEP] tick`. Operator/TG inbound is
   drained in the same tick.
 - **A tick:**
-  1. **Load** `workflow-state.yaml` (the FSM cursor, counters, trunk-read cache, worker/architect-queue state).
+  1. **Load** the MANIFEST `manifest.yaml` (the FSM cursor, counters, trunk-read cache, worker/architect-queue state).
   2. **One bounded pass:** refresh from trunk (`git` ff + read `pipeline.md`/`blocks/*.md` + `gh pr list`,
      best-effort); poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck);
      drain inbound → `classify_message` → trigger or side; drive in-flight DONE gates; then run **PULSE**
@@ -233,7 +236,7 @@ project's pipeline or blocks.
 ## 8. Truth model: canon is authority, TRON reads
 
 The pipeline is the project's **git-tracked** canon, written by agents via PR — not TRON state. TRON
-holds only a **disposable read cache** (`workflow-state.yaml › pipeline`), rebuilt every wake from trunk
+holds only a **disposable read cache** (`manifest.yaml › pipeline`), rebuilt every wake from trunk
 + open PRs + alive workers, so a crash, an off-session, or tron→no-tron→tron leaves **no drift**. TRON
 writes **nothing** to git: it never sets status. A block is done only when it shows `✅` on trunk
 (merged, re-validated, deployed-clean — all landed by an agent). Status *history* is version-controlled
@@ -260,22 +263,28 @@ Runs in `validate` / `doctor` (D3, implemented in `engine/lint.py`). A malformed
 - **L8** Every TABLE handler resolves to a callable `Engine` method (a `None` handler = a worker-activity row).
 - **L9** Every tag `trigger` resolves to a TABLE row (no orphan classification); `<type>` never binds `next`.
 
-### Composition-level (over `workflow.yaml` against `project.yaml`)
+### Composition-level (over `knobs.yaml` against `project.yaml`)
 - **L10** `worker_count` knob is declared (value may be null → asked at runtime).
 - **L11** Every cadence `<type>` maps to a positive-int threshold.
 - **L12** Session shape valid (`persistent_architect` is a bool).
 - **L13** Project roles sane (skipped if no `project.yaml › agents`).
+- **L14** WAKE timing knobs are positive ints.
+- **L15** WAKE cooldown floor ≤ ceiling.
+
+### Prompt-level (over `prompts/registry.yaml` against `messages.yaml`)
+- **L16** Every registry PMT id resolves to a self-contained file that exists.
+- **L17** Every worker-channel message references a PMT id the registry knows (closed + total).
 
 The data layer + the engine TABLE are the author-error surface; L1–L9 are what the gate most needs to catch.
 
 ---
 
-## 10. Boundary vs the data layer (workflow.yaml / routing.yaml / messages.yaml)
+## 10. Boundary vs the data layer (knobs.yaml / routing.yaml / messages.yaml / prompts/)
 
 This block defines **shapes**: the event-table model + grammar, the closed tag map, the judgment-tool
-contracts, the four file schemas, and the lint rules. The **data layer authors the instances**: the
-embedded default event table (`workflow.yaml`), the actual `routing.yaml` grammar + tag map, and the
-`messages.yaml` templates.
+contracts, the file schemas, and the lint rules. The **data layer authors the instances**: the
+embedded default knobs (`knobs.yaml`), the actual `routing.yaml` grammar + tag map, the
+`messages.yaml` templates, and the `prompts/` PMT bodies (referenced by id).
 
 ## 11. Open / carried watch-items
 - **R-1** keep the bash connectors small; FSM/JSON/render fragility lives in the Python engine core.

@@ -9,7 +9,7 @@ TRON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Nothing to do until a session has started. The engine also no-ops a pre-start
 # tick; skip the call entirely until started_at carries a real value (an ISO
 # timestamp -> begins with a quote or a digit; `null` does not match).
-STATE="$TRON_DIR/workflow-state.yaml"
+STATE="$TRON_DIR/manifest.yaml"
 [ -f "$STATE" ] || exit 0
 grep -Eq "^[[:space:]]*started_at:[[:space:]]*['\"]?[0-9]" "$STATE" || exit 0
 

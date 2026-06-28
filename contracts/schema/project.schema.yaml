@@ -19,7 +19,7 @@ archive_dir:   <path>       # REQUIRED. e.g. meta/blocks/archive/
 # ── Agents available (roles found at pointers.agents) ───────────────
 # Seeder enumerates files present by scanning pointers.agents (role = file stem);
 # it never creates them and TRON ships none. lint L13 hardcodes no roster — it only
-# checks that the roles TRON's own workflow.yaml references resolve here: each cadence
+# checks that the roles TRON's own knobs.yaml references resolve here: each cadence
 # lens to a `reviewer-<lens>` or a generic `reviewer`, and every peer_consult role to a
 # listed role. Omit this block entirely and L13 skips.
 agents:                     # OPTIONAL (seeder-populated by scanning pointers.agents)
@@ -50,7 +50,7 @@ notifications:
   cron: auto | on | off     # REQUIRED. auto = on whenever telegram on
 # effective heartbeat = telegram==on OR cron==on
 
-# ── Protected branches (only for committing workflows; workflow R8) ──
+# ── Protected branches (only when the build commits via git; rule R8) ──
 protected_branches:         # OPTIONAL
   - repo: <repo-name>
     branch: <branch>

@@ -1,7 +1,7 @@
 """ctx — the runtime context: where every file the engine touches lives.
 
-A TRON instance dir holds the canon (routing/messages/tron.md), the per-project
-composition + config (workflow.yaml/project.yaml), live state, inboxes and logs.
+A TRON instance dir holds the canon (routing/messages/tron.md/prompts), the
+per-project knobs (knobs.yaml/project.yaml), live state, inboxes and logs.
 The seeder lays this out; the engine reads it. One object, resolved once.
 """
 import os
@@ -29,19 +29,28 @@ class Ctx:
     def tron_md(self):
         return self.p("tron.md")
 
+    # ── prompt layer (canon, copied verbatim at seed; PMT-* resolved by id) ──
+    @property
+    def prompts_dir(self):
+        return self.p("prompts")
+
+    @property
+    def prompts_registry(self):
+        return self.p("prompts", "registry.yaml")
+
     # ── per-project (seeder-authored) ──
     @property
-    def workflow(self):
-        return self.p("workflow.yaml")
+    def knobs_file(self):
+        return self.p("knobs.yaml")
 
     @property
     def project(self):
         return self.p("project.yaml")
 
-    # ── live state (runtime, gitignored) ──
+    # ── live state (runtime, gitignored) — the MANIFEST: durable run-memory ──
     @property
     def state(self):
-        return self.p("workflow-state.yaml")
+        return self.p("manifest.yaml")
 
     @property
     def current_id(self):
@@ -81,8 +90,8 @@ class Ctx:
     def load_routing(self):
         return util.load_yaml(self.routing)
 
-    def load_workflow(self):
-        return util.load_yaml(self.workflow)
+    def load_knobs(self):
+        return util.load_yaml(self.knobs_file)
 
     def load_project(self):
         return util.load_yaml(self.project) if os.path.exists(self.project) else {}

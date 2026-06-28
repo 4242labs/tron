@@ -7,13 +7,21 @@ A malformed flow must fail at seed/validate time, not at runtime. Two layers:
     grammar · every tag trigger resolves to a TABLE row · every TABLE handler
     resolves to an Engine method · the only judgment tools are the canon two.
 
-  COMPOSITION (workflow.yaml) — the per-project knobs the engine reads:
-    worker_count present · cadence types map to positive ints · session shape.
+  COMPOSITION (knobs.yaml) — the per-project knobs the engine reads:
+    worker_count present · cadence types map to positive ints · session shape ·
+    WAKE timing knobs (cooldown/ceiling) positive.
+
+  PROMPTS (prompts/registry.yaml) — the PMT layer the engine imports at tick:
+    every registry id resolves to a self-contained file · every worker-channel
+    message references a PMT id that the registry knows (closed + total).
 
 Wired into `engine.py doctor` / `validate`. Grammar-driven: the legal token set
 is read FROM routing.yaml, so the rules check internal consistency rather than a
 hardcoded duplicate.
 """
+import os
+
+import util
 # Engine table + class — module-level, no Engine instance needed (fsm exposes TABLE).
 from fsm import TABLE, Engine
 
@@ -22,7 +30,7 @@ CANON_TAGS = {
     "worker.done", "worker.wall", "worker.review_done", "worker.progress",
     "worker.question_peer", "worker.question_tron",
     "architect.cleared", "architect.logged",
-    "operator.decision", "operator.status_query", "operator.workflow_change",
+    "operator.decision", "operator.status_query", "operator.knob_change",
     "operator.directive",
     "sweep.tick", "worker.stalled", "worker.dead",
     "unclassified",
@@ -174,12 +182,12 @@ def _canon(routing):
     return r
 
 
-# ── COMPOSITION rules (workflow.yaml) ──
-def _composition(workflow, project):
+# ── COMPOSITION rules (knobs.yaml) ──
+def _composition(comp, project):
     r = []
-    knobs = workflow.get("knobs", {}) or {}
-    cadence = workflow.get("cadence", {}) or {}
-    session = workflow.get("session", {}) or {}
+    knobs = comp.get("knobs", {}) or {}
+    cadence = comp.get("cadence", {}) or {}
+    session = comp.get("session", {}) or {}
 
     # L10 — worker_count knob declared (value may be null -> required at runtime).
     r.append(Result("L10 worker_count knob present", "worker_count" in knobs,
@@ -204,27 +212,80 @@ def _composition(workflow, project):
     agents = project.get("agents")
     if not agents:
         r.append(Result("L13 config resolves to project agents", True, "(no project.yaml agents — skipped)"))
+    else:
+        roles = {a.get("role") for a in agents}
+        pc = comp.get("peer_consults") or []
+        pc_roles = {p.get(k) for p in pc for k in ("worker", "may_consult") if p.get(k)}
+        cadence_unresolved = sorted(t for t in cadence
+                                    if f"reviewer-{t}" not in roles and "reviewer" not in roles)
+        unknown = sorted(pc_roles - roles)
+        bad = []
+        if cadence_unresolved:
+            bad.append(f"cadence lens(es) with no reviewer persona (reviewer-<lens> or reviewer): {cadence_unresolved}")
+        if unknown:
+            bad.append(f"peer_consults names undeclared role(s): {unknown}")
+        r.append(Result("L13 config resolves to project agents", not bad, "; ".join(bad)))
+
+    # L14 — WAKE timing knobs are positive ints (fixed knobs; the daemon reads them, 01-04).
+    badw = [f"{k}={knobs.get(k)!r}" for k in ("wake_cooldown_sec", "wake_ceiling_sec")
+            if not (isinstance(knobs.get(k), int) and knobs.get(k) > 0)]
+    r.append(Result("L14 WAKE timing knobs positive", not badw, f"bad: {badw}"))
+
+    # L15 — WAKE cooldown floor must not exceed the ceiling (only checkable once L14 holds).
+    if badw:
+        r.append(Result("L15 WAKE cooldown <= ceiling", False, "(knobs invalid — see L14)"))
+    else:
+        ok15 = knobs["wake_cooldown_sec"] <= knobs["wake_ceiling_sec"]
+        r.append(Result("L15 WAKE cooldown <= ceiling", ok15,
+                        "" if ok15 else f"cooldown {knobs['wake_cooldown_sec']}s > ceiling {knobs['wake_ceiling_sec']}s"))
+    return r
+
+
+# ── PROMPT rules (prompts/registry.yaml + messages.yaml) ──
+def _prompts(ctx):
+    """The PMT layer: a closed registry of self-contained prompt files, referenced by
+    id from the worker-channel messages. Total = every worker `pmt:` ref resolves;
+    Closed = every registry id maps to a file that exists."""
+    r = []
+    reg = (util.load_yaml(ctx.prompts_registry) or {}).get("prompts", {}) \
+        if os.path.exists(ctx.prompts_registry) else None
+    if reg is None:
+        r.append(Result("L16 PMT registry present", False, f"no registry at {ctx.prompts_registry}"))
         return r
-    roles = {a.get("role") for a in agents}
-    pc = workflow.get("peer_consults") or []
-    pc_roles = {p.get(k) for p in pc for k in ("worker", "may_consult") if p.get(k)}
-    cadence_unresolved = sorted(t for t in cadence
-                                if f"reviewer-{t}" not in roles and "reviewer" not in roles)
-    unknown = sorted(pc_roles - roles)
-    bad = []
-    if cadence_unresolved:
-        bad.append(f"cadence lens(es) with no reviewer persona (reviewer-<lens> or reviewer): {cadence_unresolved}")
+
+    # L16 — every registry id resolves to a self-contained file that exists.
+    missing = []
+    for pid, spec in reg.items():
+        f = (spec or {}).get("file")
+        if not f or not os.path.exists(os.path.join(ctx.prompts_dir, f)):
+            missing.append(pid)
+    r.append(Result("L16 PMT registry resolves to files", not missing, f"unresolved: {missing}"))
+
+    # L17 — every worker-channel message references a PMT id the registry knows (total).
+    msgs = (util.load_yaml(ctx.messages) or {}).get("templates", {})
+    unknown, inlined = [], []
+    for mid, tpl in msgs.items():
+        if (tpl or {}).get("channel") != "worker":
+            continue
+        pid = (tpl or {}).get("pmt")
+        if not pid:
+            inlined.append(mid)                  # a worker line must carry a PMT, never inline copy
+        elif pid not in reg:
+            unknown.append(f"{mid}->{pid}")
+    d = []
+    if inlined:
+        d.append(f"worker line(s) without a pmt ref: {inlined}")
     if unknown:
-        bad.append(f"peer_consults names undeclared role(s): {unknown}")
-    r.append(Result("L13 config resolves to project agents", not bad, "; ".join(bad)))
+        d.append(f"pmt ref(s) not in registry: {unknown}")
+    r.append(Result("L17 worker messages reference known PMTs", not d, "; ".join(d)))
     return r
 
 
 def run(ctx, project=None):
     """Full lint. Returns (ok, results). project optional (L13 skipped if absent)."""
     routing = ctx.load_routing()
-    workflow = ctx.load_workflow()
+    comp = ctx.load_knobs()
     if project is None:
         project = ctx.load_project()
-    results = _canon(routing) + _composition(workflow, project)
+    results = _canon(routing) + _composition(comp, project) + _prompts(ctx)
     return all(x.ok for x in results), results

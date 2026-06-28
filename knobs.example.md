@@ -1,15 +1,15 @@
-# workflow.md — Example (embedded default)
+# knobs.yaml — Example (embedded default)
 
 The per-project **knobs** for this project. TRON ships with this default already in place — it works
 out of the box. During seeding TRON explains it and asks whether it fits; the operator changes any
-knob in natural language and TRON applies the edit (it owns `workflow.yaml`). TRON re-reads on
+knob in natural language and TRON applies the edit (it owns `knobs.yaml`). TRON re-reads on
 session start.
 
 **What this file is — and isn't.** TRON's *behaviour* is a fixed **event table** (the canon flow:
-`trigger → step → on-complete`, driven by PULSE + SWITCHBOARD). That table is the same for every
-project and is **not** edited here — see `contracts/blueprint-contracts.md` and the workflow CSV.
-This file holds only the **per-project knobs** the engine reads. The live counters TRON tracks
-(pipeline statuses, cadence, architect queue, active workers) live in `workflow-state.yaml`.
+`trigger → step → on-complete`, driven by PULSE + SWITCHBOARD) — the engine's table, the same for
+every project. It is **not** edited here. This file holds only the **per-project knobs** the engine
+reads. The live counters TRON tracks (pipeline statuses, cadence, architect queue, active workers)
+live in the MANIFEST (`manifest.yaml`).
 
 ---
 
@@ -43,20 +43,25 @@ These are canon — true on every project. They are not knobs.
 ## Per-session knob (TRON asks at start; no default)
 
 TRON asks for this at the start of every session and will not proceed until it's answered. Live
-value lands in `workflow-state.yaml`.
+value lands in the MANIFEST (`manifest.yaml`).
 
 | Knob | Notes |
 |:--|:--|
 | `worker_count` | Size of the worker pool — **engineers + reviewers share it**. The architect is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
 
-## Fixed knobs (set once; edit `workflow.yaml` to change)
+## Fixed knobs (set once; edit `knobs.yaml` to change)
 
 | Knob | Default | Notes |
 |:--|:--|:--|
 | `architect_count` | 1 | Persistent architect queue drainers — the throughput bottleneck knob. |
-| `git` | on | Workflow commits (feature branch + review). |
-| `silence_ping_min` | 6 | Worker silent this many minutes → heartbeat ping. Multiple of the cron cadence. |
+| `git` | on | Whether the build commits via git (feature branch + review). |
+| `silence_ping_min` | 6 | Worker silent this many minutes → heartbeat ping. Multiple of the wake cadence. |
 | `silence_escalate_min` | 8 | Silent past this → engine emits `worker:stalled` (> ping). |
+| `wake_cooldown_sec` | 5 | WAKE min-gap floor (seconds): the shortest interval between ticks — debounces a chatty fleet so messages don't multiply fetches. |
+| `wake_ceiling_sec` | 30 | WAKE max-latency ceiling (seconds): a tick fires by now even with no message — the cadence timer that lived in the old METRONOME. Must be ≥ `wake_cooldown_sec`. |
+
+The two WAKE knobs bound every pulse: `cooldown ≤ gap ≤ ceiling`. The daemon (the in-process
+scheduler) reads them; they are never asked at start and never changed by a runtime command.
 
 ## Reviewer cadence (PULL)
 
@@ -83,7 +88,7 @@ peer_consults:
 
 ---
 
-## Counters (live in `workflow-state.yaml` — do not hand-edit)
+## Counters (live in the MANIFEST `manifest.yaml` — do not hand-edit)
 
 TRON updates these every tick:
 
@@ -95,5 +100,5 @@ TRON updates these every tick:
 - `counters` — stall counts, paused-for-operator, etc.
 - `session.started_at`, `last_sweep` — set on cold start / each tick
 
-**Changing a knob:** describe it to TRON in natural language; TRON edits `workflow.yaml`.
+**Changing a knob:** describe it to TRON in natural language; TRON edits `knobs.yaml`.
 `validate` flags any mismatch on next session start.

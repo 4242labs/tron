@@ -122,15 +122,16 @@ tron/
 ├── tron.md                 # the judgment context (the one judgment LLM call runs under this)
 ├── tron-seed.md            # the seeding protocol
 ├── routing.yaml            # the trigger grammar + inbound-message map (canon, never per-project)
-├── workflow.yaml           # the default knobs (worker/architect counts, cadence, git)
-├── messages.yaml           # every line TRON says, by template
+├── knobs.yaml              # the default knobs (worker/architect counts, cadence, WAKE timing, git)
+├── messages.yaml           # every line TRON says, by template (worker lines point at a PMT)
+├── prompts/                # the PMT-* worker prompts + registry (referenced by id, imported at tick)
 ├── engine/                 # the deterministic engine (dispatch loop, selector, trunk reader, judgment, lint)
 ├── protocols/              # lifecycle: bootup · run-teardown
 ├── scripts/                # thin shell connectors (heartbeat, worker→engine report, notifications)
 ├── templates/              # runtime-state seeds
 ├── contracts/              # design contracts + schemas
 ├── project.example.yaml    # the project-profile shape the seeder fills
-└── workflow.example.md     # the knobs, explained
+└── knobs.example.md        # the knobs, explained
 ```
 
 TRON ships no agents and no pipeline of its own: it reads the project's `agents/*.md` and its
@@ -143,9 +144,9 @@ git-tracked canon pipeline (`pipeline.md` + `blocks/`), which the `new-project-t
 <agents>/tron/
 ├── tron · engine/          # the entrypoint + the deterministic engine (canon, copied)
 ├── project.yaml            # this project's pointers, agents, repo facts
-├── workflow.yaml           # this project's knobs
-├── routing.yaml · messages.yaml · protocols/ · scripts/   # canon, copied verbatim
-└── …runtime state…         # workflow-state, logs, inboxes (gitignored, edited in place)
+├── knobs.yaml              # this project's knobs
+├── routing.yaml · messages.yaml · prompts/ · protocols/ · scripts/   # canon, copied verbatim
+└── …runtime state…         # manifest.yaml (the MANIFEST), logs, inboxes (gitignored, edited in place)
 ```
 
 To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No other traces.
@@ -160,7 +161,7 @@ To remove TRON entirely: delete `<agents>/tron.md` and `<agents>/tron/`. No othe
 > schema-checked judgment (classify a message) — never to choose a step. Everything below follows from this.
 
 - **Deterministic spine.** Flow is decided by code and a closed trigger grammar — lint-validated at
-  seed time, so a malformed workflow fails before it runs, not during.
+  seed time, so a malformed blueprint fails before it runs, not during.
 - **Two bounded judgments.** The only LLM calls into the flow are typed and schema-checked; the model
   never returns prose that steers a transition.
 - **Architect out of the pool, forward-only.** Clearing throughput is the one knob that bounds speed;
