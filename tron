@@ -4,8 +4,8 @@
 #   tron seeder    seed TRON into a target project (interactive; run from the project root)
 #   tron start     wake TRON: bootup (start point, worker count) then the live console
 #
-# Everything else is internal — the heartbeat, recovery, and validation run themselves
-# (cron / seeder / automatic). Those verbs exist below but are not the operator surface.
+# Everything else is internal — the heartbeat (the WAKE daemon), recovery, and validation
+# run themselves. Those verbs exist below but are not the operator surface.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +43,7 @@ case "$cmd" in
   start)
     exec python3 "$ENGINE" console "$@"
     ;;
-  tick|stop|recover|validate|doctor|msg)   # internal: cron / automatic / dev
+  tick|wake|stop|recover|validate|doctor|msg)   # internal: daemon / automatic / dev
     exec python3 "$ENGINE" "$cmd" "$@"
     ;;
   ""|help|-h|--help)

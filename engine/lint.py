@@ -32,7 +32,7 @@ CANON_TAGS = {
     "architect.reconciled", "architect.logged",
     "operator.decision", "operator.status_query", "operator.knob_change",
     "operator.directive",
-    "sweep.tick", "worker.stalled", "worker.dead",
+    "worker.stalled", "worker.dead",
     "unclassified",
 }
 CANON_TOOLS = {"classify_message"}
@@ -128,11 +128,11 @@ def _canon(routing):
         d.append("unclassified is not { trigger: '*' }")
     r.append(Result("L2 closed tag enum + unclassified", not d, "; ".join(d)))
 
-    # L3 — total coverage: every tag action is exactly one of trigger | side | tick.
+    # L3 — total coverage: every tag action is exactly one of trigger | side.
     bad = []
     for t, a in tags.items():
         if not (isinstance(a, dict) and len(a) == 1
-                and ("trigger" in a or "side" in a or a.get("tick") is True)):
+                and ("trigger" in a or "side" in a)):
             bad.append(t)
     r.append(Result("L3 total tag coverage", not bad, f"malformed: {bad}"))
 

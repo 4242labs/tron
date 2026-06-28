@@ -44,11 +44,11 @@ conventions:                # OPTIONAL; defaults applied if absent
   commit_convention: <str>
   pr_title_rule: <str>
 
-# ── Notifications + heartbeat (followed without asking; contracts §0) ──
+# ── Notifications (followed without asking; contracts §0) ──
+# The heartbeat is the WAKE daemon (always on while a session is live); it has no
+# config knob — the off-switch is run-control (pause/drain/halt) or not starting it.
 notifications:
-  telegram: off | on        # REQUIRED. on => heartbeat on (cron polls TG)
-  cron: auto | on | off     # REQUIRED. auto = on whenever telegram on
-# effective heartbeat = telegram==on OR cron==on
+  telegram: off | on        # REQUIRED. on => escalations route to the operator's Telegram
 
 # ── Protected branches (only when the build commits via git; rule R8) ──
 protected_branches:         # OPTIONAL

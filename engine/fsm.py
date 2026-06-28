@@ -114,9 +114,9 @@ class Engine:
 
     # ── the tick (contracts §5) ──
     def tick(self):
-        # No session has started -> nothing to do. The heartbeat may fire (cron is
-        # installed at start), but a tick before `tron start` must never sweep,
-        # classify, or consume inbox messages into a phantom session.
+        # No session has started -> nothing to do. A stray tick (a manual `tron tick`
+        # before `tron start`) must never sweep, classify, or consume inbox messages
+        # into a phantom session — the WAKE daemon only runs once a session is live.
         if not (self.st.data.get("session") or {}).get("started_at"):
             return self.ended
         self._tq = []
@@ -913,7 +913,6 @@ class Engine:
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
             self._side(action["side"], slots, sender)
-        # tick: handled by the sweep, nothing here.
 
     def _fill_trigger(self, trigger, slots):
         return (trigger.replace("<block>", str(slots.get("block", "")))

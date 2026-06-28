@@ -37,8 +37,8 @@ _stub_idx = {}
 _tags_cache = None
 
 # Engine-produced tags — the classifier must NEVER emit these (the engine's liveness
-# sweep / cron produce them). Enforced at the validator, not just in the prompt.
-ENGINE_ONLY = {"worker.stalled", "worker.dead", "sweep.tick"}
+# sweep produces them). Enforced at the validator, not just in the prompt.
+ENGINE_ONLY = {"worker.stalled", "worker.dead"}
 
 
 def _allowed_tags(ctx):

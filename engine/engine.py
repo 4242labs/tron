@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""engine — the TRON CLI the console and cron drive (B3, ADR-002).
+"""engine — the TRON CLI the console and WAKE daemon drive (B3, ADR-002).
 
 Entry points exposed as a callable the front (B7) builds on:
-  start --max N [--dry]   cold start: load pipeline, spawn architect + first block, install cron
-  tick                    one bounded sweep+advance+persist (cron / console heartbeat)
+  start --max N [--dry]   cold start: load pipeline, spawn architect + first block, start WAKE
+  tick                    one bounded sweep+advance+persist (single-flight; daemon / console)
+  wake                    the WAKE daemon loop (ND-08): the in-process tick scheduler
   msg "<text>"            queue an operator line and run a tick (immediate, atomic)
   stop [--force]          guard unfinished work, release the fleet, end the session
   recover                 reattach: rebuild live workers from ~/.claude/jobs
@@ -11,7 +12,7 @@ Entry points exposed as a callable the front (B7) builds on:
   doctor                  validate + environment checks
 
 Thin by design: all flow lives here in Python (watch-item R-1); bash only does
-cron/TG/spawn glue. Run from anywhere — this file puts its own dir on sys.path.
+TG/spawn glue. Run from anywhere — this file puts its own dir on sys.path.
 """
 import os
 import sys
@@ -84,34 +85,44 @@ def cmd_start(ctx):
         print("start: a session is already live — reconnect via the console, or stop it first")
         return 3
     eng.start(int(max_c))
-    # Install the cron heartbeat (idempotent) — start owns it, so the engine never
-    # ticks before a session exists. Only when the config makes it effective:
-    # heartbeat = telegram==on OR cron==on; cron==auto follows telegram; cron==off wins.
-    if not os.environ.get("TRON_DRY") and ctx.heartbeat_effective():
-        ci = os.path.join(ctx.scripts_dir, "cron-install.sh")
-        if os.path.exists(ci):
-            os.system(f"bash {ci} >/dev/null 2>&1 || true")
+    # Start the WAKE daemon — start owns it, so the engine never ticks before a session
+    # exists. It is the only tick-source while the session is live (ND-08); skipped under
+    # TRON_DRY (tests drive ticks directly) and if the bootup gateway ended the session.
+    if not os.environ.get("TRON_DRY") and (eng.st.data.get("session") or {}).get("started_at"):
+        import wake
+        wake.spawn(ctx)
     return 0
 
 
 def cmd_tick(ctx):
-    from fsm import Engine
-    Engine(ctx).tick()
+    import wake
+    wake.locked_tick(ctx)         # single-flight: never overlaps a daemon-fired tick
+    return 0
+
+
+def cmd_wake(ctx):
+    import wake
+    wake.run(ctx)                 # blocks: the daemon loop, until the session ends
     return 0
 
 
 def cmd_msg(ctx):
-    from fsm import Engine
+    import wake
     text = sys.argv[2] if len(sys.argv) > 2 else ""
     util.append_jsonl(ctx.operator_inbox,
                       {"text": text, "sender": {"kind": "operator"}})
-    Engine(ctx).tick()
+    # Single-flight: if a daemon tick holds the lock, the line still landed on the inbox
+    # and the daemon's event-wake picks it up on its next tick — never lost.
+    wake.locked_tick(ctx)
     return 0
 
 
 def cmd_stop(ctx):
     from fsm import Engine
+    import wake
     ok, detail = Engine(ctx).stop(force="--force" in sys.argv)
+    if ok:
+        wake.stop(ctx)            # tear down the daemon only once the session actually ended
     print(detail)
     return 0 if ok else 3
 
@@ -134,9 +145,9 @@ def cmd_console(ctx):
 
 
 COMMANDS = {
-    "start": cmd_start, "tick": cmd_tick, "msg": cmd_msg, "stop": cmd_stop,
-    "recover": cmd_recover, "validate": cmd_validate, "doctor": cmd_doctor,
-    "console": cmd_console,
+    "start": cmd_start, "tick": cmd_tick, "wake": cmd_wake, "msg": cmd_msg,
+    "stop": cmd_stop, "recover": cmd_recover, "validate": cmd_validate,
+    "doctor": cmd_doctor, "console": cmd_console,
 }
 
 

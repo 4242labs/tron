@@ -74,7 +74,7 @@ Check silently; **report only problems.**
 - The worker-spawn runtime is available (needed later when TRON dispatches). Warn if absent; seeding can still finish.
 - `git` — only if the build commits via git (the default does). Warn, don't hard-fail.
 - `jq` — the shell connectors parse JSON (report + Telegram); warn if absent.
-- `curl`, `crontab` — only for optional Telegram + cron. Check at those steps.
+- `curl` — only for optional Telegram. Check at that step.
 
 ---
 
@@ -158,16 +158,15 @@ In sessions: a block is dispatchable only when its file is `📋` with every `De
 
 ## Step 6 — Write project.yaml
 
-Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): the `agents` pointer + the scanned role→file map, the canon pipeline paths (`pipeline_path`, `blocks_dir`, `archive_dir`), detected repo facts (name, repo root, main branch, `staging`, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the build commits via git), notifications/heartbeat config (`telegram`, `cron` — default `off`/`auto`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy success check, notes — may be blank).
+Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): the `agents` pointer + the scanned role→file map, the canon pipeline paths (`pipeline_path`, `blocks_dir`, `archive_dir`), detected repo facts (name, repo root, main branch, `staging`, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the build commits via git), notifications config (`telegram` — default `off`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy success check, notes — may be blank).
 
-## Step 7 — Notifications + heartbeat (config-driven — do not ask)
+## Step 7 — Notifications (config-driven — do not ask)
 
 Read these from `project.yaml` and **follow them silently** — no prompts, no confirmations. The operator changes them by editing `project.yaml` (and `.env`); the seeder never interrogates.
 
-- `notifications.telegram: off` — `on` routes escalations through Telegram (keys in `<agents>/tron/.env`, which the operator fills; missing keys → degrade gracefully). `telegram: on` **implies the heartbeat is on** — cron is what polls TG.
-- `notifications.cron: auto` — `auto` = on whenever `telegram` is on; the operator may force `on` (stall-sweeps without TG) or `off`.
+- `notifications.telegram: off` — `on` routes escalations through Telegram (keys in `<agents>/tron/.env`, which the operator fills; missing keys → degrade gracefully).
 
-Effective heartbeat = `telegram == on` OR `cron == on`. **Record this in `project.yaml`; do not install cron at seed.** `tron start` installs the heartbeat when effective — that way the engine never ticks before a session exists. Never inline or log key values.
+The heartbeat itself is not config: the WAKE daemon is the engine's sole tick-source and runs whenever a session is live (`tron start` launches it; `tron stop` ends it). There is no cron to install at seed, and no off-knob — the off-switch is run-control (pause/drain/halt) or simply not running `tron start`. Never inline or log key values.
 
 ## Step 8 — Verify, fail fast
 
@@ -201,7 +200,7 @@ TRON now sleeps in `<agents>/tron/`. It wakes when you start it — not before. 
 
 ## Re-seeding / updates
 
-Safely re-runnable: show current values before overwriting; diff file-by-file for anything the operator may have customized (`knobs.yaml`); never touch canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`) except to update it wholesale; cron install is idempotent; append a dated section to `seed-trace.md`. For a canon update, re-run the seeder from a fresh canon clone — it re-copies canon verbatim and leaves the per-project `knobs.yaml`/`project.yaml` intact.
+Safely re-runnable: show current values before overwriting; diff file-by-file for anything the operator may have customized (`knobs.yaml`); never touch canon (`routing.yaml`, `messages.yaml`, `tron.md`, `protocols/`) except to update it wholesale; append a dated section to `seed-trace.md`. For a canon update, re-run the seeder from a fresh canon clone — it re-copies canon verbatim and leaves the per-project `knobs.yaml`/`project.yaml` intact.
 
 ## What the seeder must NOT do
 
