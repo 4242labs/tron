@@ -127,10 +127,8 @@ function headBar({num, name, back}){
 // lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–3, ARCHITECT row 4, REVIEWERS row 5.
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
-  {id:'L_ENG', name:'ENGINEER',  rows:[0,0], y:0, h:0},
-  {id:'L_TRON',name:'TRON',      rows:[1,3], y:0, h:0},
-  {id:'L_ARCH',name:'ARCHITECT', rows:[4,4], y:0, h:0},
-  {id:'L_REV', name:'REVIEWERS', rows:[5,5], y:0, h:0},
+  {id:'L_TRON',name:'TRON',  rows:[0,1], y:0, h:0},
+  {id:'L_ARCH',name:'AGENT', rows:[2,2], y:0, h:0},
 ];
 const SHOW_EDGE_LABELS = false;         // edge labels are implicit (docs only) — kept OFF the canvas for a clean diagram
 const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
@@ -139,45 +137,32 @@ let LANE_X = 190, LANE_W = 1310;        // computed by layoutCore()
 // CORE NODES — placed on a track grid by (col,row). Same col → shared centre X (vertical alignment);
 // same row → shared centre Y. Geometry (x/y) is derived in layoutCore(); only col/row/size live here.
 const NODES = [
-  // ── ENGINEER lane · row 0 — PROJECT DOCS · ENGINEER cat · INBOX (right of cat) ──
-  {id:'PD3',   kind:'datastore',name:'Project Docs',lane:'L_ENG',  col:2, row:0, w:50, h:56, lblOnly:true, lblAbove:true},   // engineer's Project Docs (same column as PULSE) — read by ENGINEER + PULSE
-  {id:'LLM-05', kind:'task',  name:'ENGINEER',       lane:'L_ENG',  col:4, row:0, w:104,h:89, llm:true, sub:'ENGINEER'},   // cat; clickable → opens the ENGINEER sub (FLOW['LLM-05'])
-  {id:'EIN',   kind:'mcatch', name:'ENGINEER INBOX',lane:'L_ENG',  col:5, row:0, w:36, h:36, lblOnly:true},   // engineer's message-catch inbox — right of the cat
-
-  // ── TRON lane · rows 1–3 ──
-  // row 1 — session anchor + operator intake + PARLEY (above the spine)
-  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:3, row:1, w:36, h:36, lblOnly:true, lblAbove:true},   // session-end terminal (above SWITCHBOARD)
+  // ── TRON lane · rows 0–1 ──
+  // row 0 — spine: Start → BOOTUP → PULSE → SWITCHBOARD, with ANCHOR to the switchboard's right
+  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:0, w:36, h:36, lblOnly:true},
+  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:0, w:96, h:68, sub:'BOOTUP'},
+  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:0, w:96, h:68, sub:'PULSE'},
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:4, row:0, w:48, h:48, lblPos:'t'},   // work selector hub → dispatch to the agent or session end; label on the free top side (edges left/right/down)
+  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:5, row:0, w:36, h:36, lblOnly:true, lblAbove:true},   // session-end terminal — right of SWITCHBOARD
+  // row 1 — WAKE + the fleet intake/hopper that feed it, and the operator channel (intake → PARLEY)
+  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
+  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:1, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
+  {id:'ND-08', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:3, row:1, w:96, h:68, sub:'WAKE'},   // the tick trigger; connects to PULSE on its left side
   {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-09)
-  {id:'ND-09', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — right of OPERATOR INTAKE; own channel, off PULSE
-  // row 2 — spine: Start → BOOTUP → PULSE → SWITCHBOARD → dispatch (ND-04)
-  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:2, w:36, h:36, lblOnly:true},
-  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:2, w:96, h:68, sub:'BOOTUP'},
-  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:2, w:96, h:68, sub:'PULSE'},
-  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:3, row:2, w:48, h:48, lblPos:'b'},   // work selector hub → dispatch or session end
-  {id:'ND-04', kind:'inc',   name:'',               lane:'L_TRON', col:4, row:2, w:48, h:48, lblPos:'b'},   // dispatch router — INCLUSIVE: fires 1..N arms per tick by condition → worker (up · LLM-05) and/or reviewer (down · LLM-07) and/or architect (right · LLM-06)
-  // row 3 — the WAKE trigger (sub-process) + the fleet intake/hopper that feed it, below PULSE
-  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:3, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
-  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:3, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
-  {id:'ND-08', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:3, row:3, w:96, h:68, sub:'WAKE'},   // the tick trigger (below SWITCHBOARD); connects to PULSE on its left side. Clickable → the debounce (cooldown + message|ceiling). Replaces the old METRONOME node — the timer is now the CEILING inside
+  {id:'ND-09', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — own channel, off PULSE
 
-  // ── ARCHITECT lane · row 4 — ONE row: ARCHITECT cat + PROJECT DOCS only (inbox/hopper/pulse live inside the sub) ──
-  {id:'LLM-06', kind:'task',  name:'ARCHITECT',      lane:'L_ARCH', col:6, row:4, w:120,h:100, llm:true, sub:'ARCHITECT'},   // cat; clickable → opens the ARCHITECT sub (FLOW['LLM-06'])
-  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:5, row:4, w:50, h:56, lblOnly:true, lblAbove:true},   // same row as ARCHITECT; single Project Docs — read by ARCHITECT + reviewer
-
-  // ── REVIEWERS lane · row 5 — reviewer cat (its inbox + flag/question loop live inside the REVIEW sub) ──
-  {id:'LLM-07', kind:'task',  name:'<type> Review',  lane:'L_REV',  col:4, row:5, w:120,h:100, llm:true, sub:'REVIEW'},   // cat; clickable → opens the REVIEW sub (FLOW['LLM-07'])
+  // ── AGENT lane · row 2 — the single LLM agent (consolidates every role); PROJECT DOCS sits in PULSE's column, read by both ──
+  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:2, row:2, w:50, h:56, lblOnly:true, lblAbove:true},   // PULSE's column; read by PULSE (up) and the agent (right)
+  {id:'LLM',   kind:'task',  name:'AGENT',          lane:'L_ARCH', col:4, row:2, w:120,h:100, llm:true, sub:'AGENT'},   // the one LLM agent cat (below SWITCHBOARD); clickable → opens the AGENT sub (FLOW['LLM'])
 ];
 
 const FLOWS = [
   ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
   ['ND-08','ND-02','',{from:{s:'l',d:0.75}, to:{s:'b',d:0.75}}],         // WAKE fires the tick → PULSE — leaves WAKE's left side, into PULSE bottom-¾
-  ['ND-02','ND-08','',{from:{s:'b',d:0.5}, to:{s:'l',d:0.25}}],          // tick complete → back to WAKE — PULSE bottom-½ into WAKE's left side; the recurrence loop
+  ['ND-02','ND-08','',{from:{s:'r',d:0.75}, to:{s:'t',d:0.5}}],          // tick complete → back to WAKE — PULSE right-¾ down into WAKE's top; keeps PULSE bottom-½ free for the Project Docs read
   ['OPI','ND-09','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],          // operator intake → PARLEY (right, straight)
-  ['ND-03','ND-04'], ['ND-03','End'],                                 // SWITCHBOARD → dispatch router · session end (label implicit)
-  ['ND-04','LLM-05','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],         // dispatch → worker Build (up the col-4 spine)
-  ['ND-04','LLM-07','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],         // dispatch → reviewer Review (down the col-4 spine)
-  ['ND-04','LLM-06','',{from:{s:'r',d:0.5}, to:{s:'t',d:0.5}}],         // dispatch → ARCHITECT (right, then down)
-  ['EIN','LLM-05','',{from:{s:'l',d:0.5}, to:{s:'r',d:0.5}}],   // ENGINEER INBOX (right of cat) → ENGINEER (enters the cat's right side)
+  ['ND-03','End'],                                                    // SWITCHBOARD → session end
+  ['ND-03','LLM','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],          // SWITCHBOARD → AGENT (dispatch, straight down the col)
 ];
 
 // COMMS — non-enforcing connections (BPMN associations): communication / data read that does NOT advance a token.
@@ -186,10 +171,8 @@ const COMMS = [
   ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
   ['HOPPER','ND-08','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],                    // FLEET HOPPER → WAKE (message arm: a queued message wakes the next tick) — straight, same row
   ['HOPPER','ND-02','',{from:{s:'r',d:0.25}, to:{s:'b',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; up the col gap into PULSE bottom-¼
-  ['PD3','LLM-05','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ENGINEER (read; same row, straight right)
-  ['PD3','ND-02','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight down into top-centre)
-  ['PD2','LLM-06','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → ARCHITECT (read; same row, straight right into the cat)
-  ['PD2','LLM-07','',{from:{s:'b',d:0.5}, to:{s:'r',d:0.5}, undirected:true}],   // Project Docs → reviewer (read; from store bottom → cat right side)
+  ['PD2','ND-02','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight up into the bottom)
+  ['PD2','LLM','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → AGENT (read; same row, straight right into the cat's left side)
 ];
 
 const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', inc:'inclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', mthrow:'intermediateThrowEvent', datastore:'dataStoreReference'};
@@ -450,64 +433,23 @@ const FLOW = {
       {f:'T18',t:'T19'},                                       // save → drop (persist before drop)
       {f:'T19',t:'E'},
     ]},
-  // Agent sub-processes — all three share ONE shape: INBOX → HOPPER → work → FLEET INTAKE (throw) →
-  // wait at INBOX → resume. The throw is non-terminating; no agent ends its own process (TRON releases the
-  // session). A mid-work problem and the outcome report both leave via the same FLEET INTAKE; the reply
-  // (or next work) lands back at the INBOX.
-  // ENGINEER (LLM-05) — a worker's build, dispatched per block.
-  'LLM-05': { num:'LLM-05', name:'ENGINEER', owner:'✦  ENGINEER', grid:true, noEnd:true,
-    start:'', startData:{name:'PMT-ENG-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn; prompt file in tron/pmt
-    startPos:[0,1],
+  // AGENT (LLM) — ONE drill-down for every role (engineer / architect / reviewer): identical process,
+  // only the variables (name, work, prompts) differ. The throw is non-terminating; the agent never ends
+  // its own process (TRON releases the session).
+  'LLM': { num:'LLM', name:'AGENT', owner:'✦  AGENT', grid:true, noEnd:true,
+    start:'', startData:{name:'PMT-BRIEF', dir:'in', at:'above'},
+    startPos:[-1,0],
     steps:[
-      {n:'ENGINEER INBOX', id:'01', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // catch: brief · reply · next work; writes the hopper
-      {n:'ENGINEER HOPPER', kind:'store', pos:[-0.2,-1]},               // durable mailbox (store — no step id); feeds the build's top-¼
-      {n:'<build>', id:'02', kind:'task', pos:[0,0], data:{name:'<PMT-ENG-*>', dir:'in', at:'above', dock:0.75}},   // builds; reads hopper (¼) + per-task prompt (¾)
-      {n:'FLEET INTAKE', id:'03', kind:'mthrow', pos:[1,0]},            // non-terminating throw: outcome OR in-flight problem → FLEET HOPPER; PULSE pulls it
+      {n:'AGENT INBOX', id:'01', kind:'mcatch', pos:[0,-1], lblPos:'top'},
+      {n:'<work>', id:'02', kind:'task', pos:[1,0], data:{name:'<PMT-*>', dir:'in', at:'above'}},
+      {n:'FLEET INTAKE', id:'03', kind:'mthrow', pos:[2,0]},
+      {n:'', id:'04', kind:'gateway', pos:[0,0], lblPos:'bottom'},      // merge: spawn OR inbox message → work
     ],
     edges:[
-      {f:'S',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // spawn → build (up into the bottom)
-      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
-      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t',d:0.25}},   // HOPPER → build (read, top-¼)
-      {f:'T2',t:'T3'},                                                  // build → throw (report or problem)
-      {f:'T3',t:'T0', from:{s:'t'}, to:{s:'l'}},                        // after the throw, wait at the INBOX
-      {f:'T0',t:'T2', from:{s:'b'}, to:{s:'l'}},                        // reply / next work lands → resume the build (the loop)
-    ]},
-  // ARCHITECT (LLM-06) — the single persistent consultant (tron.md R1), alive the whole run.
-  'LLM-06': { num:'LLM-06', name:'ARCHITECT', owner:'✦  ARCHITECT', grid:true, noEnd:true,
-    start:'', startData:{name:'PMT-ARCH-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn; prompt file in tron/pmt
-    startPos:[0,1],
-    steps:[
-      {n:'ARCHITECT INBOX', id:'01', kind:'mcatch', pos:[-1,-1], lblPos:'top'},  // catch: brief · reply · next work; writes the hopper
-      {n:'ARCHITECT HOPPER', kind:'store', pos:[-0.2,-1]},              // durable mailbox (store — no step id); feeds the work's top-¼
-      {n:'<work>', id:'02', kind:'task', pos:[0,0], data:{name:'<PMT-ARCH-*>', dir:'in', at:'above', dock:0.75}},   // the work; reads hopper (¼) + per-task prompt (¾)
-      {n:'FLEET INTAKE', id:'03', kind:'mthrow', pos:[1,0]},            // non-terminating throw: outcome OR a question → FLEET HOPPER; PULSE pulls it
-    ],
-    edges:[
-      {f:'S',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // spawn → work (up into the bottom)
-      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
-      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t',d:0.25}},   // HOPPER → work (read, top-¼)
-      {f:'T2',t:'T3'},                                                  // work → throw (report or question)
-      {f:'T3',t:'T0', from:{s:'t'}, to:{s:'l'}},                        // after the throw, wait at the INBOX
-      {f:'T0',t:'T2', from:{s:'b'}, to:{s:'l'}},                        // reply / next work lands → resume (the loop)
-    ]},
-  // REVIEW (LLM-07) — a reviewer, dispatched per milestone; its verdict leaves via FLEET INTAKE
-  // (TRON routes it to the architect), same loop as the others.
-  'LLM-07': { num:'LLM-07', name:'REVIEW', owner:'✦  REVIEWER', grid:true, noEnd:true,
-    start:'', startData:{name:'PMT-REV-BRIEF', dir:'in', at:'below'},   // dispatch object on spawn; prompt file in tron/pmt
-    startPos:[0,1],
-    steps:[
-      {n:'REVIEWER INBOX', id:'01', kind:'mcatch', pos:[-1,-1], lblPos:'top'},   // catch: brief · reply · next work; writes the hopper
-      {n:'REVIEWER HOPPER', kind:'store', pos:[-0.2,-1]},               // durable mailbox (store — no step id); feeds the review's top-¼
-      {n:'<type> Review', id:'02', kind:'task', pos:[0,0], data:{name:'<PMT-REV-*>', dir:'in', at:'above', dock:0.75}},   // the review; reads hopper (¼) + per-task prompt (¾)
-      {n:'FLEET INTAKE', id:'03', kind:'mthrow', pos:[1,0]},            // non-terminating throw: the verdict OR a question → FLEET HOPPER; PULSE pulls it
-    ],
-    edges:[
-      {f:'S',t:'T2', from:{s:'t'}, to:{s:'b'}},                        // spawn → review (up into the bottom)
-      {f:'T0',t:'T1', assoc:true, from:{s:'r'}, to:{s:'l'}},             // INBOX → HOPPER (write, arrow)
-      {f:'T1',t:'T2', assoc:true, undirected:true, from:{s:'b'}, to:{s:'t',d:0.25}},   // HOPPER → review (read, top-¼)
-      {f:'T2',t:'T3'},                                                  // review → throw (verdict or question)
-      {f:'T3',t:'T0', from:{s:'t'}, to:{s:'l'}},                        // after the throw, wait at the INBOX
-      {f:'T0',t:'T2', from:{s:'b'}, to:{s:'l'}},                        // reply / next work lands → resume (the loop)
+      {f:'S',t:'T3', from:{s:'r'}, to:{s:'l'}},
+      {f:'T0',t:'T3', from:{s:'b'}, to:{s:'t'}},
+      {f:'T3',t:'T1', from:{s:'r'}, to:{s:'l',d:0.5}},
+      {f:'T1',t:'T2'},
     ]},
   'ND-01-08': { num:'ND-01-08', name:'SET SCOPE', start:'', end:'Scope locked', grid:true, endPos:[3,0],
     steps:[
@@ -673,7 +615,7 @@ function subXML(def){
   const poolY=TOK.poolY, poolX=TOK.poolX, laneX=poolX+TOK.lanePad;
   const geom = {};
   let lanesUsed, bandTop={}, poolW, poolH, laneW, laneH={};
-  let gridColC=null, gridTrackW=null, gridMinCol=0, gridMaxCol=0, gridRowC=null, gridOpRow=null;   // hoisted so side-docked data can snap to grid columns + drop a lane-bound store into the OPERATOR band
+  let gridColC=null, gridTrackW=null, gridMinCol=0, gridMaxCol=0, gridRowC=null, gridRowH=null, gridOpRow=null;   // hoisted so side-docked data can snap to grid columns/rows + drop a lane-bound store into the OPERATOR band
 
   if(grid){
     // UNIFORM GRID in the TRON-RELAY lane; any AIDE step drops into its own lane below DET (compact, balanced).
@@ -720,7 +662,7 @@ function subXML(def){
     for(let c=minCol+1;c<=maxCol;c++) colC[c]=colC[c-1]+trackW[c-1]/2+TOK.colGap+trackW[c]/2;
     rowC[minRow] = poolY + topPad + trackH[minRow]/2;
     for(let r=minRow+1;r<=maxRow;r++){ const gap = laneOfRow(r)!==laneOfRow(r-1) ? 2*PAD : TOK.rowGap; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
-    gridColC=colC; gridTrackW=trackW; gridMinCol=minCol; gridMaxCol=maxCol; gridRowC=rowC; gridOpRow=opRow;   // expose grid columns + the OPERATOR row to the data-placement loop
+    gridColC=colC; gridTrackW=trackW; gridMinCol=minCol; gridMaxCol=maxCol; gridRowC=rowC; gridRowH=trackH; gridOpRow=opRow;   // expose grid columns/rows + the OPERATOR row to the data-placement loop
     const cx=c=>{ const f=Math.floor(c),g=Math.ceil(c); return f===g?colC[f]:colC[f]+(c-f)*(colC[g]-colC[f]); };
     const cy=r=>{ const f=Math.floor(r),g=Math.ceil(r); return f===g?rowC[f]:rowC[f]+(r-f)*(rowC[g]-rowC[f]); };
     const cell=(c,r,w,h)=>({x:cx(c)-w/2, y:cy(r)-h/2, w, h});
@@ -764,6 +706,14 @@ function subXML(def){
       .sort((a,b)=> dir>0 ? gridRowC[a]-gridRowC[b] : gridRowC[b]-gridRowC[a]);
     return rs.length ? gridRowC[rs[0]] - H/2 : null;
   };
+  // No adjacent row to snap to (top/bottom edge): anchor the box to the node's own ROW BAND edge, not its
+  // individual node edge — so every above/below data object in a row aligns regardless of node height.
+  const bandY = (cy, dir, H) => {
+    if(!(grid && gridRowC && gridRowH)) return null;
+    const r = Object.keys(gridRowC).map(Number).find(r=>Math.abs(gridRowC[r]-cy)<2);
+    if(r===undefined) return null;
+    return dir<0 ? gridRowC[r]-gridRowH[r]/2 - TOK.dataGap - H : gridRowC[r]+gridRowH[r]/2 + TOK.dataGap;
+  };
 
   // data objects — placed by tokens (size, gap, label), then the POOL/LANE grows to contain them so nothing crosses a border
   const dataBoxes = def.steps.map((s,i)=>{
@@ -773,9 +723,9 @@ function subXML(def){
       const cxv=gridColC[s.pos[0]], ry=gridRowC[gridOpRow], dyv=ry-H/2;
       return {i, d, at:'below', W, H, out, store:isStore, dx:cxv-W/2, dy:dyv, p1:[g.cx,g.bottom], p2:[cxv,dyv]};
     }
-    const df=d.dock??0.5, ay=g.top+g.h*df, ax=g.left+g.w*df; let dx,dy,p1,p2;   // df docks along the edge (vertical for l/r, horizontal for above/below)
-    if(at==='below'){ dx=ax-W/2; dy=snapRowY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[ax,g.bottom]; p2=[ax,dy]; }
-    else if(at==='above'){ dx=ax-W/2; dy=snapRowY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[ax,g.top]; p2=[ax,dy+H]; }
+    const ax=g.cx, ay=g.cy; let dx,dy,p1,p2;   // box centres on the node's grid line — column for above/below, row for left/right (matches how nodes align)
+    if(at==='below'){ dx=ax-W/2; dy=snapRowY(g.cy,1,H) ?? bandY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[ax,g.bottom]; p2=[ax,dy]; }
+    else if(at==='above'){ dx=ax-W/2; dy=snapRowY(g.cy,-1,H) ?? bandY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[ax,g.top]; p2=[ax,dy+H]; }
     else if(at==='right'){
       // column-aligned: centre on the next grid column (extend past the last column at grid pitch); lane mode keeps the simple gutter offset
       const nc = grid ? s.pos[0] : null;
@@ -792,8 +742,8 @@ function subXML(def){
   if(def.startData){   // a data object attached to the START event (e.g. the BRIEF the agent receives on spawn)
     const d=def.startData, g=G('S'), at=d.at||'below', isStore=!!d.store, W=isStore?TOK.storeW:TOK.dataW, H=isStore?TOK.storeH:TOK.dataH, out=d.dir!=='in';
     let dx,dy,p1,p2;
-    if(at==='above'){ dx=g.cx-W/2; dy=snapRowY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
-    else { dx=g.cx-W/2; dy=snapRowY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
+    if(at==='above'){ dx=g.cx-W/2; dy=snapRowY(g.cy,-1,H) ?? bandY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
+    else { dx=g.cx-W/2; dy=snapRowY(g.cy,1,H) ?? bandY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
     dataBoxes.push({node:'S', d, at, W, H, out, store:isStore, dx, dy, p1, p2});
   }
   // grow the pool right/bottom to enclose every data box + its label, with a token margin (top/left use topBand room)
