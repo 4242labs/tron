@@ -1,0 +1,24 @@
+# registry.yaml — the PMT index (M-04 / R-PMT). CANON, copied verbatim at seed.
+#
+# The closed set of LLM-facing worker prompts. The engine resolves a PMT by its id
+# (never by path) through this map; the body is imported FRESH at tick from the named
+# file in this folder. messages.yaml worker-channel lines reference these ids.
+#
+# Each PMT is ONE self-contained file (no shared fragments). `slots` are the variables
+# the engine fills (str.format); they must match the referencing message's `slots`.
+# The prompt COPY is the operator's to author (R-PMT seam 2) — this layer is the mechanism.
+# Versioned with the canon (no separate marker — single versioning; M-06 is out of scope).
+#
+# id scheme: PMT-<ROLE>-<PURPOSE>  (or PMT-<PURPOSE> when role-generic). Traced to the
+# sentry<->PMT map in contracts/rebuild-spec.md (T3).
+
+prompts:
+  PMT-ENG-BRIEF:      { file: PMT-ENG-BRIEF.md,      slots: [worker_id, block, branch] }
+  PMT-ARCH-BRIEF:     { file: PMT-ARCH-BRIEF.md,     slots: [] }
+  PMT-ARCH-FORWARD:   { file: PMT-ARCH-FORWARD.md,   slots: [block] }
+  PMT-ARCH-LOGREVIEW: { file: PMT-ARCH-LOGREVIEW.md, slots: [type] }
+  PMT-ARCH-TRIAGE:    { file: PMT-ARCH-TRIAGE.md,    slots: [detail] }
+  PMT-REV-BRIEF:      { file: PMT-REV-BRIEF.md,      slots: [worker_id, count] }
+  PMT-GATE-DONE:      { file: PMT-GATE-DONE.md,      slots: [worker_id, block, detail] }
+  PMT-PING:           { file: PMT-PING.md,           slots: [worker_id] }
+  PMT-RELEASE:        { file: PMT-RELEASE.md,        slots: [worker_id] }

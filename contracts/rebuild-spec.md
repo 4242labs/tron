@@ -11,8 +11,8 @@ boundary (T2), the sentry↔PMT map (T3), DONE as a prompted exchange (T4), and 
 (T5). **Spec only** — no engine code; implementation is 01-02…01-06.
 
 > Replaces, as the live reference, the stale `blueprint-contracts.md` (2026-06-05, on ADR §5's *replace*
-> list — it still describes SCRIPTS, cron, `block:next:done`, `workflow.yaml`). That file is rewritten in
-> 01-03; until then this spec is the behavior authority.
+> list — it still describes SCRIPTS, cron, and `block:next:done` against the pre-rebuild model). That file
+> is rewritten in 01-03; until then this spec is the behavior authority.
 
 ---
 
@@ -240,7 +240,7 @@ plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Matc
 | architect | `architect.logged` | trigger → adhoc blocks authored |
 | operator | `operator.decision` | trigger → Settle (02-08) |
 | operator | `operator.status_query` | side: reply digest |
-| operator | `operator.knob_change` | side: edit knob/rule (**renamed** from `operator.workflow_change` — the "workflow" misnomer M-01/ADR §12.1 is killing) |
+| operator | `operator.knob_change` | side: edit knob/rule (**renamed** off the prior "workflow" misnomer — M-01/ADR §12.1) |
 | operator | `operator.directive` | side: best-effort |
 | system | `worker.stalled` / `worker.dead` | trigger `worker:stalled` (engine liveness; **not** from classify) |
 | reserved | `unclassified` | trigger `*` → SENTRY catch-all → **architect triage** |
@@ -251,8 +251,8 @@ plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Matc
   collided with the retired done-status).
 - **Add `worker.await_confirm`** (D7 / R-AWAIT) — terminal always, +TG if opted in.
 - **Remove** the operator merge-approve path (`escalate.merge`, `operator.decision = approve(merge)`) (D5).
-- `operator.workflow_change` → **`operator.knob_change`** — drop the "workflow" misnomer the rebuild is
-  killing (M-01 / ADR §12.1); the side action edits a per-project knob, not "the workflow".
+- **`operator.knob_change`** (operator side-action) — named off the "workflow" misnomer the rebuild is
+  killing (M-01 / ADR §12.1); it edits a per-project knob, not "the workflow".
 - Every message is **ID-addressed** to a specific agent (D4) — delivery targets `<AGENT-ID>`'s inbox, never
   a role; classify tags the message, the engine resolves the target id.
 - `sweep.tick` is subsumed by WAKE-driven ticks (ND-08); the cron tick source is removed (D6).
@@ -284,8 +284,8 @@ validation error appended (budget `invalid_output.max_retries`, default 2) · **
 - the **PMT set + ids** (T3) — content authorship is the operator's (R-PMT);
 - knob **defaults** (COOLDOWN ≈ 5s, CEILING ≈ 30s, cadence, `silence_*`) — fixed knobs, edited in the file;
 - the precise **trigger/handler names** the engine binds, pending 01-03;
-- the **MANIFEST run-state filename** (ADR §12.1 flags `workflow-state.yaml` as carrying the "workflow"
-  misnomer) — decided in 01-02, not here.
+- the **MANIFEST run-state filename** — **resolved in 01-02**: the run-state file is now `manifest.yaml`
+  (ADR §12.1, off the prior "workflow" misnomer; the run-state *is* the MANIFEST).
 
 ---
 

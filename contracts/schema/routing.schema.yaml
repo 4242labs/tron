@@ -1,7 +1,7 @@
 # routing.yaml — schema (B0 / D1). CANON shape.
 # routing.yaml carries the TRIGGER GRAMMAR (closed vocabulary) + the INBOUND
-# message-tag -> trigger map. The behaviour table lives in workflow.yaml; the old
-# primitive library is gone (the table states every edge directly).
+# message-tag -> trigger map. The behaviour table lives in the engine (fsm.py TABLE),
+# not in knobs.yaml; the old primitive library is gone (the table states every edge directly).
 # Ships with TRON, copied verbatim at seed. The seeder NEVER writes this.
 # Validated by blueprint-lint canon-level rules (grammar + closed-enum + coverage).
 
@@ -24,7 +24,7 @@ grammar:                       # REQUIRED
 
 # ── Inbound tag map (closed enum -> action) ────────────────────────
 # Every tag classify_message can return maps to EXACTLY ONE of:
-#   { trigger: <t> }  -> emit a workflow trigger (must satisfy grammar)
+#   { trigger: <t> }  -> emit a trigger (must satisfy grammar)
 #   { side: <h> }     -> a global handler; FSM does not advance
 #   { tick: true }    -> run one bounded tick
 # Enum is closed; coverage is total (blueprint-lint).

@@ -1,4 +1,4 @@
-# workflow-state.yaml — live FSM state (runtime; gitignored)
+# manifest.yaml — the MANIFEST: live run-state (runtime; gitignored)
 # TRON's per-session memory: workers, counters, cadence, the architect queue, and
 # the disposable trunk-read caches. Written atomically every tick (tmp + mv). Do
 # NOT hand-edit — the engine manages it. Seeded from this template; the engine

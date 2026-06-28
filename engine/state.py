@@ -1,4 +1,4 @@
-"""state — load / mutate / atomically persist workflow-state.yaml.
+"""state — load / mutate / atomically persist manifest.yaml.
 
 The FSM cursor, counters, active workers, the architect queue, and the disposable
 trunk-read caches. Every tick loads it, mutates in memory, and persists once at
@@ -16,7 +16,7 @@ import util
 
 # Per-session merge knob defaults (realign §8) — the single source for both the
 # fresh-start reset (fsm._reset_session_runtime) and the runtime default below.
-# templates/workflow-state.yaml seeds the same values for a hand-read instance.
+# templates/manifest.yaml seeds the same values for a hand-read instance.
 DEFAULT_APPROVALS = {"merge_staging": "APPROVED", "promote_main": "ASK"}
 
 

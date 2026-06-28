@@ -1,8 +1,8 @@
-# workflow.yaml — per-project COMPOSITION (B2 canon instance)
-# In the event-table model the *behaviour* (trigger -> step -> on-complete) is fixed
-# canon: it lives in the engine's table (mirrors tron-workflow-v2-skills.csv) and in
-# routing.yaml's grammar. This file holds ONLY the per-project knobs the engine reads:
-# how many workers, how fast the architect drains, reviewer cadence, liveness, git.
+# knobs.yaml — per-project KNOBS (B2 canon instance)
+# The *behaviour* (trigger -> step -> on-complete) is NOT here: it is the fixed engine
+# event table (PULSE + SWITCHBOARD), the same for every project, plus routing.yaml's
+# grammar. This file holds ONLY the per-project knobs the engine reads by name: how many
+# workers, how fast the architect drains, reviewer cadence, WAKE timing, liveness, git.
 # The seeder (B1) rewrites this per project; this is the default it ships with.
 # Validated against routing.yaml + project.yaml by blueprint-lint (contracts §9).
 
@@ -12,9 +12,13 @@ knobs:
                            # (engineers + reviewers share this pool; architect EXCLUDED).
                            # NO baked default — start refuses until the operator sets it.
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
-  git: on                  # workflow commits (drives R8 + any ci availability)
+  git: on                  # whether the build commits via git (drives R8 + any ci availability)
   silence_ping_min: 6      # worker silent this many minutes -> heartbeat ping
   silence_escalate_min: 8  # silent past this -> engine emits worker:stalled (> ping)
+  # WAKE pulse-timing bounds (the daemon reads these, 01-04). Fixed knobs: edit here,
+  # never asked at start, never changed by a runtime command. cooldown <= ceiling.
+  wake_cooldown_sec: 5     # min gap between ticks — floor (debounce a chatty fleet)
+  wake_ceiling_sec: 30     # max latency before a tick fires anyway — the cadence ceiling
 
 # ── Reviewer cadence (PULL): <type> -> blocks between reviews ──
 # Per-type counter +1 on every block:next:done; due at threshold; reset on dispatch.

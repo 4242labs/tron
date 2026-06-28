@@ -70,7 +70,7 @@ def cmd_doctor(ctx):
 def cmd_start(ctx):
     from fsm import Engine
     if not os.path.exists(ctx.state):
-        tpl = os.path.join(ctx.dir, "templates", "workflow-state.yaml")
+        tpl = os.path.join(ctx.dir, "templates", "manifest.yaml")
         if os.path.exists(tpl):
             util.atomic_write(ctx.state, open(tpl).read())
     max_c = _arg("--max")
@@ -126,7 +126,7 @@ def cmd_recover(ctx):
 def cmd_console(ctx):
     from console import Console
     if not os.path.exists(ctx.state):
-        tpl = os.path.join(ctx.dir, "templates", "workflow-state.yaml")
+        tpl = os.path.join(ctx.dir, "templates", "manifest.yaml")
         if os.path.exists(tpl):
             util.atomic_write(ctx.state, open(tpl).read())
     Console(ctx).run()

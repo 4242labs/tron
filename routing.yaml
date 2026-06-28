@@ -1,8 +1,9 @@
-# routing.yaml — CANON. Two things the engine needs that are NOT the workflow itself:
+# routing.yaml — CANON. Two things the engine needs that are NOT the flow itself:
 #   1. the TRIGGER GRAMMAR — the closed vocabulary every trigger must satisfy.
 #   2. the INBOUND tag map — how a raw worker/operator message becomes a trigger.
-# The behaviour (trigger -> step -> on-complete) lives in workflow.yaml (the explicit
-# event table). The old "primitive library" is gone: the table states every edge directly.
+# The behaviour (trigger -> step -> on-complete) lives in the ENGINE's event table
+# (fsm.py TABLE) — NOT in knobs.yaml, which holds only per-project knobs. The old
+# "primitive library" is gone: the engine table states every edge directly.
 # Ships with TRON, copied verbatim at seed. The seeder never writes it.
 # Shapes locked by contracts/schema/routing.schema.yaml; checked by blueprint-lint.
 
@@ -28,7 +29,7 @@ grammar:
 
 # ── Inbound message classification (closed tag enum -> trigger | side | tick) ──
 # classify_message returns exactly ONE tag. Each maps to:
-#   trigger: <t>  -> emit that workflow trigger (the FSM advances per workflow.yaml)
+#   trigger: <t>  -> emit that trigger (the FSM advances per the engine's event table)
 #   side: <h>     -> a global handler; the FSM does not advance
 #   tick: true    -> run one bounded tick (the sweep)
 # Closed enum + total coverage (blueprint-lint).
@@ -46,7 +47,7 @@ tags:
   # operator-origin
   operator.decision:        { trigger: "operator:decision:<block>" }
   operator.status_query:    { side: reply_digest }
-  operator.workflow_change: { side: edit_self }
+  operator.knob_change:     { side: edit_self }   # M-01: off the prior "workflow" misnomer; edits a knob/rule
   operator.directive:       { side: best_effort }
   # system (engine-produced, not from classify_message)
   sweep.tick:               { tick: true }

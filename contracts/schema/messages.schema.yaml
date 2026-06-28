@@ -5,8 +5,11 @@
 # Seeder voice (tron-seed.md) is SEPARATE and never shares keys (contracts §6).
 #
 # RULES enforced by review/lint:
-# - Tone = the TRON persona (dark, dry, sardonic). No host-runtime names, ever.
+# - Tone (human-facing copy) = the TRON persona (dark, dry, sardonic). No host-runtime names, ever.
 # - Every routing action that emits text references a template id that exists here.
+# - Human-facing templates (terminal / operator / tg / session) carry inline `text`.
+# - Worker-facing templates (channel: worker) carry NO inline copy — they reference `pmt: PMT-*`
+#   into prompts/registry.yaml; the body is imported at tick (M-04). lint L15/L16 enforce this.
 # - Placeholder copy keyed to the tag vocabulary is acceptable for B3 testing (R-4).
 
 # ── Slot catalog (the only interpolations templates may use) ───────
@@ -23,19 +26,22 @@ slots:
 
 # ── Templates, grouped by channel/situation ────────────────────────
 # Each entry:
-#   text: the canned string with {slot} placeholders
 #   channel: operator | worker | terminal | tg
 #   slots: [ ... ]   # which slots it expects (subset of the catalog)
+#   text: <canned string with {slot}>   — human-facing channels only
+#   pmt:  PMT-<ROLE>-<PURPOSE>           — worker channel only (id into prompts/registry.yaml)
 templates:
 
-  # dispatch / spawn (worker channel; mirrors v1 tron-scripts spawn blocks)
-  spawn.engineer:   {channel: worker,   slots: [worker_id, block, branch], text: "<canned>"}
-  spawn.architect:  {channel: worker,   slots: [],                          text: "<canned>"}
-  spawn.reviewer:   {channel: worker,   slots: [worker_id, count],          text: "<canned>"}
-  arch.forward:     {channel: worker,   slots: [block],                     text: "<canned>"}  # architect forward-review job
-  arch.log:         {channel: worker,   slots: [type, block],               text: "<canned>"}  # architect log-review job
-  release.worker:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
-  heartbeat.ping:   {channel: worker,   slots: [worker_id],                 text: "<canned>"}
+  # dispatch / spawn (worker channel) — each references a PMT id, never inline copy.
+  spawn.engineer:   {channel: worker,   slots: [worker_id, block, branch], pmt: PMT-ENG-BRIEF}
+  spawn.architect:  {channel: worker,   slots: [],                          pmt: PMT-ARCH-BRIEF}
+  spawn.reviewer:   {channel: worker,   slots: [worker_id, count],          pmt: PMT-REV-BRIEF}
+  arch.forward:     {channel: worker,   slots: [block],                     pmt: PMT-ARCH-FORWARD}   # architect forward-review job
+  arch.log:         {channel: worker,   slots: [type],                      pmt: PMT-ARCH-LOGREVIEW} # architect log-review job
+  arch.triage:      {channel: worker,   slots: [detail],                    pmt: PMT-ARCH-TRIAGE}    # unclassified -> architect triage
+  release.worker:   {channel: worker,   slots: [worker_id],                 pmt: PMT-RELEASE}
+  heartbeat.ping:   {channel: worker,   slots: [worker_id],                 pmt: PMT-PING}
+  gate.step:        {channel: worker,   slots: [worker_id, block, detail],  pmt: PMT-GATE-DONE}      # DONE gate challenge
 
   # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched: {channel: terminal, slots: [worker_id, block], text: "<canned>"}

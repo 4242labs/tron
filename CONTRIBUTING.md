@@ -20,7 +20,7 @@ There's no build step — the engine is plain Python (`python3`), the connectors
 
 | Surface | Where | Adds |
 |:--|:--|:--|
-| **Reviewer lens** | `workflow.yaml › cadence` | a review pass (security, data, a11y, …); the persona is the project's own `agents/` file |
+| **Reviewer lens** | `knobs.yaml › cadence` | a review pass (security, data, a11y, …); the persona is the project's own `agents/` file |
 | **Protocol** | `protocols/<name>.md` | a lifecycle flow (bootup / run-teardown / …) |
 | **Engine** | `engine/` | the dispatch loop, selector, trunk reader, judgment, lint — keep it deterministic |
 | **Copy** | `messages.yaml` | TRON's voice (dark, dry, sardonic; never name the host runtime) |
