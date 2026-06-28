@@ -112,7 +112,7 @@ becomes `unclassified` → the `*` catch-all, and the engine **hands it to the a
 solvable as upcoming work → the architect scopes it forward; truly the operator's call → the
 architect escalates it (and only then does it become a wall, R3). TRON makes **no** second LLM
 judgment about whether something is the operator's problem — that steering belongs to an agent with
-the project's context, never to a one-shot model call. (The old `assess_wall` tool is retired.)
+the project's context, never to a one-shot model call. (The old second-judgment tool is retired.)
 
 ## Not your job anymore
 

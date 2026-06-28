@@ -10,9 +10,10 @@ return; invalid output is retried (budget 2) then collapses to `unclassified`
 -> the `*` SENTRY catch-all, which hands the input to the architect to sort.
 The LLM never sees the flow path and never returns free prose to the flow.
 
-NOT judgment tools, by design: "is this the operator's problem?" (assess_wall —
-RETIRED; an unclassifiable input routes to the architect, who steers it — the LLM
-never makes a flow-steering call), review verdicts (review is a milestone), findings
+NOT judgment tools, by design: "is this the operator's problem?" (the old
+second-judgment tool — RETIRED; an unclassifiable input routes to the architect,
+who steers it — the LLM never makes a flow-steering call), review verdicts
+(review is a milestone), findings
 triage / fix scoping (the architect's log-review skill), stall detection (the
 engine's deterministic liveness sweep).
 
@@ -117,7 +118,7 @@ def call(tool, payload, ctx, max_retries=2):
     """Run one judgment tool. Returns (ok, output_dict_or_None, raw_attempts).
 
     ok=False means the invalid-output budget was exhausted -> the caller maps
-    this to `unclassified` / the `*` SCRIPTS catch-all (contracts §4).
+    this to `unclassified` / the `*` SENTRY catch-all (contracts §4).
     """
     validate = VALIDATORS[tool]
     stub = _stub_response(tool)

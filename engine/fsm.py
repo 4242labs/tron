@@ -61,7 +61,7 @@ TABLE = [
     ("operator:decision:<block>",  "_h_apply_decision"),
     ("worker:stalled",             "_h_recover"),
     ("session:end",                "_h_session_end"),
-    ("*",                          "_h_sentry"),        # SENTRY: the reactive catch-all (replaces SCRIPTS)
+    ("*",                          "_h_sentry"),        # SENTRY: the reactive catch-all (the `*` row)
 ]
 
 OPEN_STATUSES = ("to-do", "in-progress")   # work that still counts as not-done
@@ -687,8 +687,8 @@ class Engine:
         # operator:decision:<block> — 02-08 SETTLE: apply the operator's reply to a parked case.
         # The reply carries the correlation id stamped at escalation (02-10); resolve the case by
         # it (or by block), write the decision onto the record, then act — in THIS tick (≤1 tick
-        # after the reply landed in the hopper). resume | amend | abandon. (No `approve(merge)`:
-        # the operator-approves-before-merge model is removed — D5/TD-02.)
+        # after the reply landed in the hopper). resume | amend | abandon. (No merge sign-off
+        # decision: the operator-approves-before-merge model is removed — D5/TD-02.)
         decision = (m.get("decision") or "").lower()
         case = self._resolve_case(m.get("case"), m.get("block"))
         block = (case or {}).get("block") or m.get("block")
@@ -756,10 +756,10 @@ class Engine:
         self._end_session()
 
     def _h_sentry(self, m):
-        # SENTRY — the `*` reactive catch-all (replaces SCRIPTS). Log the unexpected input and
-        # hand it to the architect to sort (solvable -> architect handles it; truly the operator's
-        # -> architect escalates). TRON makes NO flow-steering LLM judgment here (assess_wall
-        # retired); the architect, with project context, is the only thing that steers it.
+        # SENTRY — the `*` reactive catch-all. Log the unexpected input and hand it to the architect
+        # to sort (solvable -> architect handles it; truly the operator's -> architect escalates).
+        # TRON makes NO flow-steering LLM judgment here (the old second-judgment tool was retired);
+        # the architect, with project context, is the only thing that steers it.
         raw = m.get("_trigger", "*")
         text = m.get("detail", "")
         self.log("sentry", f"unmatched trigger '{raw}': {text[:160]}")

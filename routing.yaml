@@ -68,7 +68,7 @@ invalid_output:
 tools:
   classify_message: { in: [text, sender], out: [tag, slots, confidence] }
   # tiering: classify_message -> cheap. ONE judgment tool only.
-  # NOT judgment tools (by design): "is this the operator's problem?" (assess_wall RETIRED —
-  # an unclassifiable input routes to the architect, who steers it, not the LLM); review
+  # NOT judgment tools (by design): "is this the operator's problem?" (that second judgment is
+  # RETIRED — an unclassifiable input routes to the architect, who steers it, not the LLM); review
   # verdicts (review is a milestone); findings-triage (-> architect log-review skill);
   # stall detection (-> engine liveness).

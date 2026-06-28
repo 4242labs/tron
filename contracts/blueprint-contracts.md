@@ -175,7 +175,7 @@ never free prose to the flow.
 
 **Tiering:** `classify_message` → cheap model. **One** judgment tool only. Wired in the engine (D2).
 
-**Not judgment tools, by design:** *"is this the operator's problem?"* (`assess_wall` — **retired**:
+**Not judgment tools, by design:** *"is this the operator's problem?"* (the old second judgment — **retired**:
 an unclassifiable input routes to the architect, who steers it — TRON makes no second LLM call),
 review verdicts (review is a milestone), findings-triage (→ the architect's `log-review` skill), and
 stall detection (→ the engine liveness side-system). These were LLM tools in the old model and are removed.
