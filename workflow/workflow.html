@@ -401,7 +401,7 @@ const FLOW = {
     {n:'<AGENT-ID> INBOX', id:'18', kind:'mthrow', pos:[4,5]},                           // deliver: single message-throw — every message is ID-addressed → that agent's inbox
     {n:'Save state',        id:'19', pos:[4,3], data:{name:'MANIFEST', dir:'out', at:'right'}},
     {n:'Drop sidecars',     id:'20', pos:[3,3]},                                         // (effects persisted before sidecars dropped)
-    {n:'', id:'21', kind:'gateway', pos:[3,1], lblPos:'bottom'},                         // skip-rebuild merge (exclusive): first-tick XOR death-cap persist → straight into Detect done
+    {n:'', id:'21', kind:'gateway', pos:[3,1], lblPos:'bottom'},                         // skip-rebuild merge (exclusive): first-tick XOR death-cap persist → straight into Flag candidates
     {n:'Msg wake?', id:'22', kind:'gateway', pos:[-1,1], lblPos:'bottom'},               // wake-source router: message-triggered tick vs ceiling/first
     {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0], lblPos:'top'},                     // message wake → skip the refresh trio (no git fetch); pairs with the catch
     {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1], lblPos:'top'},                     // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
