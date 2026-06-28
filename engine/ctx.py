@@ -89,6 +89,11 @@ class Ctx:
     def home_log(self):
         return self.p("home-events.jsonl")
 
+    # ── structured forensic event + failure log (01-06): records, not prose ──
+    @property
+    def event_log(self):
+        return self.p("events.jsonl")
+
     @property
     def logs_dir(self):
         return self.p("logs")
