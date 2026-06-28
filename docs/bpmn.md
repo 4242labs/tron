@@ -123,7 +123,7 @@ countable at a glance. The diagram is the live roster — don't duplicate it her
   so a gateway arm into a named throw needs no extra edge label.
 - **Message throws are named for the recipient's inbox.** Keep directions distinct: **`… INTAKE` = TRON
   receiving from an actor** (inbound catch: `FLEET INTAKE`, `OPERATOR INTAKE`); **`… INBOX` = an actor's own
-  inbox, TRON sending to them** (outbound throw target: `ARCHITECT INBOX`, `OPERATOR INBOX`). A throw to the
+  inbox, TRON sending to them** (outbound throw target: `AGENT INBOX`, `OPERATOR INBOX`). A throw to the
   operator is `OPERATOR INBOX`, never `OPERATOR INTAKE`.
 - **Data objects vs stores.** A transient **data object** (folded-doc — `SNAPSHOT`, `MANIFEST`) and a durable
   **data store** (cylinder — `Project Docs`, via `store:true`) attach by a dotted association to every node
@@ -136,8 +136,7 @@ countable at a glance. The diagram is the live roster — don't duplicate it her
 - **A store can live in its own lane.** When the store belongs to a different actor than the node touching it
   (e.g. an `OPERATOR INBOX` throw in the AIDE lane writing the Operator Inbox store in the OPERATOR lane), tag
   the data spec `lane:'op'`: the engine opens that lane band and drops the store in, same column as the node,
-  the directed write running straight down. Mirrors the core's lane-resident stores (`FLEET HOPPER`,
-  `ARCHITECT HOPPER`).
+  the directed write running straight down. Mirrors the core's lane-resident store (`FLEET HOPPER`).
 - A node's body is mechanical **TRON-RELAY** steps; conversation/escalation lives in sub-processes with their
   own RELAY/AIDE/OPERATOR lanes.
 

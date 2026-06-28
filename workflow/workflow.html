@@ -124,7 +124,7 @@ function headBar({num, name, back}){
     + `<span class="nname">${esc(name)}</span>`;
 }
 /* ════════════ DATA MODEL ════════════ */
-// lanes tile the pool top→bottom; ENGINEER owns grid-row 0, TRON rows 1–3, ARCHITECT row 4, REVIEWERS row 5.
+// lanes tile the pool top→bottom; TRON owns grid-rows 0–1, AGENT row 2.
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
   {id:'L_TRON',name:'TRON',  rows:[0,1], y:0, h:0},
@@ -516,7 +516,7 @@ const FLOW = {
     steps:[
       {n:'Assign TRON-AIDE', id:'01', pos:[0,0]},                                              // det
       {n:'Brief + offer options', id:'02', actor:'aide', pos:[0,1], llmId:'LLM-02-10-02', data:{name:'Project Docs', dir:'in', at:'left', store:true}},                       // AIDE reads project core files to compose the operator brief
-      {n:'OPERATOR INBOX', id:'03', kind:'mthrow', actor:'aide', pos:[1,1], data:{name:'Operator Inbox', dir:'out', store:true, lane:'op'}},   // throw writes the operator's inbox store; TRON → operator; pairs with ARCHITECT INBOX
+      {n:'OPERATOR INBOX', id:'03', kind:'mthrow', actor:'aide', pos:[1,1], data:{name:'Operator Inbox', dir:'out', store:true, lane:'op'}},   // throw writes the operator's inbox store; TRON → operator; pairs with AGENT INBOX
       {n:'Mark pending', id:'04', pos:[1,0]},                                                  // stamp escalation-pending (durable; guards re-escalation)
     ]},
 
@@ -524,7 +524,7 @@ const FLOW = {
   // Triggered when an operator message lands. Two outcomes branch off Intent?:
   //   ACT  — command (halt/pause/resume/rescope) → run-state · decision (reply to a parked case) → PULSE Settle. No reply.
   //   ANSWER — query (status/inspect) or ask (free-form) → AIDE composes from artifacts → reply to operator;
-  //            an ask AIDE can't answer from artifacts is sent to the architect (lands in ARCHITECT HOPPER), answered later.
+  //            an ask AIDE can't answer from artifacts is sent to the architect (the AGENT; lands in its inbox), answered later.
   // Operator-initiated, so the conversation is synchronous (human present) — nothing here is parked across PULSE ticks.
   // GRID layout (grid:true) to match the core + ND-01/ND-02: DET = row 0, AIDE auto-drops to row 1; every arm a straight run.
   'ND-09': { num:'ND-09', name:'PARLEY', start:'', noEnd:true, grid:true, endPos:[5,1],
@@ -536,8 +536,8 @@ const FLOW = {
       {n:'Answerable?', id:'05', kind:'gateway', actor:'aide', pos:[3,1], lblPos:'top'},            // aide
       {n:'OPERATOR INBOX', id:'06', kind:'mthrow', actor:'aide', pos:[4,1], data:{name:'Operator Inbox', dir:'out', store:true, lane:'op'}},   // throw writes the operator's inbox store; TRON → operator
       {n:'Replied', id:'07', kind:'end', actor:'aide', pos:[5,1]},                                  // aide end
-      {n:'ARCHITECT INBOX', id:'08', kind:'mthrow', pos:[3,0], lblPos:'top'},                       // message-throw to the architect (matches the ARCHITECT INBOX catch); lands in ARCHITECT HOPPER
-      {n:'Deferred', id:'09', kind:'end', pos:[4,0]},                                               // det end — adjacent to ARCHITECT INBOX
+      {n:'AGENT INBOX', id:'08', kind:'mthrow', pos:[3,0], lblPos:'top'},                           // message-throw to the architect (the AGENT) — pairs with the AGENT INBOX catch (LLM-01); lands in the agent's inbox
+      {n:'Deferred', id:'09', kind:'end', pos:[4,0]},                                               // det end — adjacent to AGENT INBOX
     ],
     edges:[
       {f:'S',t:'T0'},
