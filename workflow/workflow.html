@@ -124,11 +124,11 @@ function headBar({num, name, back}){
     + `<span class="nname">${esc(name)}</span>`;
 }
 /* ════════════ DATA MODEL ════════════ */
-// lanes tile the pool top→bottom; TRON owns grid-rows 0–1, AGENT row 2.
+// lanes tile the pool top→bottom; TRON owns grid-rows 0–2, AGENT row 3.
 // y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
 const LANES = [
-  {id:'L_TRON',name:'TRON',  rows:[0,1], y:0, h:0},
-  {id:'L_ARCH',name:'AGENT', rows:[2,2], y:0, h:0},
+  {id:'L_TRON',name:'TRON',  rows:[0,2], y:0, h:0},
+  {id:'L_ARCH',name:'AGENT', rows:[3,3], y:0, h:0},
 ];
 const SHOW_EDGE_LABELS = false;         // edge labels are implicit (docs only) — kept OFF the canvas for a clean diagram
 const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
@@ -137,41 +137,48 @@ let LANE_X = 190, LANE_W = 1310;        // computed by layoutCore()
 // CORE NODES — placed on a track grid by (col,row). Same col → shared centre X (vertical alignment);
 // same row → shared centre Y. Geometry (x/y) is derived in layoutCore(); only col/row/size live here.
 const NODES = [
-  // ── TRON lane · rows 0–1 ──
-  // row 0 — spine: Start → BOOTUP → PULSE → SWITCHBOARD, with ANCHOR to the switchboard's right
-  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:0, w:36, h:36, lblOnly:true},
-  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:0, w:96, h:68, sub:'BOOTUP'},
-  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:2, row:0, w:96, h:68, sub:'PULSE'},
-  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:4, row:0, w:48, h:48, lblPos:'t'},   // work selector hub → dispatch to the agent or session end; label on the free top side (edges left/right/down)
-  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:5, row:0, w:36, h:36, lblOnly:true, lblAbove:true},   // session-end terminal — right of SWITCHBOARD
-  // row 1 — WAKE + the fleet intake/hopper that feed it, and the operator channel (intake → PARLEY)
-  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},   // TRON's intake catch — agents drop messages here; writes FLEET HOPPER
-  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:1, row:1, w:50, h:56, lblOnly:true},   // TRON's durable store; feeds WAKE (message arm) AND is drained by PULSE (02-12)
-  {id:'ND-08', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:3, row:1, w:96, h:68, sub:'WAKE'},   // the tick trigger; connects to PULSE on its left side
-  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-09)
-  {id:'ND-09', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:1, w:96, h:68, sub:'PARLEY'},   // operator-message handler — own channel, off PULSE
+  // ── TRON lane · rows 0–2 ──
+  // row 0 (new top) — WAKE sits above the convergence gateway
+  {id:'ND-08', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:2, row:0, w:96, h:68, sub:'WAKE'},   // moved up; re-entry feeds the converge gateway below
+  // row 1 — spine: Start → BOOTUP → ◇converge → PULSE → SWITCHBOARD; ANCHOR (right) + TICK END (up) off SWITCHBOARD
+  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},
+  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:1, w:96, h:68, sub:'BOOTUP'},
+  {id:'CONV',  kind:'xor',   name:'',               lane:'L_TRON', col:2, row:1, w:48, h:48},   // convergence: BOOTUP first-entry OR WAKE re-entry → PULSE
+  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:3, row:1, w:96, h:68, sub:'PULSE'},   // moved to WAKE's old column
+  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:4, row:1, w:48, h:48, lblPos:'t'},   // work selector hub; left in (PULSE), up → TICK END, right → ANCHOR, down → AGENT
+  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true, lblAbove:true},   // run-end terminal — right of SWITCHBOARD
+  {id:'End2',  kind:'end',   name:'TICK END',       lane:'L_TRON', col:4, row:0, w:36, h:36, lblOnly:true, lblAbove:true},   // new end event — idle tick ends here (above SWITCHBOARD)
+  // row 2 — fleet intake/hopper + operator channel (intake → PARLEY)
+  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:1, row:2, w:36, h:36, lblOnly:true},   // moved under BOOTUP; writes FLEET HOPPER
+  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:2, row:2, w:50, h:56, lblOnly:true},   // moved to Project Docs' column; feeds WAKE (message arm) AND drained by PULSE (02-12)
+  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:2, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-09)
+  {id:'ND-09', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:2, w:96, h:68, sub:'PARLEY'},   // operator-message handler — own channel, off PULSE
 
-  // ── AGENT lane · row 2 — the single LLM agent (consolidates every role); PROJECT DOCS sits in PULSE's column, read by both ──
-  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:2, row:2, w:50, h:56, lblOnly:true, lblAbove:true},   // PULSE's column; read by PULSE (up) and the agent (right)
-  {id:'LLM',   kind:'task',  name:'AGENT',          lane:'L_ARCH', col:4, row:2, w:120,h:100, llm:true, sub:'AGENT'},   // the one LLM agent cat (below SWITCHBOARD); clickable → opens the AGENT sub (FLOW['LLM'])
+  // ── AGENT lane · row 3 — the single LLM agent (consolidates every role); PROJECT DOCS in PULSE's column, read by both ──
+  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:3, row:3, w:50, h:56, lblOnly:true, lblAbove:true},   // PULSE's column; read by PULSE (straight up) and the agent (right)
+  {id:'LLM',   kind:'task',  name:'AGENT',          lane:'L_ARCH', col:4, row:3, w:120,h:100, llm:true, sub:'AGENT'},   // the one LLM agent cat (below SWITCHBOARD); clickable → opens the AGENT sub (FLOW['LLM'])
 ];
 
 const FLOWS = [
-  ['Start','ND-01'], ['ND-01','ND-02'], ['ND-02','ND-03'],
-  ['ND-08','ND-02','',{from:{s:'l',d:0.75}, to:{s:'b',d:0.75}}],         // WAKE fires the tick → PULSE — leaves WAKE's left side, into PULSE bottom-¾
-  ['ND-02','ND-08','',{from:{s:'r',d:0.75}, to:{s:'t',d:0.5}}],          // tick complete → back to WAKE — PULSE right-¾ down into WAKE's top; keeps PULSE bottom-½ free for the Project Docs read
-  ['OPI','ND-09','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],          // operator intake → PARLEY (right, straight)
-  ['ND-03','End'],                                                    // SWITCHBOARD → session end
-  ['ND-03','LLM','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],          // SWITCHBOARD → AGENT (dispatch, straight down the col)
+  ['Start','ND-01'],
+  ['ND-01','CONV','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // BOOTUP first-entry → converge
+  ['ND-08','CONV','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],            // WAKE re-entry → converge (straight down the col)
+  ['CONV','ND-02','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // converge → PULSE
+  ['ND-02','ND-03'],                                                    // PULSE → SWITCHBOARD
+  ['ND-02','ND-08','',{from:{s:'t',d:0.5}, to:{s:'r',d:0.5}}],          // tick complete → re-arm WAKE (up-left)
+  ['OPI','ND-09','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // operator intake → PARLEY (right, straight)
+  ['ND-03','End'],                                                      // run end → ANCHOR (right)
+  ['ND-03','End2','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],           // idle tick → TICK END (up)
+  ['ND-03','LLM','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],            // dispatch → AGENT (straight down the col)
 ];
 
 // COMMS — non-enforcing connections (BPMN associations): communication / data read that does NOT advance a token.
 // [source, target, {from,to}] — same fractional-dock anchors as FLOWS.
 const COMMS = [
   ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
-  ['HOPPER','ND-08','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],                    // FLEET HOPPER → WAKE (message arm: a queued message wakes the next tick) — straight, same row
-  ['HOPPER','ND-02','',{from:{s:'r',d:0.25}, to:{s:'b',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; up the col gap into PULSE bottom-¼
-  ['PD2','ND-02','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; same column, straight up into the bottom)
+  ['HOPPER','ND-08','',{from:{s:'l',d:0.25}, to:{s:'l',d:0.5}, viaX:438}],         // FLEET HOPPER → WAKE (message arm) — out HOPPER left-¼, up the ND-01↔WAKE gap (viaX), into WAKE's outer left edge
+  ['HOPPER','ND-02','',{from:{s:'r',d:0.5}, to:{s:'b',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; into PULSE bottom-¼
+  ['PD2','ND-02','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; straight up col c3 into PULSE center-bottom)
   ['PD2','LLM','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → AGENT (read; same row, straight right into the cat's left side)
 ];
 
@@ -242,7 +249,7 @@ function edgePts(f){
     if(sv && !tv) return [sp,{x:sp.x,y:tp.y},tp];        // exit vertical, enter horizontal → L
     if(!sv && tv) return [sp,{x:tp.x,y:sp.y},tp];        // exit horizontal, enter vertical → L
     if(sv && tv){ const my=(sp.y+tp.y)/2; return [sp,{x:sp.x,y:my},{x:tp.x,y:my},tp]; }   // both vertical → Z
-    const mx=(sp.x+tp.x)/2; return [sp,{x:mx,y:sp.y},{x:mx,y:tp.y},tp]; }                  // both horizontal → Z
+    const mx=(o.viaX!=null)?o.viaX:(sp.x+tp.x)/2; return [sp,{x:mx,y:sp.y},{x:mx,y:tp.y},tp]; }   // both horizontal → Z (viaX pins the vertical channel)
   return route(byId[f[0]], byId[f[1]]);
 }
 
@@ -378,7 +385,7 @@ const FLOW = {
     {n:'Refresh PRs',       id:'03', pos:[2,0]},                                         // ┘  (recurring only)
     {n:'Snapshot fresh?', id:'04', kind:'gateway', pos:[3,0], lblPos:'top'},             // validate the fetch advanced BEFORE rebuilding (never build off stale trunk)
     {n:'Rebuild snapshot',  id:'05', pos:[4,0], data:{name:'SNAPSHOT', dir:'out', at:'right'}},
-    {n:'Detect done',       id:'06', pos:[4,1]},                                         // ← merge: rebuild path + skip-rebuild gate (21)
+    {n:'Flag candidates',   id:'06', pos:[4,1]},                                         // ← merge: rebuild path + skip-rebuild gate (21). Flags blocks that MIGHT be done — candidates, not confirmed (DONE is settled by the prompted gate challenge, never trunk presence)
     // worker lifecycle — detect (Assess) then dispose (Settle); ambiguous cases escalate
     {n:'Assess workers',    id:'07', pos:[4,2]},                                         // liveness + TTL + PR → done/dead/hung/orphan
     {n:'Settle workers',    id:'08', pos:[3,2]},                                         // release safe (resume-session / fresh); flag ambiguous; APPLY any resolved escalation whose reply landed
@@ -398,7 +405,7 @@ const FLOW = {
     {n:'Msg wake?', id:'22', kind:'gateway', pos:[-1,1], lblPos:'bottom'},               // wake-source router: message-triggered tick vs ceiling/first
     {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0], lblPos:'top'},                     // message wake → skip the refresh trio (no git fetch); pairs with the catch
     {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1], lblPos:'top'},                     // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
-    {n:'Wall?', id:'25', kind:'gateway', pos:[1,5], lblPos:'bottom'},                     // split (A, right of Route): worker.wall → escalate to operator; else → drive gates
+    {n:'Escalate?', id:'25', kind:'gateway', pos:[1,5], lblPos:'bottom'},                 // split (A, right of Route): a case needing the operator → escalate (merge B → Resolve); else → drive gates. Same question as 02-09
     {n:'', id:'26', kind:'gateway', pos:[1,3]},                                           // merge (B, below 02-09): liveness escalation (02-09) + message-wall (A) → 02-10 Resolve
   ],
     edges:[
@@ -426,7 +433,7 @@ const FLOW = {
       {f:'T13',t:'T14', from:{s:'r'}, to:{s:'b',d:0.5}},       // classify right → route bottom-center
       {f:'T14',t:'T24', from:{s:'r'}, to:{s:'l'}},             // route → split A
       {f:'T24',t:'T15',label:'no'},                            // A → drive gates (not a wall)
-      {f:'T24',t:'T25',label:'wall', from:{s:'t'}, to:{s:'b'}}, // A → merge B (worker.wall → operator)
+      {f:'T24',t:'T25',label:'escalate', from:{s:'t'}, to:{s:'b'}}, // A → merge B (operator-needed case → Resolve)
       {f:'T15',t:'T16'},                                       // gates → triggers
       {f:'T16',t:'T17'},                                       // triggers → deliver (single flush, after all producers)
       {f:'T17',t:'T18'},                                       // deliver → save
