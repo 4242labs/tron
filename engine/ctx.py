@@ -56,6 +56,17 @@ class Ctx:
     def current_id(self):
         return self.p("current-id")
 
+    # ── WAKE daemon (01-04): the single tick-source while a session is live ──
+    @property
+    def wake_pid(self):
+        return self.p(".wake.pid")
+
+    @property
+    def tick_lock(self):
+        # Single-flight: every tick — daemon-fired or the console's manual `tick` —
+        # takes this flock so two ticks never overlap (a tick is not re-entrant).
+        return self.p(".tick.lock")
+
     @property
     def dispatched_log(self):
         return self.p("dispatched.log")
@@ -95,18 +106,6 @@ class Ctx:
 
     def load_project(self):
         return util.load_yaml(self.project) if os.path.exists(self.project) else {}
-
-    def heartbeat_effective(self):
-        """Is the autonomous heartbeat (cron) effective? telegram==on OR cron==on;
-        cron==auto follows telegram; cron==off wins. Single source for every start path."""
-        notif = (self.load_project().get("notifications") or {})
-        tg = str(notif.get("telegram", "off")).lower() == "on"
-        cron = str(notif.get("cron", "auto")).lower()
-        if cron == "off":
-            return False
-        if cron == "on":
-            return True
-        return tg
 
     # ── canon paths in the target repo (TRON reads these; never writes them) ──
     def repo_paths(self, project):

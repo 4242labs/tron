@@ -32,5 +32,5 @@ Read the canon trunk (pipeline.md + blocks/*.md), then emit `pulse`. PULSE runs 
 in-scope `📋` block with deps `✅` dispatches; CLEAR AHEAD enqueues the architect to author the block
 files for roadmap rows not yet scoped. The loop is live.
 
-> Liveness, Telegram, and cron are config-driven (`project.yaml`) and start silently if enabled —
-> bootup does not ask about them.
+> Liveness and Telegram are config-driven (`project.yaml`) and start silently if enabled — bootup does
+> not ask about them. The heartbeat (the WAKE daemon) is not config: it starts with the session.

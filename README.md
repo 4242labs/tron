@@ -50,8 +50,9 @@ before it ever runs.
   reviewer delivers a findings log; the architect turns real findings into upcoming blocks.
 - **Walls go to you.** Anything no worker can clear — an operator-only task, an external blocker, a
   call only you can make — parks the block and asks you. Everything short of that stays in the fleet.
-- **It runs on its own.** A cron heartbeat wakes the engine on a fixed cadence; each wake is one
-  bounded tick — fill free slots, clear ahead, wait, or end — and surfaces to you only what matters.
+- **It runs on its own.** A built-in heartbeat wakes the engine — early on a new message, and at
+  least every cadence ceiling otherwise; each wake is one bounded tick — fill free slots, clear ahead,
+  wait, or end — and surfaces to you only what matters.
 
 The engine spine (the dispatch loop + the work-selector) is code and never an LLM call. The LLM is
 asked exactly one question: *classify this inbound message* — schema-in, schema-out, never free
@@ -88,7 +89,6 @@ structure ready-made — adopt it for a new project, or bring an existing one up
 
 - `python3` and `git`.
 - `jq` (the shell connectors parse JSON).
-- `crontab` (the autonomous heartbeat).
 - A background-capable agent runtime on `PATH` — the runtime that runs the worker agents TRON
   dispatches. TRON drives it; you never address it directly.
 

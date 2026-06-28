@@ -39,8 +39,7 @@ conventions:
   pr_title_rule: "under 70 chars; body has Summary + Test plan"
 
 notifications:
-  telegram: off               # off | on  (on => heartbeat on; keys in .env)
-  cron: auto                  # auto | on | off
+  telegram: off               # off | on  (on => escalations route to Telegram; keys in .env)
 
 protected_branches:
   - repo: acme-widgets

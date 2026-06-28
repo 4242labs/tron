@@ -4,8 +4,8 @@ A thin front over the real engine: it runs the bootup Q&A (protocols/bootup.md
 steps 1–2), starts the engine, then drops into a bounded REPL. It NEVER decides
 flow — free text is handed to the engine, classified by the real judgment tool,
 and routed deterministically; commands are a fixed set. The fleet view and event
-log read live state (the same files cron ticks write), so the console can be
-closed and reattached without losing the run.
+log read live state (the same files the WAKE daemon ticks write), so the console
+can be closed and reattached without losing the run — the daemon keeps ticking.
 
   bootup  -> confirm start point -> worker_count -> Engine.start()
   repl    -> status · pipeline · tick · attach <id> · log · <free text> · stop · help
@@ -98,7 +98,7 @@ class Console:
                 print(f"{DIM}  (a positive integer){RST}")
         print()
         eng.start(worker_count)                      # 3–4: read trunk, spawn architect + first pulse
-        self._install_cron()                         # autonomous heartbeat (idempotent; skipped in dry)
+        self._start_daemon()                         # the WAKE heartbeat (idempotent; skipped in dry)
         print()
         self._banner()
 
@@ -116,24 +116,25 @@ class Console:
         else:
             eng.set_scope("all")
 
-    def _install_cron(self):
-        # Same gate as the non-console start path (engine.cmd_start): only install the
-        # heartbeat when it's effective, so `cron: off` is honored from the console too.
-        if os.environ.get("TRON_DRY") or not self.ctx.heartbeat_effective():
+    def _start_daemon(self):
+        # The WAKE daemon is the only tick-source while a session is live (ND-08); it
+        # outlives this console, so closing + reattaching never stops the run. Skipped
+        # under dry (tests drive ticks directly). Idempotent: a live daemon is left alone.
+        if os.environ.get("TRON_DRY") or not self._already_running():
             return
-        ci = os.path.join(self.ctx.scripts_dir, "cron-install.sh")
-        if os.path.exists(ci):
-            os.system(f"bash {ci} >/dev/null 2>&1 || true")
+        import wake
+        wake.spawn(self.ctx)
 
     def reconnect(self):
         print(f"{BOLD}== TRON (reattached) =={RST}  {DIM}replaying recent events{RST}")
+        self._start_daemon()                         # re-arm the heartbeat if it died while away
         for ev in self._events()[-8:]:
             print(f"{DIM}{ev.get('text','')}{RST}")
         print()
         self._banner()
 
     def _banner(self):
-        print(f"{DIM}  TRON is live (cron ticks it on its own). "
+        print(f"{DIM}  TRON is live (the WAKE daemon ticks it on its own). "
               f"Commands: status · pipeline · tick · attach <id> · log · stop · help{RST}")
         print(f"{DIM}  Or just talk — your line is classified and routed; out-of-grammar is refused.{RST}\n")
 
@@ -183,6 +184,9 @@ class Console:
     # ── run-control (PARLEY ND-09 / R-HALT) — commands, not classified messages ──
     def _run_control(self, verb):
         getattr(Engine(self.ctx), verb)()     # pause | drain | resume | halt — emits live
+        if verb == "halt":                    # halt ends the session; tear the daemon down too
+            import wake
+            wake.stop(self.ctx)
 
     def _rescope(self, arg):
         parts = arg.split()
@@ -211,18 +215,25 @@ class Console:
         print(f"{DIM}  checkpoint registered: {block}{RST}")
 
     def _tick(self):
-        ended = Engine(self.ctx).tick()       # emits live to stdout
+        import wake
+        ran, ended = wake.locked_tick(self.ctx)   # single-flight; emits live to stdout
+        if not ran:
+            print(f"{DIM}  (a tick is already running — the daemon has it){RST}")
+            return False
         if ended:
             print(f"{DIM}  session ended.{RST}")
             return True
         return False
 
     def _say(self, line):
-        """Free text -> operator inbox -> one engine tick (real classify + route)."""
+        """Free text -> operator inbox -> one engine tick (real classify + route).
+        Single-flight: if the daemon holds the tick, the line still landed on the inbox
+        and its event-wake picks it up next tick — never lost."""
+        import wake
         util.append_jsonl(self.ctx.operator_inbox,
                           {"text": line, "sender": {"kind": "operator"}})
         before = len(self._events())
-        Engine(self.ctx).tick()               # emits live to stdout
+        wake.locked_tick(self.ctx)            # emits live to stdout
         if len(self._events()) == before:
             print(f"{DIM}  (noted){RST}")
 
@@ -239,6 +250,7 @@ class Console:
             print(f"  [{w['id']}] {ln}")
 
     def _stop(self, force=False):
+        import wake
         ok, detail = Engine(self.ctx).stop(force=force)
         if not ok:
             print(f"[TRON]  {detail}")
@@ -247,6 +259,7 @@ class Console:
                 print(f"{DIM}  stop cancelled.{RST}")
                 return False
             Engine(self.ctx).stop(force=True)
+        wake.stop(self.ctx)                    # tear down the daemon once the session ended
         # stop() already emitted the session.end line live.
         return True
 

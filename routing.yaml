@@ -28,11 +28,10 @@ grammar:
   control: "pulse"             # the dispatch-loop signal; NOT a table-listener trigger
   match: "most-specific-wins"  # literal > <type>/<block> > *
 
-# ── Inbound message classification (closed tag enum -> trigger | side | tick) ──
+# ── Inbound message classification (closed tag enum -> trigger | side) ──
 # classify_message returns exactly ONE tag. Each maps to:
 #   trigger: <t>  -> emit that trigger (the FSM advances per the engine's event table)
 #   side: <h>     -> a global handler; the FSM does not advance
-#   tick: true    -> run one bounded tick (the sweep)
 # Closed enum + total coverage (blueprint-lint).
 tags:
   # worker-origin
@@ -52,7 +51,6 @@ tags:
   operator.knob_change:     { side: edit_self }   # M-01: off the prior "workflow" misnomer; edits a knob/rule
   operator.directive:       { side: best_effort }
   # system (engine-produced, not from classify_message)
-  sweep.tick:               { tick: true }
   worker.stalled:           { trigger: "worker:stalled" }   # engine liveness side-system
   worker.dead:              { trigger: "worker:stalled" }   # recover handles both
   # reserved

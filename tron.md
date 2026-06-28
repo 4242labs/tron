@@ -102,8 +102,8 @@ When the message won't sit cleanly in the vocabulary, return **`unclassified`**.
 do not invent a tag. The engine has a safe path for `unclassified` (the `*` SENTRY catch-all); a
 misfire doesn't. Fill `slots` from what's actually in the text and let `confidence` tell the truth.
 
-> Not yours to emit: `worker.stalled` / `worker.dead` / `sweep.tick` are produced by the engine's
-> own liveness sweep, never by you.
+> Not yours to emit: `worker.stalled` / `worker.dead` are produced by the engine's own liveness
+> sweep, never by you.
 
 ### The `*` path — unclassifiable input goes to the architect
 

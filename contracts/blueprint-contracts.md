@@ -20,7 +20,7 @@ Schema stubs live in `contracts/schema/` (`project`, `knobs`, `routing`, `messag
 ## 0. How the pieces fit
 
 ```
-cron ──> sweep.sh ──> [SWEEP] tick ──> engine (the spine, deterministic)
+WAKE daemon ──> tick ──>               engine (the spine, deterministic)
                                           │  PULSE — the dispatch loop
                                           │  SWITCHBOARD — per-slot work selection
                                           │  runs the engine's event table (the fixed TABLE)
@@ -30,7 +30,7 @@ cron ──> sweep.sh ──> [SWEEP] tick ──> engine (the spine, determinis
                                    advance ──> persist (atomic) ──> exit
 ```
 
-- **The engine** is the only executor (Python core + thin `tron`/`sweep.sh` shell connectors). It reads
+- **The engine** is the only executor (Python core + the WAKE daemon + thin `tron` shell connectors). It reads
   the engine's fixed **event table** (the TABLE), the project's **knobs** (`knobs.yaml`), and the canon **grammar + tag map** (`routing.yaml`)
   and drives the flow. The LLM never reads the routing path.
 - **PULSE** = the standing dispatch loop (the engine spine). **SWITCHBOARD** = the deterministic
@@ -152,7 +152,6 @@ substantive → a deterministic auto-ack. When a checkpoint is registered it **a
 ### System (engine-produced, not from classify)
 | Tag | Source | Maps to |
 |:--|:--|:--|
-| `sweep.tick` | cron → sweep.sh | run one bounded tick (§5) |
 | `worker.stalled` / `worker.dead` | engine liveness side-system | `worker:stalled` (→ recover) |
 
 ### Reserved
@@ -199,16 +198,19 @@ failure (the enum is closed in the tool schema).
 
 ## 5. Tick model
 
-Turn-based, no daemon. **One wake = one bounded tick.**
+Turn-based. The **WAKE daemon** (the in-process scheduler) decides *when* to wake; each wake is **one
+bounded tick** that carries no state between wakes — the daemon owns timing only, never run state.
+**One wake = one bounded tick.**
 
-- **Trigger:** cron → `sweep.sh` → resume the TRON session with `[SWEEP] tick`. Operator/TG inbound is
-  drained in the same tick.
+- **Trigger:** the WAKE daemon (ND-08) fires a `tick` — early on a new inbox message (after a COOLDOWN
+  floor) or at the CEILING cadence otherwise, bounded both ways (cooldown ≤ gap ≤ ceiling). Every tick
+  runs single-flight (an flock), so two never overlap. Operator inbound is drained in the same tick.
 - **A tick:**
   1. **Load** the MANIFEST `manifest.yaml` (the FSM cursor, counters, trunk-read cache, worker/architect-queue state).
   2. **One bounded pass:** refresh from trunk (`git` ff + read `pipeline.md`/`blocks/*.md` + `gh pr list`) — a
      failed refresh is **never swallowed into a stale snapshot**: consecutive failures are counted and the
      engine halts **loud** (at bootup, synchronously, before any MANIFEST exists; or at a death-cap during
-     ticks); poll TG inbox; sweep liveness (engine side-system → `worker:stalled` if dead/stuck); drain inbound
+     ticks); sweep liveness (engine side-system → `worker:stalled` if dead/stuck); drain inbound
      → `classify_message` → trigger or side; drive in-flight **DONE gates** (the prompted challenge, below);
      then run **PULSE** (which calls SWITCHBOARD) to fill free slots, clear ahead, wait, or end.
   3. **Persist atomically.**
