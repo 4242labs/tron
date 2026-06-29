@@ -39,6 +39,15 @@ def refresh(repo_root, main_branch="main", dry=False):
     return True, "ff to origin"
 
 
+def head_sha(repo_root, dry=False):
+    """The trunk checkout's current HEAD sha (short) — stamped on every forensic record so a
+    failure pins the exact tree it happened on. Best-effort: '' if unknown (never blocks)."""
+    if dry or not repo_root:
+        return "dry" if dry else ""
+    rc, out, _ = _run(["git", "-C", repo_root, "rev-parse", "--short", "HEAD"])
+    return out.strip() if rc == 0 else ""
+
+
 def open_prs(repo_root, dry=False):
     """In-flight PRs keyed by head branch: {branch: {number, title, state, draft, mergeable}}.
     Best-effort via `gh`; empty dict if gh is absent or errors (TRON degrades, never blocks)."""

@@ -43,7 +43,7 @@ case "$cmd" in
   start)
     exec python3 "$ENGINE" console "$@"
     ;;
-  tick|wake|stop|recover|validate|doctor|msg)   # internal: daemon / automatic / dev
+  tick|wake|stop|recover|validate|doctor|msg|log)   # internal: daemon / automatic / dev
     exec python3 "$ENGINE" "$cmd" "$@"
     ;;
   ""|help|-h|--help)

@@ -80,6 +80,7 @@ Thumbs.db
 
 # runtime event-log output (engine test runs), not source
 /home-events.jsonl
+/events.jsonl
 
 # WAKE daemon runtime (01-04): pid, single-flight lock, detached stdout — never source
 /.wake.pid

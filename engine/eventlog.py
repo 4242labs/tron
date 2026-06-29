@@ -1,0 +1,112 @@
+"""eventlog — the structured, forensic event + failure log (01-06).
+
+Every engine event, and — first-class — every failure, becomes one machine-readable
+JSONL record in `events.jsonl`, queryable by any field. The failure path is complete
+enough to reconstruct the exact cause with **no re-run**: class · code · operation ·
+inputs · exact-cause · state (run · tick · trunk · node) · next-action.
+
+Distinct from the two existing logs, by design:
+  - `home-events.jsonl` — human-visible console copy (channel + rendered text), replayed
+    on reconnect. Prose, for a person.
+  - `logs/<name>-<date>.log` — operator-readable narration lines. Prose, for a person.
+  - `events.jsonl` (this) — the forensic record. Records, not prose; the answer to
+    *why did TRON fail*, reconstructable offline.
+
+The failure taxonomy is closed (FAILURE_CLASSES). Two classes that the diagram shows as
+failures are **agent-side**, never TRON's own deterministic step — TRON neither merges
+nor deploys (agents land all of it via PR). A merge conflict or a failed deploy reaches
+TRON as a worker `wall` and is recorded on the escalation path (`gate-stuck` /
+`escalate`), not invented here.
+"""
+import util
+
+# Closed failure taxonomy (T2). Each failure record carries exactly one fclass.
+#   refresh-fail  — trunk fast-forward failed (best-effort retry, then loud halt at the death-cap)
+#   classify-fail — the one classify LLM exhausted its retry budget -> auto-ack to `unclassified`
+#   ingest-drop   — a single inbound message raised while being classified/ingested (poison-pill guard)
+#   gate-stuck    — a DONE gate exceeded its re-nudge cap and escalated (the no-silent-stuck wall)
+#   dispatch-fail — spawning a worker process failed
+#   crash         — an unhandled exception escaped a whole tick (caught by the WAKE supervised loop)
+FAILURE_CLASSES = {
+    "refresh-fail", "classify-fail", "ingest-drop", "gate-stuck",
+    "dispatch-fail", "crash",
+}
+
+
+class EventLog:
+    """Append-only writer over `ctx.event_log`. `env` is a zero-arg callable returning the
+    live forensic context ({run, tick, trunk}) so every record is stamped without the caller
+    threading it through."""
+
+    def __init__(self, ctx, env=None):
+        self.ctx = ctx
+        self._env = env or (lambda: {})
+
+    def _stamp(self, kind, type_, actor, block, tag, cid):
+        rec = {"at": util.now_iso(), "kind": kind, "type": type_,
+               "actor": actor, "block": block, "tag": tag, "cid": cid}
+        env = self._env() or {}
+        rec["run"] = env.get("run")
+        rec["tick"] = env.get("tick")
+        rec["trunk"] = env.get("trunk")
+        return rec
+
+    def event(self, type_, *, actor="TRON", block=None, tag=None, cid=None, **payload):
+        """A normal flow event. Carries the full common header (AC-1)."""
+        rec = self._stamp("event", type_, actor, block, tag, cid)
+        rec["payload"] = payload
+        util.append_jsonl(self.ctx.event_log, rec)
+        return rec
+
+    def failure(self, fclass, code, operation, cause, *, actor="TRON", block=None,
+                tag=None, cid=None, inputs=None, node=None, next_action=None, attempt=None,
+                **payload):
+        """A first-class failure record (AC-2). Complete enough to reconstruct the exact
+        cause offline: class · code · operation · inputs · cause · state · next-action.
+        (`next_action`, not `next`, to avoid shadowing the builtin; stored as the `next` field.)"""
+        rec = self._stamp("failure", "failure", actor, block, tag, cid)
+        rec["fclass"] = fclass
+        rec["code"] = code
+        rec["operation"] = operation
+        rec["cause"] = cause
+        rec["inputs"] = inputs or {}
+        rec["node"] = node
+        rec["next"] = next_action
+        rec["attempt"] = attempt
+        rec["payload"] = payload
+        util.append_jsonl(self.ctx.event_log, rec)
+        return rec
+
+    def unclassified(self, raw, why, *, sender=None, cid=None):
+        """Every `unclassified` message, logged with its raw body + why no tag matched (T3) —
+        so the classify grammar can be learned/extended over time."""
+        actor = (sender or {}).get("id") or (sender or {}).get("kind") or "unknown"
+        rec = self._stamp("unclassified", "unclassified", actor, None, "unclassified", cid)
+        rec["payload"] = {"raw": raw, "why": why}
+        util.append_jsonl(self.ctx.event_log, rec)
+        return rec
+
+
+# ── query path (T4): the operator-facing answer to "why did TRON fail" ──
+def query(ctx, *, run=None, block=None, fclass=None, kind=None,
+          failures_only=False, limit=None, newest_first=True):
+    """Pull records, filtered by any field, newest-first by default. Returns a list of dicts.
+
+    failures_only (or any fclass filter) narrows to failure records — "every failure for
+    run X / block Y / class Z, with full detail" (AC-5)."""
+    recs = util.read_jsonl(ctx.event_log)
+    if failures_only or fclass:
+        recs = [r for r in recs if r.get("kind") == "failure"]
+    if kind:
+        recs = [r for r in recs if r.get("kind") == kind]
+    if run:
+        recs = [r for r in recs if r.get("run") == run]
+    if block:
+        recs = [r for r in recs if r.get("block") == block]
+    if fclass:
+        recs = [r for r in recs if r.get("fclass") == fclass]
+    if newest_first:
+        recs = list(reversed(recs))
+    if limit:
+        recs = recs[: int(limit)]
+    return recs

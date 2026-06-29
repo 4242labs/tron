@@ -10,6 +10,7 @@ Entry points exposed as a callable the front (B7) builds on:
   recover                 reattach: rebuild live workers from ~/.claude/jobs
   validate [--project P]  blueprint-lint (L1-L13); nonzero exit on any failure
   doctor                  validate + environment checks
+  log [filters]           query the forensic event/failure log (01-06): why did TRON fail
 
 Thin by design: all flow lives here in Python (watch-item R-1); bash only does
 TG/spawn glue. Run from anywhere — this file puts its own dir on sys.path.
@@ -144,10 +145,38 @@ def cmd_console(ctx):
     return 0
 
 
+def cmd_log(ctx):
+    """Query the structured forensic log (01-06). Defaults to failures, newest-first —
+    the operator-facing answer to *why did TRON fail*.
+      log [--all] [--run R] [--block B] [--class C] [--limit N] [--full]
+    --all includes non-failure events; --full prints every field (else a one-line digest)."""
+    import json
+    import eventlog
+    failures_only = "--all" not in sys.argv
+    recs = eventlog.query(
+        ctx, run=_arg("--run"), block=_arg("--block"), fclass=_arg("--class"),
+        failures_only=failures_only, limit=_arg("--limit"))
+    if "--full" in sys.argv:
+        for r in recs:
+            print(json.dumps(r, indent=2))
+    else:
+        for r in recs:
+            if r.get("kind") == "failure":
+                print(f"{r.get('at')}  [{r.get('fclass')}/{r.get('code')}]  "
+                      f"block={r.get('block')} run={r.get('run')} tick={r.get('tick')} "
+                      f"next={r.get('next')}  {r.get('cause')}")
+            else:
+                print(f"{r.get('at')}  {r.get('kind')}:{r.get('type')}  "
+                      f"actor={r.get('actor')} block={r.get('block')} cid={r.get('cid')}")
+    if not recs:
+        print("(no matching records)")
+    return 0
+
+
 COMMANDS = {
     "start": cmd_start, "tick": cmd_tick, "wake": cmd_wake, "msg": cmd_msg,
     "stop": cmd_stop, "recover": cmd_recover, "validate": cmd_validate,
-    "doctor": cmd_doctor, "console": cmd_console,
+    "doctor": cmd_doctor, "console": cmd_console, "log": cmd_log,
 }
 
 

@@ -35,6 +35,7 @@ import jobs
 import judge
 import reader
 import trunk
+import eventlog
 from state import State, DEFAULT_APPROVALS
 from render import Renderer
 
@@ -84,6 +85,19 @@ class Engine:
         self._tq = []   # the trigger queue, drained within one tick
         self.table = TABLE
         self.paths = ctx.repo_paths(self.project)
+        self._trunk_sha = ""                          # last-known trunk HEAD (forensic state context)
+        self.events = eventlog.EventLog(ctx, self._log_env)
+
+    def _log_env(self):
+        """Live forensic context stamped on every structured record (01-06): the run handle,
+        the tick number, and the trunk sha the engine is currently reading. `tick` is the
+        IN-PROGRESS tick (1-based; bumped at tick start) — 0 for records emitted before the
+        first tick (e.g. session_start)."""
+        sess = self.st.data.get("session", {}) or {}
+        last = self.st.data.get("last_sweep", {}) or {}
+        return {"run": sess.get("started_at"),
+                "tick": last.get("sweeps_this_session", 0),
+                "trunk": self._trunk_sha}
 
     # ── emit: every human-visible line comes from messages.yaml ──
     def emit(self, template_id, slots=None, worker_session=None):
@@ -120,6 +134,10 @@ class Engine:
         if not (self.st.data.get("session") or {}).get("started_at"):
             return self.ended
         self._tq = []
+        # Bump the tick counter up front so every forensic record this pass carries the
+        # IN-PROGRESS tick number (1-based), not last-completed (01-06 review #2).
+        last = self.st.data.setdefault("last_sweep", {})
+        last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
         self._refresh_from_trunk()                       # canon is truth — rebuild the read cache
         if self.ended:                                   # refresh hit the trunk-fail death-cap -> halted loud (T6)
             self.st.save()
@@ -136,12 +154,17 @@ class Engine:
                 self._ingest(tag, slots, msg.get("sender", {}))
             except Exception as e:
                 self.log("flow", f"ingest dropped a message: {e}")
+                sender = msg.get("sender", {})
+                self.events.failure(                      # forensic record (AC-2/AC-6): the poison-pill guard
+                    "ingest-drop", "ingest-exception", "classify + ingest one inbound message",
+                    f"{type(e).__name__}: {e}",
+                    actor=sender.get("id") or sender.get("kind") or "unknown",
+                    inputs={"text": msg.get("text", "")[:200]},
+                    node="§5 tick drain", next_action="drop (re-read next tick at-least-once)")
         if rc != "pause":
             self._drive_gates()                          # advance in-flight DONE gates on fresh evidence
         self._drain_triggers()
-        last = self.st.data.setdefault("last_sweep", {})
-        last["at"] = util.now_iso()
-        last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
+        self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
         self._release_claimed(claimed)                   # then drop the claimed sidecars (at-least-once)
         return self.ended
@@ -156,6 +179,7 @@ class Engine:
         ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry)
         if ok:
             self.st.counters["refresh_fail"] = 0
+            self._trunk_sha = trunk.head_sha(self.paths["root"], self.dry)  # pin the tree we're reading
         else:
             # Fail LOUD, never silent (T6/S1-10): a swallowed ff-failure leaves a stale snapshot
             # -> duplicate dispatch. Count consecutive failures; bootup (count=False) has no
@@ -165,7 +189,13 @@ class Engine:
             self.st.counters["refresh_fail"] = fails
             cap = int(self.knobs.get("trunk_refresh_deathcap", 3))
             self.log("trunk", f"refresh FAILED ({fails}/{cap}): {detail}")
-            if not count or fails >= cap:
+            halting = (not count) or fails >= cap
+            self.events.failure(                          # forensic record (AC-2/AC-6): never silent
+                "refresh-fail", "trunk-ff-failed", "fast-forward trunk checkout", detail,
+                inputs={"root": self.paths["root"], "main_branch": self.paths["main_branch"]},
+                node="T6/S1-10 trunk-refresh", attempt=f"{fails}/{cap}",
+                next_action="halt" if halting else "retry", bootup=not count)
+            if halting:
                 self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
                 return
         try:
@@ -199,6 +229,7 @@ class Engine:
         self.st.gate.pop(block, None)
         if block in self.st.blocked:
             self.st.blocked.remove(block)
+        self.events.event("block_done", block=block)
         self.emit("terminal.block_done", {"block": block})
         self.log("flow", f"{block} ✅ on trunk -> done, cadence++")
         self._reconcile_ahead(block)                     # re-check the next scoped block vs this one's drift (M-05)
@@ -470,6 +501,8 @@ class Engine:
             role="engineer", block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
         self.st.record_dispatch(wid, session, block, self._branch(block), 1)
+        self.events.event("dispatch", actor=wid, block=block, role="engineer",
+                          session=session, attempt=1)
         self.emit("terminal.dispatched", {"worker_id": wid, "block": block})
         self.log("flow", f"build:block:next -> dispatch {wid} on {block}")
 
@@ -498,6 +531,8 @@ class Engine:
             role="engineer", block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
         self.st.record_dispatch(wid, session, block, self._branch(block), 2)
+        self.events.event("dispatch", actor=wid, block=block, role="engineer",
+                          session=session, attempt=2, recovery=True)
         self.log("flow", f"recover -> re-dispatch {wid} on {block}")
 
     def _dispatch_reviewer(self, typ):
@@ -510,6 +545,8 @@ class Engine:
         session, short = self._spawn(
             wid, "spawn.reviewer", {"worker_id": wid, "count": thresh}, role="reviewer", rtype=typ)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
+        self.events.event("dispatch", actor=wid, block=f"review:{typ}", role="reviewer",
+                          session=session, rtype=typ)
         self.emit("terminal.review", {"count": thresh})
         self.log("flow", f"cadence:{typ} -> review:{typ}")
 
@@ -519,7 +556,15 @@ class Engine:
             prompt = prompt + "\n\n" + self._handover(role, block, rtype)
         if self.dry:
             return "dry", "dry"
-        rec = jobs.spawn_detached(wid, prompt, cwd=self.paths["root"])
+        try:
+            rec = jobs.spawn_detached(wid, prompt, cwd=self.paths["root"])
+        except Exception as e:
+            self.events.failure(                          # forensic record (AC-2/AC-6)
+                "dispatch-fail", "spawn-failed", "spawn a worker process",
+                f"{type(e).__name__}: {e}", actor=wid, block=block,
+                inputs={"template": template_id, "role": role, "rtype": rtype},
+                node="SWITCHBOARD dispatch", next_action="crash (reservation recovered next sweep)")
+            raise
         return rec.get("session_id", ""), rec.get("shortid", "")
 
     def _handover(self, role, block, rtype=None):
@@ -679,6 +724,8 @@ class Engine:
             self.st.gate.pop(block, None)
         detail = m.get("detail", "wall")
         case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
+        self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
+                          tag="worker.wall", detail=detail)
         self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
                                     "detail": detail, "case": case_id})
         if self._tg_on():
@@ -831,9 +878,14 @@ class Engine:
                     n = g.get("promote_nudges", 0)
                     if n >= int(self.knobs.get("gate_post_merge_cap", 3)):
                         self.st.gate.pop(block, None)
+                        detail = "merged to staging but not promoted to main (✅ pending)"
+                        self.events.failure(             # forensic record (AC-2/AC-6): no-silent-stuck wall
+                            "gate-stuck", "gate-promote-cap", "promote staging -> main", detail,
+                            block=block, inputs={"staging": staging, "main": main, "nudges": n},
+                            node="T1/S1-05 promote-gate", attempt=n, next_action="escalate")
                         self._emit("wall:raised:" + block,
                                    {"block": block, "worker_id": self._worker_id("engineer", block),
-                                    "detail": "merged to staging but not promoted to main (✅ pending)"})
+                                    "detail": detail})
                         return
                     g["promote_nudges"] = n + 1
                     renudge = True
@@ -845,9 +897,14 @@ class Engine:
                 n = g.get("post_merge_nudges", 0)
                 if n >= int(self.knobs.get("gate_post_merge_cap", 3)):
                     self.st.gate.pop(block, None)
+                    detail = "merged but not landed on trunk (deploy/✅ pending)"
+                    self.events.failure(                 # forensic record (AC-2/AC-6): no-silent-stuck wall
+                        "gate-stuck", "gate-postmerge-cap", "land merged PR on trunk (✅)", detail,
+                        block=block, inputs={"pr": g.get("pr"), "nudges": n},
+                        node="T7/S1-05 post-merge-gate", attempt=n, next_action="escalate")
                     self._emit("wall:raised:" + block,
                                {"block": block, "worker_id": self._worker_id("engineer", block),
-                                "detail": "merged but not landed on trunk (deploy/✅ pending)"})
+                                "detail": detail})
                     return
                 g["post_merge_nudges"] = n + 1
                 renudge = True                           # re-nudge each tick until it lands or escalates
@@ -1109,12 +1166,27 @@ class Engine:
 
     def _classify(self, msg):
         payload = {"text": msg.get("text", ""), "sender": msg.get("sender", {})}
+        sender = msg.get("sender", {})
+        raw = msg.get("text", "")
         ok, out, attempts = judge.call("classify_message", payload, self.ctx, self._max_retries)
         if not ok:
-            self.log("invalid-output",
-                     f"classify exhausted: {attempts[-1][:200] if attempts else ''}")
-            return "unclassified", {"detail": msg.get("text", "")[:120]}
-        return out["tag"], out.get("slots", {})
+            # By design, an exhausted classify is double-recorded: a `classify-fail` failure
+            # (the deterministic step that failed) AND an `unclassified` record (the message still
+            # routes to the architect via the `*` catch-all, and feeds the grammar-learning set, T3).
+            last = str(attempts[-1])[:200] if attempts else ""
+            self.log("invalid-output", f"classify exhausted: {last}")
+            self.events.failure(                          # forensic record (AC-2/AC-6)
+                "classify-fail", "classify-exhausted", "classify inbound message",
+                f"invalid-output budget exhausted; last: {last}",
+                actor=sender.get("id") or sender.get("kind") or "unknown",
+                inputs={"text": raw[:200], "attempts": len(attempts)},
+                node="§4 classify", attempt=len(attempts), next_action="auto-ack -> unclassified")
+            self.events.unclassified(raw, "classify exhausted (invalid-output budget)", sender=sender)  # T3
+            return "unclassified", {"detail": raw[:120]}
+        tag = out["tag"]
+        if tag == "unclassified":                         # the model itself found no matching tag (T3)
+            self.events.unclassified(raw, "model returned unclassified (no tag matched)", sender=sender)
+        return tag, out.get("slots", {})
 
     # ── lifecycle ──
     def _reset_session_runtime(self):
@@ -1156,6 +1228,8 @@ class Engine:
             return
         self._seed_seen_done()               # pre-existing ✅ are already-counted, never re-reviewed
         self._tq = []
+        self.events.event("session_start", scope=self._scope_detail(),
+                          worker_count=worker_count)
         self.emit("session.start", {})
         self._emit("tron:start")             # _h_bootup now spawns a live architect (no stale record)
         self._drain_triggers()
@@ -1213,6 +1287,7 @@ class Engine:
         self.emit("terminal.halt_bootup" if bootup else "terminal.halt_trunk", {"detail": detail})
         if self._tg_on():
             self.emit("tg.escalate", {"worker_id": "TRON", "detail": detail})
+        self.events.event("halt", detail=detail, bootup=bootup)   # terminal marker on the timeline
         self._archive_manifest()
         self.ended = True
         sess = self.st.data.setdefault("session", {})
@@ -1289,6 +1364,7 @@ class Engine:
                 jobs.release(sess)
             w["status"] = "released"
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
+        self.events.event("session_end", done=done)
         self.emit("session.end", {"count": done})
         self.ended = True
         sess = self.st.data.setdefault("session", {})

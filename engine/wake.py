@@ -71,7 +71,17 @@ def locked_tick(ctx):
     with single_flight(ctx) as won:
         if not won:
             return False, False
-        return True, Engine(ctx).tick()
+        eng = Engine(ctx)
+        try:
+            return True, eng.tick()
+        except Exception as e:
+            # A whole tick crashed (an unhandled exception escaped the bounded pass). Record it
+            # forensically (AC-2/AC-6) on the engine's own log — which carries the run/tick/trunk
+            # context — then re-raise so the supervised loop logs + continues (one bad tick ≠ dead).
+            eng.events.failure("crash", "tick-exception", "run one bounded tick",
+                               f"{type(e).__name__}: {e}", node="§5 tick",
+                               next_action="loop continues (state rebuilt from trunk next tick)")
+            raise
 
 
 # ── session liveness (the daemon's natural stop condition) ──

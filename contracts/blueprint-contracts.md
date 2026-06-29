@@ -244,6 +244,21 @@ and resolves its PR/CI on trunk by **that** name — never a guessed `feat/<bloc
 seeded scaffold ships a `.githooks/` guard (`pre-commit`/`pre-push`) refusing direct-to-trunk commits, plus a
 `protect-branches.sh` one-shot for remote branch protection (PR + green required).
 
+**Forensic event + failure log (01-06).** Every tick writes structured records to `events.jsonl`
+(JSONL, append-only, queryable) — distinct from `home-events.jsonl` (the human console copy) and the
+prose `logs/*.log`. Every record carries a common header: `type · actor · block · tag · correlation-id
+· timestamp · payload` plus the state it ran in (`run · tick · trunk`). **Failures are first-class:** a
+record at any loud-failure point also carries `class · code · operation · inputs · exact-cause · node ·
+next-action` — enough to reconstruct the exact cause with **no re-run**. The closed taxonomy is
+`refresh-fail · classify-fail · ingest-drop · gate-stuck · dispatch-fail · crash`; merge-conflict and
+deploy-fail are **agent-side** (TRON never merges/deploys — agents land it via PR) and reach the log on
+the escalation path, not as TRON's own step. Every `unclassified` message is logged with its raw body +
+why no tag matched, so the classify grammar can be extended over time. Query with `engine.py log`
+(defaults to failures, newest-first; `--all · --run · --block · --class · --limit · --full`) — the
+operator-facing answer to *why did TRON fail*. The exhausted-classify path is double-recorded by
+design: a `classify-fail` failure **and** an `unclassified` record (the message still routes to the
+architect).
+
 ---
 
 ## 6. Copy scope
