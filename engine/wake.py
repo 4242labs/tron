@@ -80,7 +80,7 @@ def locked_tick(ctx):
             # context — then re-raise so the supervised loop logs + continues (one bad tick ≠ dead).
             eng.events.failure("crash", "tick-exception", "run one bounded tick",
                                f"{type(e).__name__}: {e}", node="§5 tick",
-                               next="loop continues (state rebuilt from trunk next tick)")
+                               next_action="loop continues (state rebuilt from trunk next tick)")
             raise
 
 

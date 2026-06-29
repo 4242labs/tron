@@ -90,7 +90,9 @@ class Engine:
 
     def _log_env(self):
         """Live forensic context stamped on every structured record (01-06): the run handle,
-        the tick number, and the trunk sha the engine is currently reading."""
+        the tick number, and the trunk sha the engine is currently reading. `tick` is the
+        IN-PROGRESS tick (1-based; bumped at tick start) — 0 for records emitted before the
+        first tick (e.g. session_start)."""
         sess = self.st.data.get("session", {}) or {}
         last = self.st.data.get("last_sweep", {}) or {}
         return {"run": sess.get("started_at"),
@@ -132,6 +134,10 @@ class Engine:
         if not (self.st.data.get("session") or {}).get("started_at"):
             return self.ended
         self._tq = []
+        # Bump the tick counter up front so every forensic record this pass carries the
+        # IN-PROGRESS tick number (1-based), not last-completed (01-06 review #2).
+        last = self.st.data.setdefault("last_sweep", {})
+        last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
         self._refresh_from_trunk()                       # canon is truth — rebuild the read cache
         if self.ended:                                   # refresh hit the trunk-fail death-cap -> halted loud (T6)
             self.st.save()
@@ -154,13 +160,11 @@ class Engine:
                     f"{type(e).__name__}: {e}",
                     actor=sender.get("id") or sender.get("kind") or "unknown",
                     inputs={"text": msg.get("text", "")[:200]},
-                    node="§5 tick drain", next="drop (re-read next tick at-least-once)")
+                    node="§5 tick drain", next_action="drop (re-read next tick at-least-once)")
         if rc != "pause":
             self._drive_gates()                          # advance in-flight DONE gates on fresh evidence
         self._drain_triggers()
-        last = self.st.data.setdefault("last_sweep", {})
-        last["at"] = util.now_iso()
-        last["sweeps_this_session"] = last.get("sweeps_this_session", 0) + 1
+        self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
         self._release_claimed(claimed)                   # then drop the claimed sidecars (at-least-once)
         return self.ended
@@ -190,7 +194,7 @@ class Engine:
                 "refresh-fail", "trunk-ff-failed", "fast-forward trunk checkout", detail,
                 inputs={"root": self.paths["root"], "main_branch": self.paths["main_branch"]},
                 node="T6/S1-10 trunk-refresh", attempt=f"{fails}/{cap}",
-                next="halt" if halting else "retry", bootup=not count)
+                next_action="halt" if halting else "retry", bootup=not count)
             if halting:
                 self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
                 return
@@ -559,7 +563,7 @@ class Engine:
                 "dispatch-fail", "spawn-failed", "spawn a worker process",
                 f"{type(e).__name__}: {e}", actor=wid, block=block,
                 inputs={"template": template_id, "role": role, "rtype": rtype},
-                node="SWITCHBOARD dispatch", next="crash (reservation recovered next sweep)")
+                node="SWITCHBOARD dispatch", next_action="crash (reservation recovered next sweep)")
             raise
         return rec.get("session_id", ""), rec.get("shortid", "")
 
@@ -878,7 +882,7 @@ class Engine:
                         self.events.failure(             # forensic record (AC-2/AC-6): no-silent-stuck wall
                             "gate-stuck", "gate-promote-cap", "promote staging -> main", detail,
                             block=block, inputs={"staging": staging, "main": main, "nudges": n},
-                            node="T1/S1-05 promote-gate", attempt=n, next="escalate")
+                            node="T1/S1-05 promote-gate", attempt=n, next_action="escalate")
                         self._emit("wall:raised:" + block,
                                    {"block": block, "worker_id": self._worker_id("engineer", block),
                                     "detail": detail})
@@ -897,7 +901,7 @@ class Engine:
                     self.events.failure(                 # forensic record (AC-2/AC-6): no-silent-stuck wall
                         "gate-stuck", "gate-postmerge-cap", "land merged PR on trunk (✅)", detail,
                         block=block, inputs={"pr": g.get("pr"), "nudges": n},
-                        node="T7/S1-05 post-merge-gate", attempt=n, next="escalate")
+                        node="T7/S1-05 post-merge-gate", attempt=n, next_action="escalate")
                     self._emit("wall:raised:" + block,
                                {"block": block, "worker_id": self._worker_id("engineer", block),
                                 "detail": detail})
@@ -1166,6 +1170,9 @@ class Engine:
         raw = msg.get("text", "")
         ok, out, attempts = judge.call("classify_message", payload, self.ctx, self._max_retries)
         if not ok:
+            # By design, an exhausted classify is double-recorded: a `classify-fail` failure
+            # (the deterministic step that failed) AND an `unclassified` record (the message still
+            # routes to the architect via the `*` catch-all, and feeds the grammar-learning set, T3).
             last = str(attempts[-1])[:200] if attempts else ""
             self.log("invalid-output", f"classify exhausted: {last}")
             self.events.failure(                          # forensic record (AC-2/AC-6)
@@ -1173,7 +1180,7 @@ class Engine:
                 f"invalid-output budget exhausted; last: {last}",
                 actor=sender.get("id") or sender.get("kind") or "unknown",
                 inputs={"text": raw[:200], "attempts": len(attempts)},
-                node="§4 classify", attempt=len(attempts), next="auto-ack -> unclassified")
+                node="§4 classify", attempt=len(attempts), next_action="auto-ack -> unclassified")
             self.events.unclassified(raw, "classify exhausted (invalid-output budget)", sender=sender)  # T3
             return "unclassified", {"detail": raw[:120]}
         tag = out["tag"]

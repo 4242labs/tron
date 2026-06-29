@@ -9,6 +9,7 @@ induced failure per class — reconstructable with NO re-run (AC-3), unclassifie
 and the query path (AC-5). Exit 0 only if every case passes.
 """
 import os
+import re
 import sys
 import json
 import shutil
@@ -267,10 +268,10 @@ def t_query():
     ctx, _ = build()
     eng = engine(ctx, run="RUN-X")
     # Three failures across two blocks + one normal event interleaved.
-    eng.events.failure("gate-stuck", "c1", "op1", "cause one", block="A-01", node="n", next="escalate")
+    eng.events.failure("gate-stuck", "c1", "op1", "cause one", block="A-01", node="n", next_action="escalate")
     eng.events.event("dispatch", actor="W", block="A-02")
-    eng.events.failure("dispatch-fail", "c2", "op2", "cause two", block="A-02", node="n", next="crash")
-    eng.events.failure("gate-stuck", "c3", "op3", "cause three", block="A-01", node="n", next="escalate")
+    eng.events.failure("dispatch-fail", "c2", "op2", "cause two", block="A-02", node="n", next_action="crash")
+    eng.events.failure("gate-stuck", "c3", "op3", "cause three", block="A-01", node="n", next_action="escalate")
 
     all_fail = eventlog.query(ctx, failures_only=True)
     ok("AC-5 failures-only filters out events", all(r.get("kind") == "failure" for r in all_fail))
@@ -292,8 +293,23 @@ def t_query():
     ok("AC-5 full detail returned", all(failure_complete(r) for r in all_fail))
 
 
+def t_ac6_pairing():
+    """AC-6 guard: every declared failure class has at least one wire point in the engine, and no
+    wire point names an undeclared class — so the taxonomy and the loud-failure points cannot drift
+    apart. Closes AC-6 from manual-by-code to enforced: a new loud-failure point that forgets its
+    record (or a class added without a wire point) fails here."""
+    wired = set()
+    for fname in ("fsm.py", "wake.py"):
+        with open(os.path.join(HERE, fname)) as fh:
+            wired |= set(re.findall(r'events\.failure\(.*?"([a-z-]+)"', fh.read(), re.DOTALL))
+    ok("AC-6 no wire point names an undeclared class", wired <= eventlog.FAILURE_CLASSES,
+       f"undeclared: {sorted(wired - eventlog.FAILURE_CLASSES)}")
+    ok("AC-6 every declared class is wired", eventlog.FAILURE_CLASSES <= wired,
+       f"unwired: {sorted(eventlog.FAILURE_CLASSES - wired)}")
+
+
 def main():
-    for t in (t_per_class, t_unclassified, t_header_and_events, t_query):
+    for t in (t_per_class, t_unclassified, t_header_and_events, t_query, t_ac6_pairing):
         try:
             t()
         except Exception as e:

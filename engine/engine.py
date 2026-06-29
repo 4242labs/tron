@@ -148,7 +148,7 @@ def cmd_console(ctx):
 def cmd_log(ctx):
     """Query the structured forensic log (01-06). Defaults to failures, newest-first —
     the operator-facing answer to *why did TRON fail*.
-      log [--failures] [--all] [--run R] [--block B] [--class C] [--limit N] [--full]
+      log [--all] [--run R] [--block B] [--class C] [--limit N] [--full]
     --all includes non-failure events; --full prints every field (else a one-line digest)."""
     import json
     import eventlog

@@ -254,8 +254,10 @@ next-action` — enough to reconstruct the exact cause with **no re-run**. The c
 deploy-fail are **agent-side** (TRON never merges/deploys — agents land it via PR) and reach the log on
 the escalation path, not as TRON's own step. Every `unclassified` message is logged with its raw body +
 why no tag matched, so the classify grammar can be extended over time. Query with `engine.py log`
-(`--run · --block · --class · --failures · --limit · --full`) — the operator-facing answer to *why did
-TRON fail*, newest-first.
+(defaults to failures, newest-first; `--all · --run · --block · --class · --limit · --full`) — the
+operator-facing answer to *why did TRON fail*. The exhausted-classify path is double-recorded by
+design: a `classify-fail` failure **and** an `unclassified` record (the message still routes to the
+architect).
 
 ---
 

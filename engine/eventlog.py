@@ -59,10 +59,11 @@ class EventLog:
         return rec
 
     def failure(self, fclass, code, operation, cause, *, actor="TRON", block=None,
-                tag=None, cid=None, inputs=None, node=None, next=None, attempt=None,
+                tag=None, cid=None, inputs=None, node=None, next_action=None, attempt=None,
                 **payload):
         """A first-class failure record (AC-2). Complete enough to reconstruct the exact
-        cause offline: class · code · operation · inputs · cause · state · next-action."""
+        cause offline: class · code · operation · inputs · cause · state · next-action.
+        (`next_action`, not `next`, to avoid shadowing the builtin; stored as the `next` field.)"""
         rec = self._stamp("failure", "failure", actor, block, tag, cid)
         rec["fclass"] = fclass
         rec["code"] = code
@@ -70,7 +71,7 @@ class EventLog:
         rec["cause"] = cause
         rec["inputs"] = inputs or {}
         rec["node"] = node
-        rec["next"] = next
+        rec["next"] = next_action
         rec["attempt"] = attempt
         rec["payload"] = payload
         util.append_jsonl(self.ctx.event_log, rec)
