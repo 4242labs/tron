@@ -2,8 +2,7 @@
 
   {detail}
 
-You have the project context I don't. Decide which it is:
-- **Solvable as upcoming work?** Scope it forward — author or queue the block, then report it.
-- **Truly the operator's call** (a decision, an external blocker, eyes-on-a-journey)? Say so explicitly, and I'll raise it to the operator.
-
-Pick one. I don't guess on flow — that's why it's with you.
+Pick one:
+- Answer it now — I relay your reply to {sender}.
+- Upcoming work? Scope it forward — author or queue the block, then report it.
+- The operator's call (a decision, an external blocker)? Say so, and I raise it.
