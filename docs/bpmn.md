@@ -173,12 +173,13 @@ repo), one derived copy (the site).
 **The rule:** any change to `workflow/` MUST be published — a diagram change isn't "done" until the public
 copy matches.
 
-- **Automated:** the CI Action `.github/workflows/publish-diagram.yml` runs on a push to `main` touching
-  `workflow/**` and opens a sync PR on `tron-www`; merging it deploys (GitHub Pages). Triggering publish =
-  pushing **tron-app**, not meta.
-- **Manual fallback** (the Action needs a `WWW_SYNC_TOKEN` secret not yet provisioned — see pipeline TD-01):
-  copy `workflow/`'s files into `tron-www/public/workflow/` (`workflow.html` → `index.html`, plus
-  `flow-description.html` + favicons + `nyan-cat.gif`), keep the banner, push `main`. Verify live.
+- **Automated (fully hands-free):** the CI Action `.github/workflows/publish-diagram.yml` runs on a push to
+  `main` touching `workflow/**`, opens a sync PR on `tron-www`, and **auto-merges it** — Pages then deploys.
+  No manual step. Triggering publish = pushing **tron-app**, not meta. (`WWW_SYNC_TOKEN` is provisioned; the
+  Action authenticates the cross-repo sync + auto-merge with it.)
+- **Manual fallback** (only if the Action is disabled/broken): copy `workflow/`'s files into
+  `tron-www/public/workflow/` (`workflow.html` → `index.html`, plus `flow-description.html` + favicons +
+  `nyan-cat.gif`), keep the banner, push `main`. Verify live.
 
 **Asset paths are relative** (`favicon-…`, `nyan-cat.gif`) so `workflow/` is self-contained and portable —
 it works served from its own directory locally and at `/workflow/` on the site. `workflow.html` references
