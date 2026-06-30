@@ -96,8 +96,11 @@ class Console:
                 worker_count = int(v)
             else:
                 print(f"{DIM}  (a positive integer){RST}")
+        # 3. ask-before-merging (T8): ON pauses the trunk-merge step for your go-ahead.
+        ans = input("Inform you before each merge to trunk? [y/N] ").strip().lower()
+        eng.st.live_config["ask_before_merging"] = ans in ("y", "yes")
         print()
-        eng.start(worker_count)                      # 3–4: read trunk, spawn architect + first pulse
+        eng.start(worker_count)                      # 4–5: read trunk, spawn architect + first pulse
         self._start_daemon()                         # the WAKE heartbeat (idempotent; skipped in dry)
         print()
         self._banner()

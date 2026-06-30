@@ -30,7 +30,7 @@ CANON_TAGS = {
     "worker.online",
     "worker.done", "worker.wall", "worker.review_done", "worker.await_confirm",
     "worker.branch", "worker.progress", "worker.question_peer", "worker.question_tron",
-    "architect.reconciled", "architect.logged",
+    "architect.reconciled", "architect.logged", "architect.relay", "architect.escalate",
     "operator.decision", "operator.status_query", "operator.knob_change",
     "operator.directive",
     "worker.stalled", "worker.dead",

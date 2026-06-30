@@ -42,11 +42,13 @@ tags:
   worker.await_confirm:     { trigger: "worker:await:<block>" }   # pause mid-block for go-ahead; ALWAYS reaches the operator (D7/R-AWAIT)
   worker.branch:            { side: record_branch }   # the worker reports the branch it NAMED (it owns the name; TRON never guesses — 01-05 T2)
   worker.progress:          { side: none }
-  worker.question_peer:     { side: observe }            # peer consult; logged, no advance
+  worker.question_peer:     { side: triage_peer }       # peer/design question -> the architect sorts it (answer-and-relay or escalate); never a silent dead-end (01-08 T10)
   worker.question_tron:     { side: answer_from_context }
   # architect-origin (the persistent, forward-only consultant's reports)
   architect.reconciled:     { trigger: "block:<block>:reconciled" }   # forward/reconcile done -> upcoming block re-checked & ready on trunk (M-05)
   architect.logged:         { trigger: "block:adhoc:reconciled" }     # log-review done -> adhoc block files authored
+  architect.relay:          { side: relay_to_worker }     # answered a triaged question -> relay the reply to the original asker (01-08 T10)
+  architect.escalate:       { side: escalate_to_operator } # "operator's call" -> raise it to the operator, rides the wall edge (01-08 T10)
   # operator-origin
   operator.decision:        { trigger: "operator:decision:<block>" }
   operator.status_query:    { side: reply_digest }

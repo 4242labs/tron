@@ -220,19 +220,24 @@ class Engine:
                 self.st.mark_counted(r["id"])
 
     def _on_block_done(self, block):
-        """A block reached ✅ on trunk (the only done-truth). Tick cadence, release the
-        engineer that drove it, clear its gate, announce, pulse."""
+        """A block reached ✅ on trunk (the only done-truth). Tick cadence, announce, reconcile
+        ahead. The engineer is NOT released here (T7): ✅ opens the CLOSE stage — fire CLOSE and
+        HOLD the slot until the worker confirms a clean exit. No live engineer -> nothing to close,
+        so clear the gate directly."""
         for typ in self.cadence_cfg:
             self.st.cadence[typ] = self.st.cadence.get(typ, 0) + 1
-        for w in list(self.st.workers):
-            if w.get("role") == "engineer" and w.get("block") == block:
-                self._release_worker(w)
-        self.st.gate.pop(block, None)
         if block in self.st.blocked:
             self.st.blocked.remove(block)
         self.events.event("block_done", block=block)
         self.emit("terminal.block_done", {"block": block})
-        self.log("flow", f"{block} ✅ on trunk -> done, cadence++")
+        sess = self._session_for_block(block)
+        if sess:
+            g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
+            self._drive_close(block, g, sess, self._worker_id("engineer", block))
+            self.log("flow", f"{block} ✅ on trunk -> CLOSE (slot held), cadence++")
+        else:
+            self.st.gate.pop(block, None)                # no engineer to close out
+            self.log("flow", f"{block} ✅ on trunk -> done (no live engineer), cadence++")
         self._reconcile_ahead(block)                     # re-check the next scoped block vs this one's drift (M-05)
         self._emit("pulse")
 
@@ -258,8 +263,10 @@ class Engine:
         self._pump_architect()
 
     def _next_reconcile_target(self, done_block):
-        """The next in-scope, not-done block (by pipeline order) after `done_block` that already
-        has a block file — the one a just-finished block's drift could invalidate."""
+        """The next in-scope, not-done, DISPATCHABLE block (by pipeline order) after `done_block`
+        that already has a block file — the one a just-finished block's drift could invalidate.
+        Must be not-yet-dispatched: a block already mid-execution (🔄 with a live worker/PR, or in
+        a DONE gate) is never reconcile-targeted — only a clean, not-yet-started block is (T3)."""
         rows = sorted(self._in_scope_rows(), key=lambda r: r.get("order") or 1e9)
         seen = False
         for r in rows:
@@ -268,9 +275,13 @@ class Engine:
                 continue
             if not seen:
                 continue
+            bid = r["id"]
             if (r.get("status") in OPEN_STATUSES and r.get("has_block_file")
-                    and r["id"] not in self._dropped() and r["id"] not in self.st.blocked):
-                return r["id"]
+                    and bid not in self._dropped() and bid not in self.st.blocked
+                    and not self.st.has_active_worker_for_block(bid)
+                    and self._block_branch(bid) not in (self.st.open_prs or {})
+                    and bid not in self.st.gate):
+                return bid
         return None
 
     # ── trigger queue + routing ──
@@ -498,7 +509,8 @@ class Engine:
         # between spawn and assign survives — the pending assignment persists in the MANIFEST.
         w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
-             "pending_assign": {"kind": "engineer", "block": block}}
+             "pending_assign": {"kind": "engineer", "block": block,
+                                "assignment": self._engineer_assignment(block)}}
         self._reserve(w)                               # durable intent before spawn
         session, short = self._spawn(wid, "spawn.engineer", "engineer", block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
@@ -526,7 +538,8 @@ class Engine:
         wid = self._worker_id("engineer", block)
         w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
-             "pending_assign": {"kind": "engineer", "block": block}}
+             "pending_assign": {"kind": "engineer", "block": block,
+                                "assignment": self._engineer_assignment(block)}}
         self._reserve(w)
         session, short = self._spawn(wid, "spawn.engineer", "engineer", block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
@@ -539,9 +552,10 @@ class Engine:
         self.st.cadence[typ] = 0                       # consume the counter on dispatch
         wid = self._worker_id("reviewer", typ)
         thresh = self.cadence_cfg.get(typ, 0)
+        assignment = self._reviewer_assignment(typ)    # since-last-review range, then reset the marker (T6)
         w = {"id": wid, "role": "reviewer", "rtype": typ, "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": f"review:{typ}",
-             "pending_assign": {"kind": "reviewer", "count": thresh}}
+             "pending_assign": {"kind": "reviewer", "assignment": assignment}}
         self._reserve(w)                               # durable intent before spawn
         session, short = self._spawn(wid, "spawn.reviewer", "reviewer", rtype=typ)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
@@ -616,14 +630,40 @@ class Engine:
         if not pend:
             return
         sess = w.get("session_id")
+        # ASSIGN is role-neutral (PMT-ASSIGN); the per-role {assignment} was composed at dispatch.
+        assignment = pend.get("assignment", "")
         if pend.get("kind") == "reviewer":
-            self.emit("assign.reviewer", {"worker_id": wid, "count": pend.get("count", 0)},
+            self.emit("assign.reviewer", {"worker_id": wid, "assignment": assignment},
                       worker_session=sess)
         else:
-            self.emit("assign.engineer", {"worker_id": wid, "block": pend.get("block")},
+            self.emit("assign.engineer", {"worker_id": wid, "assignment": assignment},
                       worker_session=sess)
         w["pending_assign"] = None
         self.log("flow", f"{wid} online -> assign ({pend.get('kind')})")
+
+    def _engineer_assignment(self, block):
+        """The engineer's work string (T2): the block it owns + its spec path. PMT-ASSIGN is
+        role-neutral; the engine fills the concrete work here."""
+        row = self.st.row(block) or {}
+        spec = row.get("block_file") or f"blocks/{block}.md"
+        return (f"You own block {block}. Read its spec at {spec}, build it end to end, "
+                f"and report when it's ready for the done gate.")
+
+    def _reviewer_assignment(self, typ):
+        """The reviewer's work string (T6): the commit range SINCE this type's last review, never
+        a block count — so nothing slips between reviews. Read the old marker, compose the range to
+        the current trunk HEAD, then reset the marker to HEAD (the reset-on-dispatch)."""
+        head = trunk.head_sha(self.paths["root"], self.dry) or ""
+        prev = self.st.review_markers.get(typ)
+        self.st.review_markers[typ] = head           # reset on dispatch
+        if prev and head and prev != head:
+            rng = f"{prev}..{head}"
+        elif head:
+            rng = f"the full history up to {head} (no prior {typ} review)"
+        else:
+            rng = "all changes since your last review"
+        return (f"Run a {typ} review over {rng}. Cover every applicable change in that range — "
+                f"all of it, not a sample. Deliver your findings log when done.")
 
     def _h_worker_done(self, m):
         # block:next:done — the worker SAYS it's done. Not truth: open/advance the DONE gate.
@@ -632,16 +672,47 @@ class Engine:
         if not block:
             return
         row = self.st.row(block)
-        if row and row.get("status") == "done":          # already landed — finalize is idempotent
+        if row and row.get("status") == "done":
+            # ✅ already landed -> this report is the CLOSE clean-confirmation (T7), or a no-op.
+            g = self.st.gate.get(block)
+            if g and g.get("stage") == "close":
+                self._confirm_close(block, g)
             return
         g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
+        g.pop("awaiting_rework", None)                # a fresh report -> rework done; re-challenge merge
+        before = g.get("stage")
         self._drive_gate(block, g, reason="worker reported done")
+        if block in self.st.gate and before is not None and self.st.gate[block].get("stage") == before:
+            # No advance on a repeat report = a failed attempt at this step (T9). Cap at N=2.
+            n = g.get("stall_attempts", 0) + 1
+            g["stall_attempts"] = n
+            if n > int(self.knobs.get("gate_step_cap", 2)):
+                self._gate_giveup(block, g, self._worker_id("engineer", block),
+                                  f"stuck at {before} after {n} attempts",
+                                  "gate-step-cap", f"advance DONE gate stage '{before}'")
+        else:
+            g["stall_attempts"] = 0
         self._emit("pulse")
 
     def _h_release_reviewer(self, m):
-        # review:<type>:done fans out: Release reviewer (-> pulse) AND architect Log Review.
+        # review:<type>:done — the reviewer hands back. First report -> open the DONE-REVIEW gate
+        # (attest full coverage since last review; T5), HOLD release. The confirmation report ->
+        # release the reviewer + queue the architect remediation (log-review).
         typ = m.get("type")
         block = m.get("block")
+        gkey = f"review:{typ}"
+        rev = next((w for w in self.st.workers
+                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+        if self.st.gate.get(gkey) is None:
+            self.st.gate[gkey] = {"stage": "review"}
+            sess = rev.get("session_id") if rev else None
+            wid = rev.get("id") if rev else self._worker_id("reviewer", typ)
+            if sess:
+                self.emit("gate.review", {"worker_id": wid}, worker_session=sess)
+            self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
+            self._emit("pulse")
+            return
+        self.st.gate.pop(gkey, None)                 # confirmation -> release + remediation
         for w in list(self.st.workers):
             if w.get("role") == "reviewer" and w.get("rtype") == typ:
                 self._release_worker(w)
@@ -688,7 +759,8 @@ class Engine:
             if self._tg_on():
                 self.emit("tg.escalate", {"worker_id": worker_id or "?", "detail": detail})
         elif kind in ("scope", "blueprint", "design") or (self._architect() and kind != "trivial"):
-            self._triage_to_architect(f"await[{block or '?'}]: {detail}")    # rung (b)
+            self._triage_to_architect(f"await[{block or '?'}]: {detail}",     # rung (b)
+                                      sender=worker_id, block=block)
         else:                                                               # rung (c)
             if sess and sess != "dry" and not self.dry:
                 jobs.send(sess, "Proceed — no checkpoint registered here and nothing to escalate.")
@@ -755,24 +827,39 @@ class Engine:
         block = (case or {}).get("block") or m.get("block")
         if case is not None:
             case["decision"] = decision                  # Settle writes the reply onto the pending record
-        if case is not None and case.get("kind") in ("merge_staging", "promote_main"):
-            # A two-gate merge-gate go-ahead (T1) — not a block park. Grant the gate and re-drive
-            # (resume), or drop the block (abandon). The engineer never left; nothing to un-park.
-            kind = case["kind"]
+        if case is not None and case.get("kind") == "merge":
+            # Ask-before-merging (T8): the operator's call on the trunk-merge step. Four outcomes,
+            # all resolved here (no new flow). The engineer never left; nothing to un-park.
             g = self.st.gate.get(block)
-            if g is not None and decision in ("resume", "approve"):
-                g["approved_" + kind] = True
-                g.pop("case_" + kind, None)
+            if g is None:
                 self._close_case(m.get("case"), case)
-                self._drive_gate(block, g, reason=f"{kind} approved")
-            elif decision == "abandon":
+                self._emit("pulse"); return
+            g.pop("case_merge", None)
+            if decision in ("resume", "approve"):                 # 1. approve -> agent merges
+                g["approved_merge"] = True
+                self._close_case(m.get("case"), case)
+                self._drive_gate(block, g, reason="merge approved")
+            elif decision in ("self", "self_merge", "merge_self"):  # 2. operator merges it -> resume at trunk
+                g["self_merge"] = True
+                self._close_case(m.get("case"), case)
+                self._drive_gate(block, g, reason="operator self-merge")
+            elif decision in ("changes", "amend"):                # 3. changes requested -> relay + rework
+                note = m.get("detail") or "Changes requested before merge."
+                sess = self._session_for_block(block)
+                if sess and sess != "dry" and not self.dry:
+                    jobs.send(sess, f"[TRON] Operator requested changes before merge: {note}")
+                g["awaiting_rework"] = True
+                g["stall_attempts"] = 0
+                self._close_case(m.get("case"), case)
+            elif decision in ("abandon", "drop"):                 # 4. drop the block at the merge moment
                 self.st.gate.pop(block, None)
                 if block not in self._dropped():
                     self._dropped().append(block)
+                self._force_release_block(block)
                 self._close_case(m.get("case"), case)
             else:
-                self._close_case(m.get("case"), case)    # unknown reply — drop the case, leave the hold
-            self.log("flow", f"merge-gate {kind}[{block}] -> {decision}")
+                self._close_case(m.get("case"), case)             # unknown reply — drop case, hold
+            self.log("flow", f"merge-gate[{block}] -> {decision}")
             self._emit("pulse"); return
         if not block:
             self._close_case(m.get("case"), case)
@@ -843,134 +930,144 @@ class Engine:
         raw = m.get("_trigger", "*")
         text = m.get("detail", "")
         self.log("sentry", f"unmatched trigger '{raw}': {text[:160]}")
-        self._triage_to_architect(text[:160] or raw)
+        self._triage_to_architect(text[:160] or raw,
+                                  sender=m.get("worker_id"), block=m.get("block"))
         self._emit("pulse")
 
-    # ── the DONE gate (realign §F): drive an agent through the canon 6-stage flow on EVIDENCE ──
+    # ── the DONE gate (realign §F): one stage-specific prompt per state, advanced on EVIDENCE ──
     def _drive_gates(self):
         for block in list(self.st.gate.keys()):
             self._drive_gate(block, self.st.gate[block])
 
     def _drive_gate(self, block, g, reason=None):
-        """Drive the worker through the DONE gate (T4) on EVIDENCE — never its `✅`, never bare
-        trunk presence: validate-local -> authorize-push (PR open) -> CI green on trunk ->
-        deploy-if-declared -> ✅. Re-prompt the specific gap on each stage change (gate.step /
-        PMT-GATE-DONE). PULSE never merges; the engineer lands it all via PR. Finalization (cadence,
-        release) happens in _on_block_done when ✅ actually appears on trunk."""
+        """Drive a worker through the DONE gate one stage-specific prompt at a time (T5), on
+        EVIDENCE — never a bare `✅`, never a multi-step dump. Stages:
+          ENGINEER  LOCAL -> MERGE -> TRUNK -> CLOSE
+                    local: validate the acceptance suite locally, evidence each (DONE-LOCAL);
+                    merge: merge to trunk + CI green (CI auto-deploys staging) — ASK-gated (T8);
+                    trunk: re-validate every applicable check on trunk (DONE-TRUNK);
+                    close: ✅ landed -> hold the slot until a clean exit is confirmed (T7).
+          REVIEWER  REVIEW (attest full coverage since last review; loop-until-clean — _h_release_reviewer).
+        Prod promotion is NOT a worker stage (operator-only). Finalization (cadence, reconcile-ahead)
+        happens in _on_block_done when ✅ appears on trunk; release happens on the CLOSE confirm."""
+        if str(block).startswith("review:"):
+            return                                       # reviewer gate is event-driven (review_done), not ticked
         row = self.st.row(block)
-        if row and row.get("status") == "done":
-            return                                       # refresh finalizes; nothing to drive
         if block in self._dropped():
             self.st.gate.pop(block, None)
             return
+        wid = self._worker_id("engineer", block)
+        sess = self._session_for_block(block)
+        if row and row.get("status") == "done":          # ✅ on trunk -> CLOSE (slot held, T7)
+            self._drive_close(block, g, sess, wid)
+            return
         branch = self._block_branch(block)               # the worker-named branch (T2), never a guess
         pr = (self.st.open_prs or {}).get(branch)
-        sess = self._session_for_block(block)
-        deploy = (row or {}).get("deploy")               # honour the block's Deploy: (T2)
-        deploy_tail = (f"run the declared deploy ({deploy}) and verify it, then " if deploy else "")
-        staging = self.paths.get("staging") or "none"    # two-gate iff a staging branch is declared
-        two_gate = staging != "none"
-        main = self.paths.get("main_branch", "main")
         renudge = False
-        instr = None
+        stage, msg = None, None
 
         if not pr:
             if not g.get("pr"):
-                stage, instr = "validate-local", (
-                    f"Validate the block's acceptance suite locally and show the evidence "
-                    f"(not just a claim). Then create + name your own branch+worktree off trunk, push, "
-                    f"open the PR" + (f" into {staging}" if two_gate else "")
-                    + " and tell me the branch name — CI must be green.")
-            elif two_gate:
-                # First gate cleared: the feature PR merged to staging. Open the SECOND gate (T1) —
-                # promote staging -> main, ASK-gated by default. Not "stuck": a distinct gate follows.
-                g["staged"] = True
-                stage = "promote-main"
-                if self._gate_approved(block, g, "promote_main", sess):
-                    n = g.get("promote_nudges", 0)
-                    if n >= int(self.knobs.get("gate_post_merge_cap", 3)):
-                        self.st.gate.pop(block, None)
-                        detail = "merged to staging but not promoted to main (✅ pending)"
-                        self.events.failure(             # forensic record (AC-2/AC-6): no-silent-stuck wall
-                            "gate-stuck", "gate-promote-cap", "promote staging -> main", detail,
-                            block=block, inputs={"staging": staging, "main": main, "nudges": n},
-                            node="T1/S1-05 promote-gate", attempt=n, next_action="escalate")
-                        self._emit("wall:raised:" + block,
-                                   {"block": block, "worker_id": self._worker_id("engineer", block),
-                                    "detail": detail})
-                        return
-                    g["promote_nudges"] = n + 1
-                    renudge = True
-                    instr = (f"{block} is on {staging}. Open the promotion PR {staging} -> {main}, "
-                             f"get CI green, merge, {deploy_tail}flip ✅ and archive — all via PR.")
+                stage, msg = "local", "gate.local"       # no PR yet -> validate locally first
             else:
-                # Single-gate no-silent-stuck (T7/S1-05): PR gone, block not ✅ — merged-but-not-landed.
-                # Keep a driver, never go quiet; after a cap of unheeded re-nudges, escalate.
-                n = g.get("post_merge_nudges", 0)
+                # PR gone, not ✅ yet -> merged; re-validate on trunk (DONE-TRUNK). No-silent-stuck:
+                # re-nudge each tick up to the cap, then escalate.
+                n = g.get("trunk_nudges", 0)
                 if n >= int(self.knobs.get("gate_post_merge_cap", 3)):
-                    self.st.gate.pop(block, None)
-                    detail = "merged but not landed on trunk (deploy/✅ pending)"
-                    self.events.failure(                 # forensic record (AC-2/AC-6): no-silent-stuck wall
-                        "gate-stuck", "gate-postmerge-cap", "land merged PR on trunk (✅)", detail,
-                        block=block, inputs={"pr": g.get("pr"), "nudges": n},
-                        node="T7/S1-05 post-merge-gate", attempt=n, next_action="escalate")
-                    self._emit("wall:raised:" + block,
-                               {"block": block, "worker_id": self._worker_id("engineer", block),
-                                "detail": detail})
+                    self._gate_giveup(block, g, wid,
+                                      "merged but not re-validated on trunk (✅ pending)",
+                                      "gate-trunk-cap", "re-validate merged block on trunk (✅)")
                     return
-                g["post_merge_nudges"] = n + 1
-                renudge = True                           # re-nudge each tick until it lands or escalates
-                stage = "post-merge"
-                instr = (f"PR #{g.get('pr')} merged but {block} isn't ✅ on trunk yet — "
-                         f"{deploy_tail}flip ✅ and archive the block, all via PR.")
+                g["trunk_nudges"] = n + 1
+                renudge = True
+                stage, msg = "trunk", "gate.trunk"
         elif pr.get("checks") == "failing":
-            stage, instr = "ci", f"CI is RED on PR #{pr.get('number')}. Fix it, push, keep me posted."
+            stage, msg = "ci", "gate.merge"              # CI red -> re-nudge the merge step (get CI green)
+            renudge = True
         elif pr.get("checks") == "pending":
-            stage, instr = "ci-wait", None               # wait for CI; no nudge
-        elif two_gate:
-            # First gate: feature -> staging, APPROVED by default (TRON instructs the merge unprompted).
-            stage = "merge-staging"
-            if self._gate_approved(block, g, "merge_staging", sess):
-                instr = (f"CI green on PR #{pr.get('number')}. Merge {branch} -> {staging} and "
-                         f"re-validate on staging. I'll gate the promotion to {main} next.")
+            stage, msg = "ci-wait", None                 # wait for CI; no nudge
         else:
-            stage = "merge"
-            instr = (f"CI green on PR #{pr.get('number')}. Merge, re-validate on trunk, "
-                     f"{deploy_tail}flip ✅ and archive the block — all via PR."
-                     + ("" if deploy else " (No deploy declared.)"))
+            # PR + green CI -> merge to trunk (DONE-MERGE), ASK-gated (T8).
+            if self._merge_gated(block, g, wid):
+                return                                    # parked on the operator; hold quietly
+            if g.get("self_merge"):
+                stage, msg = "trunk", "gate.trunk"        # operator merges; agent re-validates on trunk
+            else:
+                stage, msg = "merge", "gate.merge"
 
-        if stage != g.get("stage") or renudge:           # nudge on change, or each tick while post-merge
+        if stage != g.get("stage") or renudge:
             g["stage"], g["pr"] = stage, ((pr or {}).get("number") or g.get("pr"))
-            if instr and sess:
-                self.emit("gate.step", {"worker_id": self._worker_id("engineer", block),
-                                        "block": block, "detail": instr}, worker_session=sess)
+            if msg and sess:
+                self.emit(msg, {"worker_id": wid, "block": block}, worker_session=sess)
             self.log("flow", f"gate[{block}] -> {stage}" + (f" ({reason})" if reason else ""))
+
+    def _drive_close(self, block, g, sess, wid):
+        """CLOSE stage (T7): ✅ landed. Fire CLOSE once and HOLD the slot — the worker wraps up
+        (nothing unmerged, no loose worktree, local synced). The slot frees only on its clean
+        confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
+        can't strand the slot forever."""
+        if g.get("stage") != "close":
+            g["stage"] = "close"
+            if sess:
+                self.emit("close.worker", {"worker_id": wid}, worker_session=sess)
+            self.log("flow", f"gate[{block}] -> close (slot held)")
+            return
+        n = g.get("close_nudges", 0)
+        if n >= int(self.knobs.get("gate_close_cap", 3)):
+            self._force_release_block(block)
+            self.st.gate.pop(block, None)
+            self.log("flow", f"gate[{block}] close cap -> force release")
+            return
+        g["close_nudges"] = n + 1
+        if sess:
+            self.emit("close.worker", {"worker_id": wid}, worker_session=sess)
+
+    def _confirm_close(self, block, g):
+        """The worker confirmed a clean exit -> kill its process + free the slot (T7)."""
+        for w in list(self.st.workers):
+            if w.get("role") == "engineer" and w.get("block") == block:
+                self._release_worker(w, notify=False)    # CLOSE already sent; just kill + free
+        self.st.gate.pop(block, None)
+        self.log("flow", f"{block} close confirmed -> worker released")
+        self._emit("pulse")
+
+    def _force_release_block(self, block):
+        for w in list(self.st.workers):
+            if w.get("role") == "engineer" and w.get("block") == block:
+                self._release_worker(w, notify=False)
+
+    def _gate_giveup(self, block, g, wid, detail, code, action):
+        """No-silent-stuck: drop the gate + escalate to the operator (forensic record)."""
+        self.st.gate.pop(block, None)
+        self.events.failure("gate-stuck", code, action, detail, block=block,
+                            inputs={"nudges": g.get("trunk_nudges") or g.get("stall_attempts")},
+                            node="DONE gate", next_action="escalate")
+        self._emit("wall:raised:" + block,
+                   {"block": block, "worker_id": wid, "detail": detail})
 
     def _session_for_block(self, block):
         w = next((w for w in self.st.workers
                   if w.get("role") == "engineer" and w.get("block") == block), None)
         return w.get("session_id") if w else None
 
-    def _gate_approved(self, block, g, gate_name, sess):
-        """Two-gate approval (T1). APPROVED -> TRON instructs the merge now (returns True). ASK ->
-        park ONE operator case and hold (returns False); the engineer waits until the operator
-        resumes it (_h_apply_decision). This is the per-project two-gate knob (staging APPROVED ->
-        promote ASK by default), NOT a sign-off on every merge — that blanket model is removed
-        (D5/TD-02); only an ASK gate stops here, via the standard escalate/decision path."""
-        if g.get("approved_" + gate_name):
-            return True
-        if self.st.approvals.get(gate_name, "APPROVED") == "APPROVED":
-            return True
-        if not g.get("case_" + gate_name):               # escalate once; then hold quietly each tick
-            human = ("promote to " + self.paths.get("main_branch", "main")
-                     if gate_name == "promote_main"
-                     else "merge to " + (self.paths.get("staging") or "staging"))
-            case = self._open_case(block, gate_name, self._worker_id("engineer", block),
-                                   f"{human} ({block})")
-            g["case_" + gate_name] = case
-            self.emit("escalate.gate", {"worker_id": self._worker_id("engineer", block),
-                                        "block": block, "detail": human, "case": case})
-        return False
+    def _merge_gated(self, block, g, wid):
+        """Ask-before-merging (T8). Returns True = HOLD (park ONE operator case at the trunk-merge
+        step), False = proceed. APPROVED (or a prior grant on this gate) proceeds; ASK parks once and
+        holds quietly each tick. While reworking after a 'changes requested', holds without re-asking.
+        The four operator outcomes (approve / self-merge / changes / drop) resolve via
+        _h_apply_decision. Prod promotion is operator-only and never reaches this gate."""
+        if g.get("approved_merge") or g.get("self_merge"):
+            return False
+        if g.get("awaiting_rework"):
+            return True                                  # agent reworking; don't re-ask until it re-reports
+        if self.st.approvals.get("merge", "APPROVED") == "APPROVED":
+            return False
+        if not g.get("case_merge"):                      # escalate once; then hold quietly each tick
+            case = self._open_case(block, "merge", wid, f"merge {block} to trunk")
+            g["case_merge"] = case
+            self.emit("escalate.gate", {"worker_id": wid, "block": block,
+                                        "detail": f"merge {block} to trunk", "case": case})
+        return True
 
     # ── the architect (persistent, queued, forward-only) ──
     def _architect(self):
@@ -995,16 +1092,18 @@ class Engine:
         self.st.architect_queue.append({"kind": "forward", "block": block})
         self._pump_architect()
 
-    def _triage_to_architect(self, detail):
-        # Hand an unclassifiable input to the architect to sort. No architect online
-        # -> nobody can steer it but the operator, so escalate directly.
+    def _triage_to_architect(self, detail, sender=None, block=None):
+        # Hand an unclassifiable input (or a peer question) to the architect to sort. It carries
+        # the originating sender + block so the architect can answer-and-relay or escalate (T4/T10).
+        # No architect online -> nobody can steer it but the operator, so escalate directly.
         if any(j.get("kind") == "triage" and j.get("detail") == detail
                for j in self.st.architect_queue):
             return
         if not self._architect():
             self.emit("escalate.unclassified", {"detail": detail})
             return
-        self.st.architect_queue.append({"kind": "triage", "detail": detail})
+        self.st.architect_queue.append({"kind": "triage", "detail": detail,
+                                        "sender": sender, "block": block})
         self._pump_architect()
 
     def _pump_architect(self):
@@ -1016,13 +1115,30 @@ class Engine:
         job = self.st.architect_queue.pop(0)
         arch["status"], arch["current_job"] = "busy", job
         sess = arch.get("session_id")
-        if job["kind"] in ("forward", "reconcile"):      # both re-check/clear the path ahead (PMT-ARCH-FORWARD)
+        if job["kind"] == "forward":                      # author a missing block file (PMT-SCOPE)
             self.emit("arch.forward", {"block": job["block"]}, worker_session=sess)
+        elif job["kind"] == "reconcile":                  # re-check an existing block vs a landed one
+            self.emit("arch.reconcile", {"block": job["block"], "after": job.get("after", "")},
+                      worker_session=sess)
         elif job["kind"] == "triage":
-            self.emit("arch.triage", {"detail": job.get("detail", "")}, worker_session=sess)
-        else:
-            self.emit("arch.log", {"type": job.get("type", "code")}, worker_session=sess)
+            self.emit("arch.triage",
+                      {"detail": self._triage_detail(job),
+                       "sender": job.get("sender") or "the sender"},
+                      worker_session=sess)
+        else:                                             # log-review -> remediation blocks
+            self.emit("arch.remediation", {"type": job.get("type", "code")}, worker_session=sess)
         self.log("architect", f"dispatch {job}")
+
+    def _triage_detail(self, job):
+        """Build the TRIAGE {detail} (T4). Prepend `"{sender}, on block {block}: "` ONLY when
+        the sender is a worker on a real pipeline block — omit it for review:* senders and when
+        there is no block; the raw text passes through otherwise."""
+        raw = job.get("detail", "")
+        sender = job.get("sender") or ""
+        block = job.get("block") or ""
+        if sender and block and not str(block).startswith("review:"):
+            return f"{sender}, on block {block}: {raw}"
+        return raw
 
     def _architect_advance(self):
         arch = self._architect()
@@ -1034,7 +1150,7 @@ class Engine:
     def _release_worker(self, w, notify=True):
         sess = w.get("session_id")
         if notify and sess and sess != "dry" and not self.dry:
-            jobs.send(sess, self.renderer.render("release.worker", {"worker_id": w["id"]}))
+            jobs.send(sess, self.renderer.render("close.worker", {"worker_id": w["id"]}))
         if sess and sess != "dry" and not self.dry:
             jobs.release(sess)
         if w in self.st.workers:
@@ -1064,9 +1180,48 @@ class Engine:
             self.log("side", f"question_tron: {slots.get('detail', '')}")
         elif handler == "record_branch":
             self._record_branch(slots)
+        elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
+            self._triage_to_architect(slots.get("detail", "") or "(peer question)",
+                                      sender=slots.get("worker_id"), block=slots.get("block"))
+            self._emit("pulse")
+        elif handler == "relay_to_worker":               # T10: architect's answer -> the original asker
+            self._relay_architect_answer(slots)
+        elif handler == "escalate_to_operator":          # T10: "operator's call" -> raise it (wall edge)
+            self._escalate_from_architect(slots)
         elif handler in ("edit_self", "best_effort"):
             self.log("side", f"{handler}: {slots}")
         # observe / none: deliberately nothing.
+
+    def _relay_architect_answer(self, slots):
+        """T10: the architect answered a triaged peer question — relay its reply to the original
+        asker (the triage job carries the sender), then advance the architect's queue. Closes the
+        silent dead-end where a peer question was logged and never answered."""
+        arch = self._architect()
+        cur = arch.get("current_job") if arch else None
+        target = (cur or {}).get("sender") or slots.get("worker_id")
+        answer = slots.get("detail", "")
+        sess = self._session_for_worker(target) if target else None
+        if sess and sess != "dry" and not self.dry:
+            jobs.send(sess, f"[TRON] Architect: {answer}")
+        self.log("flow", f"relay architect answer -> {target or '?'}")
+        self._architect_advance()
+        self._emit("pulse")
+
+    def _escalate_from_architect(self, slots):
+        """T10: the architect judged a triaged question to be the operator's call — advance its
+        queue and raise it to the operator on the existing wall edge."""
+        arch = self._architect()
+        cur = arch.get("current_job") if arch else None
+        block = (cur or {}).get("block") or slots.get("block") or ""
+        sender = (cur or {}).get("sender") or slots.get("worker_id")
+        detail = slots.get("detail", "") or "architect raised to operator"
+        self._architect_advance()
+        if block:
+            self._emit("wall:raised:" + block,
+                       {"block": block, "worker_id": sender, "detail": detail})
+        else:
+            self.emit("escalate.unclassified", {"detail": detail})
+        self._emit("pulse")
 
     def _record_branch(self, slots):
         """The worker reported the branch it NAMED for its block (T2). Record it so the DONE gate
@@ -1216,9 +1371,15 @@ class Engine:
         self.st.data["counters"] = {}            # T9/S1-12: stall-count (+ case-seq, refresh-fail) must not leak across sessions
         self.st.data["pending_cases"] = {}
         self.st.data["reconciled"] = []
+        self.st.data["review_markers"] = {}      # since-last-review markers don't carry across sessions (T6)
         self.st.data["checkpoints"] = []
         self.st.data["branches"] = {}            # worker-named branches don't carry across sessions (T2)
         self.st.data["approvals"] = dict(DEFAULT_APPROVALS)
+        # Ask-before-merging (T8): the bootup question (live_config) or the knob flips the trunk-merge
+        # step to ASK. Default APPROVED — TRON instructs the merge unprompted.
+        if bool(self.st.live_config.get("ask_before_merging")
+                or self.knobs.get("ask_before_merging")):
+            self.st.data["approvals"]["merge"] = "ASK"
         self.st.run_control = None
 
     def start(self, worker_count):
@@ -1372,7 +1533,7 @@ class Engine:
         for w in self.st.workers:
             sess = w.get("session_id")
             if sess and sess != "dry" and not self.dry:
-                jobs.send(sess, self.renderer.render("release.worker", {"worker_id": w["id"]}))
+                jobs.send(sess, self.renderer.render("close.worker", {"worker_id": w["id"]}))
                 jobs.release(sess)
             w["status"] = "released"
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")

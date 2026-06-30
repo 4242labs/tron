@@ -75,7 +75,8 @@ Read the sender first, then the intent.
   code / security / data / …); pull `block` only if the report names one (the engine tracks the
   reviewed range otherwise).
 - `worker.question_peer` — a design/technical question aimed at a declared peer (the architect).
-  Peer-consult bypasses you (R2); tag it so the engine stays put.
+  The engine routes it to the architect, who answers-and-relays or escalates — it never dead-ends.
+  Pull `worker_id`, `block` (if named), and the question text into `detail`.
 - `worker.question_tron` — a question pointed at you that you can settle from context. If it really
   needs the operator, it's a wall, not this.
 - `worker.await_confirm` — a worker pausing mid-block for a go-ahead (a checkpoint, a scope/blueprint
@@ -90,6 +91,11 @@ Read the sender first, then the intent.
 - `architect.logged` — it finished a log-review. Pull `adhoc`: a list of `{id, goal}` parsed from
   its `adhoc <id>: <goal>` lines. A report of "log done" / "nothing" is this tag with an **empty**
   `adhoc` list — still `architect.logged`, never a different tag.
+- `architect.relay` — it answered a question you handed it for a worker ("answer it now / relay to
+  …"). Pull the answer text into `detail`; the engine relays it to the original asker.
+- `architect.escalate` — it judged a handed-off question to be the operator's call (a decision or an
+  external blocker it can't clear). Pull `block` (if any) and the reason into `detail`; the engine
+  raises it to the operator.
 
 **From the operator** (session or Telegram):
 - `operator.decision` — answers an open wall or checkpoint. Pull `decision` ∈ `resume | amend |

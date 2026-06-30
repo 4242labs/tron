@@ -26,6 +26,7 @@ slots:
   reason: <str>
   count: <int>
   case: <str>           # escalation correlation id (e.g. CASE-001) — reply with it to settle
+  assignment: <str>     # ASSIGN: the per-role work string the engine composes at emit
 
 # ── Templates, grouped by channel/situation ──
 templates:
@@ -46,39 +47,58 @@ templates:
     channel: worker
     slots: [worker_id, role, persona, report]
     pmt: PMT-SPAWN
-  # ASSIGN — the work, delivered after the worker reports online (01-07).
+  # ASSIGN — the work, delivered after the worker reports online (01-07). Role-neutral:
+  # the engine composes {assignment} per role at emit (engineer = its block; reviewer =
+  # the since-last-review commit range).
   assign.engineer:
     channel: worker
-    slots: [worker_id, block]
-    pmt: PMT-ENG-ASSIGN
+    slots: [worker_id, assignment]
+    pmt: PMT-ASSIGN
   assign.reviewer:
     channel: worker
-    slots: [worker_id, count]
-    pmt: PMT-REV-ASSIGN
+    slots: [worker_id, assignment]
+    pmt: PMT-ASSIGN
   arch.forward:
     channel: worker
     slots: [block]
-    pmt: PMT-ARCH-FORWARD
-  arch.log:
+    pmt: PMT-SCOPE
+  arch.reconcile:
+    channel: worker
+    slots: [block, after]
+    pmt: PMT-RECONCILE
+  arch.remediation:
     channel: worker
     slots: [type]
-    pmt: PMT-ARCH-LOGREVIEW
+    pmt: PMT-SCOPE-REMEDIATION
   arch.triage:
     channel: worker
-    slots: [detail]
-    pmt: PMT-ARCH-TRIAGE
-  release.worker:
+    slots: [detail, sender]
+    pmt: PMT-TRIAGE
+  close.worker:
     channel: worker
     slots: [worker_id]
-    pmt: PMT-RELEASE
+    pmt: PMT-CLOSE
   heartbeat.ping:
     channel: worker
     slots: [worker_id]
     pmt: PMT-PING
-  gate.step:
+  # DONE gate — one stage-specific prompt per gate state (no wrapper, no {detail} dump).
+  gate.local:
     channel: worker
-    slots: [worker_id, block, detail]
-    pmt: PMT-GATE-DONE
+    slots: [worker_id, block]
+    pmt: PMT-DONE-LOCAL
+  gate.merge:
+    channel: worker
+    slots: [worker_id, block]
+    pmt: PMT-DONE-MERGE
+  gate.trunk:
+    channel: worker
+    slots: [worker_id, block]
+    pmt: PMT-DONE-TRUNK
+  gate.review:
+    channel: worker
+    slots: [worker_id]
+    pmt: PMT-DONE-REVIEW
 
   # between-task / terminal feedback (terminal channel; TRON voice)
   terminal.dispatched:

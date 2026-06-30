@@ -1,7 +1,7 @@
 """prompts — the PMT layer: resolve a PMT id to its filled prompt body (M-04, R-PMT).
 
 Every LLM-facing worker prompt lives as a self-contained `PMT-*` file in `prompts/`,
-indexed by `prompts/registry.yaml`. Callers pass an id (`PMT-ENG-ASSIGN`), never a path —
+indexed by `prompts/registry.yaml`. Callers pass an id (`PMT-ASSIGN`), never a path —
 the registry owns the id->file map. The body is read FRESH on every call (imported at
 tick, never cached) so an edited prompt takes effect on the next use, and slots are filled
 with str.format. The prompt copy itself is the operator's to author (R-PMT seam 2); this

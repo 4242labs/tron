@@ -53,9 +53,15 @@ def main():
         assert set(tpl.get("slots", [])) == set(reg[pid].get("slots", [])), \
             f"{mid}: slot mismatch vs {pid}"
 
-    # 3) load() resolves an id and fills slots.
-    out = p.load("PMT-ENG-ASSIGN", {"worker_id": "ENG-01-02", "block": "01-02"})
-    assert "ENG-01-02" in out and "01-02" in out, "slots not filled"
+    # 3) load() resolves an id and fills slots — PMT-ASSIGN is role-neutral: ONE body renders for
+    #    both an engineer (block assignment) and a reviewer (since-last-review range). [AC-4]
+    eng_out = p.load("PMT-ASSIGN", {"worker_id": "ENG-01-02",
+                                    "assignment": "You own block 01-02. Read its spec."})
+    assert "ENG-01-02" in eng_out and "block 01-02" in eng_out, "engineer assignment not filled"
+    rev_out = p.load("PMT-ASSIGN", {"worker_id": "REV-code",
+                                    "assignment": "Run a code review over abc..def."})
+    assert "REV-code" in rev_out and "abc..def" in rev_out, "reviewer assignment not filled"
+    assert "{assignment}" not in eng_out and "{assignment}" not in rev_out, "slot left unfilled"
 
     # 4) fresh read: edit a temp PMT, load twice, second call sees the change.
     with tempfile.TemporaryDirectory() as td:

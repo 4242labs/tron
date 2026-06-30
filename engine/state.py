@@ -14,13 +14,14 @@ World-mutating actions are state-guarded here so a retried tick can't double-fir
 """
 import util
 
-# Per-session merge-gate defaults — the two-gate model (01-05 T1, realign §8). The single
-# source for both the fresh-start reset (fsm._reset_session_runtime) and the runtime default
-# below. templates/manifest.yaml seeds the same values for a hand-read instance.
-#   merge_staging: feature -> staging (default APPROVED — TRON instructs the merge unprompted)
-#   promote_main:  staging -> main    (default ASK     — needs operator go-ahead first)
-# A single-gate repo (project.repo.staging: none) ignores both and uses one merge_main step.
-DEFAULT_APPROVALS = {"merge_staging": "APPROVED", "promote_main": "ASK"}
+# Per-session merge control — one knob, "ask before merging" (01-08 T8). The worker gate ends at
+# trunk: merging to trunk is the single gated step (CI auto-deploys staging from there); prod
+# promotion is operator-only and never a worker stage. APPROVED -> TRON instructs the merge
+# unprompted; ASK -> the trunk-merge step parks one operator case (four outcomes via
+# _h_apply_decision). The default is APPROVED; the bootup question / ask_before_merging knob flips
+# it to ASK. The single source for the fresh-start reset (fsm._reset_session_runtime) + the runtime
+# default below; templates/manifest.yaml seeds the same for a hand-read instance.
+DEFAULT_APPROVALS = {"merge": "APPROVED"}
 
 
 class State:
@@ -95,8 +96,8 @@ class State:
 
     @property
     def approvals(self):
-        """Per-session merge knob (realign §8). merge_staging/promote_main: APPROVED|ASK.
-        Held in runtime, reset each session; TRON never writes it to git."""
+        """Per-session merge control (01-08 T8). merge: APPROVED|ASK — ASK parks one operator case
+        at the trunk-merge step. Held in runtime, reset each session; TRON never writes it to git."""
         return self.data.setdefault("approvals", dict(DEFAULT_APPROVALS))
 
     @property
@@ -132,6 +133,13 @@ class State:
         guesses it — 01-05 T2). Recorded from the worker's self-report (worker.branch); the DONE
         gate resolves the block's PR/CI on trunk via this name, never a computed `feat/<block>`."""
         return self.data.setdefault("branches", {})
+
+    @property
+    def review_markers(self):
+        """Per-reviewer-type last-review marker: <type> -> the trunk commit at that type's
+        previous review (T6). The reviewer's assignment is the commit range since this marker,
+        so nothing slips between reviews; reset to HEAD when a review of that type dispatches."""
+        return self.data.setdefault("review_markers", {})
 
     def next_case_id(self, block):
         """A monotonic correlation id for an escalation (stable across a retried tick by the

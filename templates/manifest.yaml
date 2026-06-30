@@ -40,9 +40,11 @@ architect_queue: []
 # ── Blocks the architect has reconciled forward (readiness gate lifted, M-05) ──
 reconciled: []
 
-# ── DONE-gate progress per block: {block_id: {stage, pr, post_merge_nudges}} (runtime only) ──
-# stage in: validate-local | ci | ci-wait | merge | merge-staging | promote-main | post-merge
-# two-gate also carries: staged, promote_nudges, approved_<gate>, case_<gate> (01-05 T1)
+# ── DONE-gate progress per block: {block_id: {stage, pr, ...}} (runtime only) ──
+# engineer stage in: local | ci | ci-wait | merge | trunk | close (01-08 T5); the worker gate ends
+# at trunk (merge = merge-to-trunk; CI auto-deploys staging). prod promotion is operator-only.
+# also carries: stall_attempts, trunk_nudges, close_nudges, approved_merge, self_merge,
+# awaiting_rework, case_merge. reviewer gate: review:<type> -> {stage: review} (loop-until-clean).
 gate: {}
 
 # ── block id -> the branch the worker NAMED for it (it owns the name; TRON never guesses — T2) ──
@@ -56,7 +58,7 @@ open_prs: {}
 blocked: []
 
 # ── Parked operator cases keyed by correlation id (02-10 stamps it; reply settles by it) ──
-# {CASE-NNN: {block, kind: wall|await|merge_staging|promote_main, worker_id, detail, raised_at, decision}}
+# {CASE-NNN: {block, kind: wall|await|merge, worker_id, detail, raised_at, decision}}
 pending_cases: {}
 
 # ── Operator-pre-registered await checkpoints (rung a of the await ladder, R-AWAIT) ──
@@ -65,13 +67,11 @@ checkpoints: []
 # ── Operator run-control flag PULSE checks each tick (R-HALT): absent | pause | drain | halt ──
 # run_control: pause   # set/reset by PARLEY commands (pause/drain/resume/halt); not a classify tag
 
-# ── Two-gate merge knob (01-05 T1): APPROVED | ASK. Reset each session. A single-gate repo
-#    (project.repo.staging: none) ignores both and uses one merge step to main. ──
-#    merge_staging: feature -> staging (APPROVED -> TRON instructs the merge unprompted)
-#    promote_main:  staging -> main    (ASK -> needs an operator `resume` first)
+# ── Ask-before-merging control (01-08 T8): APPROVED | ASK. Reset each session. ASK parks one
+#    operator case at the trunk-merge step (four outcomes: approve | self-merge | changes | drop).
+#    Default APPROVED — TRON instructs the merge unprompted. Prod promotion is operator-only. ──
 approvals:
-  merge_staging: APPROVED
-  promote_main: ASK
+  merge: APPROVED
 
 # ── Live config (this session) ──
 live_config:

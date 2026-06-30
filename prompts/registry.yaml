@@ -9,16 +9,19 @@
 # The prompt COPY is the operator's to author (R-PMT seam 2) — this layer is the mechanism.
 # Versioned with the canon (no separate marker — single versioning; M-06 is out of scope).
 #
-# id scheme: PMT-<ROLE>-<PURPOSE>  (or PMT-<PURPOSE> when role-generic). Traced to the
-# sentry<->PMT map in contracts/rebuild-spec.md (T3).
+# id scheme: PMT-<PURPOSE> (role-generic — the lane carries the role); a non-role
+# qualifier that adds meaning stays (e.g. PMT-SCOPE-REMEDIATION, a SCOPE variant).
 
 prompts:
-  PMT-SPAWN:          { file: PMT-SPAWN.md,          slots: [worker_id, role, persona, report] }
-  PMT-ENG-ASSIGN:     { file: PMT-ENG-ASSIGN.md,     slots: [worker_id, block] }
-  PMT-REV-ASSIGN:     { file: PMT-REV-ASSIGN.md,     slots: [worker_id, count] }
-  PMT-ARCH-FORWARD:   { file: PMT-ARCH-FORWARD.md,   slots: [block] }
-  PMT-ARCH-LOGREVIEW: { file: PMT-ARCH-LOGREVIEW.md, slots: [type] }
-  PMT-ARCH-TRIAGE:    { file: PMT-ARCH-TRIAGE.md,    slots: [detail] }
-  PMT-GATE-DONE:      { file: PMT-GATE-DONE.md,      slots: [worker_id, block, detail] }
-  PMT-PING:           { file: PMT-PING.md,           slots: [worker_id] }
-  PMT-RELEASE:        { file: PMT-RELEASE.md,        slots: [worker_id] }
+  PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report] }
+  PMT-ASSIGN:            { file: PMT-ASSIGN.md,            slots: [worker_id, assignment] }
+  PMT-SCOPE:             { file: PMT-SCOPE.md,             slots: [block] }
+  PMT-RECONCILE:         { file: PMT-RECONCILE.md,         slots: [block, after] }
+  PMT-SCOPE-REMEDIATION: { file: PMT-SCOPE-REMEDIATION.md, slots: [type] }
+  PMT-TRIAGE:            { file: PMT-TRIAGE.md,            slots: [detail, sender] }
+  PMT-DONE-LOCAL:        { file: PMT-DONE-LOCAL.md,        slots: [worker_id, block] }
+  PMT-DONE-MERGE:        { file: PMT-DONE-MERGE.md,        slots: [worker_id, block] }
+  PMT-DONE-TRUNK:        { file: PMT-DONE-TRUNK.md,        slots: [worker_id, block] }
+  PMT-DONE-REVIEW:       { file: PMT-DONE-REVIEW.md,       slots: [worker_id] }
+  PMT-CLOSE:             { file: PMT-CLOSE.md,             slots: [worker_id] }
+  PMT-PING:              { file: PMT-PING.md,              slots: [worker_id] }

@@ -140,8 +140,9 @@ def induce_ingest_drop(ctx):
 
 def induce_gate_stuck(ctx):
     eng = engine(ctx)
-    # A single-gate block whose PR is gone and re-nudge cap is exceeded -> escalate (no silent stuck).
-    eng.st.gate["A-01"] = {"pr": 11, "post_merge_nudges": 99, "stage": "post-merge"}
+    # A block whose PR merged (gone) but never re-validated on trunk, past the re-nudge cap ->
+    # escalate (no silent stuck). stage 'trunk' with trunk_nudges over the cap.
+    eng.st.gate["A-01"] = {"pr": 11, "trunk_nudges": 99, "stage": "trunk"}
     eng._drive_gate("A-01", eng.st.gate["A-01"])
     return [r for r in failures(ctx) if r.get("fclass") == "gate-stuck"]
 

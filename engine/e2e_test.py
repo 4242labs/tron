@@ -95,8 +95,8 @@ def run():
 
         report(ctx, "A-01 done", "worker.done", {"block": "A-01"})
         st = util.load_yaml(ctx.state)
-        ok("worker.done opens the DONE gate (validate-local), block not ✅",
-           st.get("gate", {}).get("A-01", {}).get("stage") == "validate-local"
+        ok("worker.done opens the DONE gate (local/DONE-LOCAL), block not ✅",
+           st.get("gate", {}).get("A-01", {}).get("stage") == "local"
            and pipe(ctx)["A-01"] != "done")
 
         _PRS["feat/A-01"] = {"number": 1, "checks": "passing"}
@@ -109,12 +109,19 @@ def run():
         land(repo, "A-01")
         quiet_tick(ctx)
         st = util.load_yaml(ctx.state)
-        ok("✅ on trunk -> done, engineer released, reconcile A-02 raised (M-05)",
+        ok("✅ on trunk -> CLOSE: engineer HELD (slot not freed yet), reconcile A-02 raised (M-05)",
            pipe(ctx)["A-01"] == "done"
-           and not any(w.get("block") == "A-01" for w in workers(ctx, "engineer"))
+           and st.get("gate", {}).get("A-01", {}).get("stage") == "close"
+           and any(w.get("block") == "A-01" for w in workers(ctx, "engineer"))
            and ("A-02" in [j.get("block") for j in st.get("architect_queue", [])]
                 or (next((w for w in st.get("active_workers", []) if w.get("role") == "architect"),
                          {}).get("current_job") or {}).get("block") == "A-02"))
+
+        report(ctx, "A-01 cleaned up", "worker.done", {"block": "A-01"})   # CLOSE clean-confirm (T7)
+        st = util.load_yaml(ctx.state)
+        ok("CLOSE confirmed -> engineer released, gate cleared",
+           not any(w.get("block") == "A-01" for w in workers(ctx, "engineer"))
+           and "A-01" not in st.get("gate", {}))
         ok("A-02 dispatch is gated until reconciled", not any(
             w.get("block") == "A-02" for w in workers(ctx, "engineer")))
 
@@ -127,12 +134,19 @@ def run():
         quiet_tick(ctx)
         land(repo, "A-02")
         quiet_tick(ctx)
-        ok("A-02 lands ✅ -> done; cadence reviewer comes due (PULL)",
+        ok("A-02 lands ✅ -> CLOSE; cadence reviewer comes due (PULL)",
            pipe(ctx)["A-02"] == "done" and workers(ctx, "reviewer"))
+        report(ctx, "A-02 cleaned up", "worker.done", {"block": "A-02"})   # release ENG-A-02
 
+        # Reviewer DONE-REVIEW gate (T5): the first hand-back challenges full coverage (held);
+        # the attestation releases it + queues the architect remediation.
         report(ctx, "code review done", "worker.review_done", {"type": "code"})
         st = util.load_yaml(ctx.state)
-        ok("review_done releases reviewer + queues architect log-review",
+        ok("review_done opens DONE-REVIEW gate (reviewer HELD to attest coverage)",
+           "review:code" in st.get("gate", {}) and bool(workers(ctx, "reviewer")))
+        report(ctx, "code review fully covered", "worker.review_done", {"type": "code"})
+        st = util.load_yaml(ctx.state)
+        ok("review attested -> reviewer released + architect remediation queued",
            not workers(ctx, "reviewer"))
 
         ended = report(ctx, "log review done", "architect.logged", {"block": "adhoc", "adhoc": []})

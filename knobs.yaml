@@ -13,6 +13,9 @@ knobs:
                            # NO baked default — start refuses until the operator sets it.
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
   git: on                  # whether the build commits via git (drives R8 + any ci availability)
+  ask_before_merging: false  # ON -> the trunk-merge step pauses for the operator (T8); the bootup
+                           # question sets it per-session. Default off: TRON instructs merges itself.
+                           # (Prod promotion is operator-only regardless — never a worker stage.)
   silence_ping_min: 6      # worker silent this many minutes -> heartbeat ping
   silence_escalate_min: 8  # silent past this -> engine emits worker:stalled (> ping)
   # WAKE pulse-timing bounds (the daemon reads these, 01-04). Fixed knobs: edit here,

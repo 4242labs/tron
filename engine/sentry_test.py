@@ -134,50 +134,50 @@ def t_bootup():
     ok("AC-4/B12 re-run bootup idempotent (exactly one architect)", len(archs) == 1, f"got {len(archs)}")
 
 
-# ── AC-3: DONE gate (prompted, evidence-only, honours Deploy:) ──
+# ── AC-3/AC-7: DONE gate — LOCAL -> MERGE -> TRUNK -> CLOSE on evidence (01-08 T5/T7) ──
 def t_done_gate():
-    ctx, _ = build(blocks=[("A-01", "📋", "none"), ("A-02", "📋", "check")])
+    ctx, _ = build(blocks=[("A-01", "📋", "none")])
     eng = Engine(ctx); started(eng)
     eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
                            "session_id": "dry", "status": "working"})
-    # no PR yet -> validate-local, never ✅ on a bare claim.
+    # no PR yet -> local (DONE-LOCAL), never ✅ on a bare claim.
     g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
     eng._drive_gate("A-01", g)
-    ok("AC-3 no PR -> validate-local stage", g["stage"] == "validate-local")
+    ok("AC-3 no PR -> local (DONE-LOCAL) stage", g["stage"] == "local")
     ok("AC-3 never marks done from a claim",
        eng.st.row("A-01").get("status") != "done")
-    # PR open + CI green, no Deploy -> merge instr says no deploy.
+    # PR open + CI green -> merge (DONE-MERGE) stage (CI auto-deploys staging).
     eng.st.data["open_prs"] = {"feat/A-01": {"number": 7, "checks": "passing"}}
     eng._drive_gate("A-01", g)
-    last = events(ctx)[-1]
-    ok("AC-3 CI green -> merge stage, no-deploy noted",
-       g["stage"] == "merge" and "No deploy declared" in last)
-    # block with Deploy: check -> merge instr names the deploy.
-    eng.st.workers.append({"id": "ENG-A-02", "role": "engineer", "block": "A-02",
-                           "session_id": "dry", "status": "working"})
-    g2 = eng.st.gate.setdefault("A-02", {"stage": None, "pr": None})
-    eng.st.data["open_prs"]["feat/A-02"] = {"number": 8, "checks": "passing"}
-    eng._drive_gate("A-02", g2)
-    ok("AC-3 Deploy: honoured in gate instr",
-       "deploy (check)" in events(ctx)[-1])
+    ok("AC-3 CI green -> merge (DONE-MERGE) stage", g["stage"] == "merge")
+    # PR merged (gone), not ✅ -> trunk (DONE-TRUNK) re-validate.
+    eng.st.data["open_prs"] = {}
+    eng._drive_gate("A-01", g)
+    ok("AC-3 PR merged, not ✅ -> trunk (DONE-TRUNK) stage", g["stage"] == "trunk")
+    # ✅ on trunk -> close (CLOSE); the slot is HELD (worker NOT released until it confirms clean).
+    eng.st.row("A-01")["status"] = "done"
+    eng._drive_gate("A-01", g)
+    ok("AC-7 ✅ -> close stage, slot HELD (worker not released)",
+       g["stage"] == "close"
+       and any(w.get("block") == "A-01" for w in eng.st.workers))
 
 
-# ── AC-8: no-silent-stuck (merged but not landed) ──
+# ── AC-8: no-silent-stuck (merged but not re-validated on trunk) ──
 def t_no_silent_stuck():
     ctx, _ = build(blocks=[("A-01", "🔄", "none")])
     eng = Engine(ctx); started(eng)
     eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
                            "session_id": "dry", "status": "working"})
     g = eng.st.gate.setdefault("A-01", {"stage": "merge", "pr": 7})
-    eng.st.data["open_prs"] = {}        # PR gone, block not ✅
+    eng.st.data["open_prs"] = {}        # PR gone, block not ✅ -> trunk re-validate
     cap = int(eng.knobs.get("gate_post_merge_cap", 3))
     nudged = False
     for _ in range(cap):
         eng._tq = []
         eng._drive_gate("A-01", eng.st.gate.get("A-01", g))
-        if eng.st.gate.get("A-01", {}).get("stage") == "post-merge":
+        if eng.st.gate.get("A-01", {}).get("stage") == "trunk":
             nudged = True
-    ok("AC-8 post-merge keeps re-nudging (not silent)", nudged)
+    ok("AC-8 trunk re-validate keeps re-nudging (not silent)", nudged)
     eng._tq = []
     eng._drive_gate("A-01", eng.st.gate.get("A-01", g))   # cap exceeded -> escalate
     walled = any(t.startswith("wall:raised:A-01") for t, _ in eng._tq)
