@@ -31,7 +31,7 @@ repo:                       # OPTIONAL block; present when a git workflow is use
   name: <str>
   root: <path>              # the trunk checkout TRON reads; agents build in worktrees off it
   main_branch: <str>        # e.g. main
-  staging: staging | none   # two-gate (staging+main) vs single-gate merge model
+  staging: staging | none   # staging = a staging deploy exists (CI auto-deploys from trunk to validate); none = no staging. Workers merge to trunk only; prod is operator-only.
   remote: <org/repo>        # OPTIONAL
   worktrees_dir: <path>     # default ../worktrees/  (<workspace>/worktrees/<repo>--<branch>/)
   logs_dir: <path>
