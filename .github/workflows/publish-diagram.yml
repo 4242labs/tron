@@ -43,6 +43,7 @@ jobs:
           done
 
       - name: Open sync PR on tron-www
+        id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.WWW_SYNC_TOKEN }}
@@ -56,3 +57,11 @@ jobs:
 
             This is a **generated copy** — do not hand-edit. Merging this PR deploys to
             `tron.42labs.io/workflow/` (GitHub Pages, on push to `main`).
+
+      - name: Auto-merge the sync PR (generated copy — no second review needed)
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.WWW_SYNC_TOKEN }}
+        run: |
+          gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" \
+            --repo 4242labs/tron-www --merge --delete-branch
