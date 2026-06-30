@@ -88,8 +88,9 @@ Also sweep the project structure tree (CLAUDE.md / AGENTS.md): any new files cre
 Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project deltas — PR base by repo:
 
 - **Meta repo:** `main`.
-- **App repo (two-gate):** `staging` (default); `hotfix/*` → `main` only.
-- **App repo (single-branch, no staging gate):** `main`.
+- **App repo:** the project's trunk (`main`) — CI auto-deploys staging for validation; `hotfix/*` → `main` only.
+
+Promotion to prod is operator-only, outside the worker flow.
 
 ---
 

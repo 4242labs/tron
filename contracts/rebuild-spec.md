@@ -70,12 +70,12 @@ situation absent here is **out of scope for Phase 1**.
 ### E. The DONE gate (prompted challenge — detailed in T4)
 | # | Situation | Behavior |
 |:--|:--|:--|
-| E1 | Candidate flagged → open the gate | start the prompted exchange against PMT-GATE-DONE |
-| E2 | Validate-local | judge on evidence the worker ran the local suite — not its `✅` |
-| E3 | Authorize-push | gate authorizes the push only after E2 passes |
-| E4 | PR → trunk | confirm the PR + its CI on trunk |
-| E5 | Deploy-if-declared | if the block's `Deploy:` says so, confirm the deploy check |
-| E6 | Gate fails a step | re-prompt with the specific gap (`gate.step`); never advance on a bare claim |
+| E1 | Candidate flagged → open the gate | start the prompted exchange; engineer ladder `gate.local → gate.merge → gate.trunk`, reviewer `gate.review` |
+| E2 | Validate-local (`gate.local`) | judge on evidence the worker ran the local suite — not its `✅` |
+| E3 | Merge to trunk (`gate.merge`) | the single gated merge: PR merged + CI green (CI auto-deploys staging); ASK-gated if "ask before merging" is on |
+| E4 | Re-validate on trunk (`gate.trunk`) | confirm every applicable AC re-run green on trunk |
+| E5 | Close (`close.worker`) | wrap up the released worker; hold the slot until it confirms clean. Prod promotion is operator-only, outside TRON |
+| E6 | Gate fails a step | re-prompt with the specific gap (`gate.local`/`gate.merge`/`gate.trunk`); never advance on a bare claim |
 
 ### F. Operator channel (`ND-09 PARLEY` — synchronous, separate from PULSE + hopper)
 | # | Situation | Verb | Behavior |
@@ -157,14 +157,16 @@ A PMT may surface through a **node** *or* through a **message** (R-PMT.2) — th
 | Node / milestone | Origin | PMT id | Today's `messages.yaml` ref |
 |:--|:--|:--|:--|
 | Spawn any worker — identity-only (C1/C4/C5/C6) | ND-03 → AGENT SPAWN | `PMT-SPAWN` | `spawn.engineer` · `spawn.reviewer` · `spawn.architect` |
-| Assign engineer — on `online` (C4) | AGENT INBOX | `PMT-ENG-ASSIGN` | `assign.engineer` |
-| Assign reviewer — on `online` (C5) | AGENT INBOX | `PMT-REV-ASSIGN` | `assign.reviewer` |
-| Architect clear-ahead (C6) | AGENT INBOX | `PMT-ARCH-FORWARD` | `arch.forward` |
-| Architect log-review (C6) | AGENT INBOX | `PMT-ARCH-LOGREVIEW` | `arch.log` |
-| Architect triage (T5 unclassified path) | AGENT INBOX | `PMT-ARCH-TRIAGE` | `arch.triage` |
-| DONE gate challenge (T4) | ND-02 gate | `PMT-GATE-DONE` | `gate.step` |
+| Assign engineer — on `online` (C4) | AGENT INBOX | `PMT-ASSIGN` | `assign.engineer` |
+| Assign reviewer — on `online` (C5) | AGENT INBOX | `PMT-ASSIGN` | `assign.reviewer` |
+| Architect scope a block (C6) | AGENT INBOX | `PMT-SCOPE` | `arch.forward` |
+| Architect reconcile a block (C6) | AGENT INBOX | `PMT-RECONCILE` | `arch.reconcile` |
+| Architect remediation from a review (C6) | AGENT INBOX | `PMT-SCOPE-REMEDIATION` | `arch.remediation` |
+| Architect triage (T5 unclassified path) | AGENT INBOX | `PMT-TRIAGE` | `arch.triage` |
+| DONE gate — engineer (T4) | ND-02 gate | `PMT-DONE-LOCAL` · `PMT-DONE-MERGE` · `PMT-DONE-TRUNK` | `gate.local` · `gate.merge` · `gate.trunk` |
+| DONE gate — reviewer (T4) | ND-02 gate | `PMT-DONE-REVIEW` | `gate.review` |
 | Liveness ping (H1) | engine side-system | `PMT-PING` | `heartbeat.ping` |
-| Release worker (H4) | ND-02 Settle / ANCHOR | `PMT-RELEASE` | `release.worker` |
+| Close worker (H4) | ND-02 Settle / ANCHOR | `PMT-CLOSE` | `close.worker` |
 
 ### Does **not** carry a PMT — operator/terminal copy stays inline (human-facing, `messages.yaml`)
 `terminal.*` (between-task feedback), `escalate.*` (operator/wall copy — AIDE composes the freeform
@@ -182,28 +184,31 @@ contact is the stateless classify tag.)
 
 The DONE milestone is a **prompted challenge sequence**, never the worker's `✅` and never bare trunk
 presence (D1). `Flag candidates` (ND-02) only marks a block that *might* be done; the gate settles it.
-Driven by `PMT-GATE-DONE`; the engine judges on **evidence at each step**.
+Driven by the stage prompts (engineer: `gate.local` → `gate.merge` → `gate.trunk`; reviewer: `gate.review`),
+each fired one at a time by the gate-state machine; the engine judges on **evidence at each step**.
 
 ```
 Flag candidate (ND-02)
-   └─> validate-local   ── evidence the local suite ran clean ──> pass ─┐  fail ─> re-prompt (gate.step)
-   └─> authorize-push   ── only after validate-local passes ──────────> │
-   └─> PR → trunk       ── PR exists + CI green on trunk ──────────────> │
-   └─> deploy-if-declared ─ block `Deploy: check` → deploy verified ───> │
-                                                                         └─> DONE
+   └─> validate-local    ── evidence the local suite ran clean ─────────> pass ─┐  fail ─> re-prompt (gate.local)
+   └─> merge to trunk    ── PR merged + CI green; CI auto-deploys staging ─────> │  (ASK-gated if "ask before merging" is on)
+   └─> re-validate trunk ── every applicable AC re-run green ON trunk ─────────> │
+                                                                                 └─> CLOSE → DONE
 ```
 
-- **Validate-local** — the gate prompts for, and judges, evidence the worker ran the block's acceptance
-  suite locally. A bare "done" fails the step.
-- **Authorize-push** — the push is gated; the engine authorizes it only once local validation holds.
-- **PR → trunk** — the engine confirms the PR landed and its CI is green on trunk (read-only).
-- **Deploy-if-declared** — only when the block header declares `Deploy: check`; otherwise skipped.
-- **Fail** at any step → re-prompt with the specific gap (`gate.step`), never advance.
-- **PULSE never merges** — gates only advance state; the engineer merges once a review passes (the
-  two-gate merge model is 01-05's; this gate is the *DONE* challenge, not the merge act).
-- **No operator-approve-before-merge** (D5 / TD-02): a completed review fans out (release reviewer +
-  architect log-review); the operator gate is the wall/escalation path only. The retired merge-escalation
-  message and its merge sign-off decision are **removed**, not modeled here.
+- **Validate-local** (`gate.local`) — the gate prompts for, and judges, evidence the worker ran the block's
+  acceptance suite locally. A bare "done" fails the step.
+- **Merge to trunk** (`gate.merge`) — the **single gated merge**: PR merged, CI green; CI auto-deploys
+  staging (the agent's validation target). ASK-gated when the operator turned on "ask before merging" (T8),
+  with four outcomes: approve · operator merges it (agent resumes at trunk) · changes requested · drop.
+- **Re-validate on trunk** (`gate.trunk`) — every applicable AC re-run on trunk; a block can't slide from
+  merged to done without proving it there.
+- **Reviewer** (`gate.review`) — a reviewer's DONE is full coverage since its last review; loops until a
+  clean yes (the gate path is reviewer-shaped, not the engineer ladder).
+- **Fail** at any step → re-prompt with the specific gap, never advance.
+- **Close** — `close.worker` (`PMT-CLOSE`) wraps up any released worker (engineer success / reviewer done /
+  early release); the slot is **held** until the worker confirms clean, only then is the process killed.
+- **Prod is operator-only** — the worker flow ends at trunk; promotion to prod is outside TRON (the operator
+  does it manually, for now). There is no worker-driven and no operator-triggered prod gate.
 
 01-03 builds the engine gate from this section.
 
@@ -260,7 +265,7 @@ plus `*` (the SENTRY catch-all), `|` (alternatives), terminals `end` / `-`. Matc
 
 ### Unclassified → architect triage (the catch-all path)
 When a message won't sit in the enum — or the invalid-output retry budget is exhausted — it becomes
-**`unclassified`** → the `*` catch-all → the engine **hands it to the architect** (`PMT-ARCH-TRIAGE`):
+**`unclassified`** → the `*` catch-all → the engine **hands it to the architect** (`PMT-TRIAGE`):
 - solvable as upcoming work → the architect scopes it forward;
 - truly the operator's call → the architect says so, and **only then** does it become a wall (R3).
 
@@ -293,5 +298,6 @@ validation error appended (budget `invalid_output.max_retries`, default 2) · **
 ## Conformance
 
 This spec asserts no item that contradicts ADR-0001 or the drawn flow (AC-5). Open items are explicitly
-deferred to their owning block (01-02 naming/PMT-content, 01-03 engine + `tron.md` fix, 01-05 two-gate
-merge, 01-06 forensic log) — none reopen a locked decision.
+deferred to their owning block (01-02 naming/PMT-content, 01-03 engine + `tron.md` fix, 01-05 merge/CI
+gate — its two-gate model was later retired to a single trunk merge in 01-08, 01-06 forensic log) — none
+reopen a locked decision.

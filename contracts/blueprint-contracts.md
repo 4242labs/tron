@@ -228,17 +228,20 @@ bounded tick** that carries no state between wakes — the daemon owns timing on
 Atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
 
 **The DONE gate (the prompted challenge, T4 of `rebuild-spec.md`).** A `worker.done` only *flags a candidate*;
-the gate then judges on **evidence** at each stage — never the worker's `✅`, never bare trunk presence:
-validate-local → authorize-push (PR open) → CI green on trunk → **merge** → deploy-if-declared (only when the
-block header declares `Deploy:`) → `✅`. A failed stage re-prompts with the specific gap (`gate.step`), never
-advancing. **PULSE never merges** — the engineer lands it all via PR; there is **no operator-approve-before-merge**.
+the gate then judges on **evidence** at each stage — never the worker's `✅`, never bare trunk presence. The
+engineer ladder is fired one stage at a time: **validate-local** (`gate.local`) → **merge to trunk**
+(`gate.merge`: PR merged + CI green; CI auto-deploys staging, the agent's validation target) → **re-validate
+on trunk** (`gate.trunk`) → **close** (`close.worker`). A reviewer's gate is `gate.review` — full coverage
+since the last review, looped until clean. A failed stage re-prompts with the specific gap, never advancing.
 
-**Two-gate merge (01-05 T1).** The merge stage is the per-project knob, not a sign-off on every merge. A
-**single-gate** repo (`project.repo.staging: none`) has one `merge` step → main. A **two-gate** repo splits it:
-**merge-staging** (knob `merge_staging`, default **APPROVED** — TRON instructs the merge unprompted) → the worker
-merges to staging → **promote-main** (knob `promote_main`, default **ASK** — TRON parks one operator case via the
-standard escalate/`operator:decision` path and holds until the operator `resume`s it). The blanket
-operator-approve-before-merge model stays removed (D5/TD-02); only an `ASK` gate stops here. **Branch ownership
+**One gated merge — to trunk (01-08, retiring 01-05's two-gate).** There is a **single** gated merge: the
+worker merges to trunk and CI auto-deploys staging. The earlier two-gate / `promote_main` model is **removed**.
+The merge step is ASK-gated only when the operator turns on **"ask before merging"** — then TRON parks one
+operator case (the standard escalate/`operator:decision` path) with four outcomes: **approve** · **operator
+merges it** (the agent resumes at `gate.trunk`) · **changes requested** (relayed back to the agent) · **drop**.
+Otherwise the merge proceeds unprompted. **Prod is operator-only:** the worker flow ends at trunk; promotion to
+prod is outside TRON (the operator does it manually, for now) — no worker-driven and no operator-triggered prod
+gate. **Branch ownership
 (T2):** the agent **names its own branch + worktree**; TRON records the name the worker reports (`worker.branch`)
 and resolves its PR/CI on trunk by **that** name — never a guessed `feat/<block>`. **Read-only trunk (T3):** the
 seeded scaffold ships a `.githooks/` guard (`pre-commit`/`pre-push`) refusing direct-to-trunk commits, plus a

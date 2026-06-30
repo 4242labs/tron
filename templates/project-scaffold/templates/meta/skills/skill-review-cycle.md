@@ -120,7 +120,7 @@ After §1–§6 validation passes:
 
 **Git sync:**
 
-Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project deltas: meta-repo work PRs to `main`; app-repo changes follow the app branching convention — `staging` if two-gate is live, `main` if single-branch, `hotfix/*` → `main` only.
+Follow `skills/skill-worktree-and-branching.md` for the full procedure (feature branch + worktree + PR + monitored merge; never commit/push on a protected branch; never arm auto-merge). Project deltas: meta-repo work PRs to `main`; app-repo changes PR to the project's trunk (`main`) — CI auto-deploys staging for validation; `hotfix/*` → `main` only. Promotion to prod is operator-only, outside this cycle.
 
 **Review log:**
 
