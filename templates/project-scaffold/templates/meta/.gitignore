@@ -1,0 +1,6 @@
+# Host-runtime working files — canon is model-agnostic (agent instructions live in AGENTS.md).
+# A host runtime (e.g. an assistant CLI) may drop a CLAUDE.md here; keep it local, never commit it.
+CLAUDE.md
+
+# OS cruft
+.DS_Store

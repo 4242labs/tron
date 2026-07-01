@@ -4,6 +4,19 @@ Versions the meta/app/workspace template payload. Every entry pairs with the SUP
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 
+## 1.3.0 — 2026-06-30
+
+Adopts the model-agnostic **`AGENTS.md`** standard in place of `CLAUDE.md` — canon carries no
+host-runtime name, and any assistant that reads `AGENTS.md` works out of the box.
+
+- **Renamed** the three payload agent-doc templates `CLAUDE.md` → `AGENTS.md` (workspace root,
+  `meta/`, `app/app/`) and repointed every reference to `app/AGENTS.md` across `principles.md`,
+  `agents/engineer.md`, and the `skill-review-code` / `skill-review-cycle` / `skill-session-end-*`
+  staleness tables.
+- **Added `meta/.gitignore`** ignoring a stray `CLAUDE.md` so a host-runtime working file is never
+  committed. (The app repo's `.gitignore` — generated at scaffold time — should ignore `CLAUDE.md`
+  too; folded into the scaffolder skill, see pipeline P-06.)
+
 ## 1.2.0 — 2026-06-06
 
 Realigns the workflow for supervisor-driven delivery (where a deterministic supervisor

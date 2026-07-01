@@ -79,7 +79,7 @@ Rows are the Core Docs that ship with the scaffold. Skip any row whose doc this 
 | 3 | `principles.md` — agent behavior rules | `principles.md` | YES / NO | |
 | 4 | `guidelines-coding.md` — code standards + secure coding | `../<APP_REPO_NAME>/docs/guidelines-coding.md` | YES / NO | |
 | 5 | `playbook-infra.md` — infra, secrets, services | `../<APP_REPO_NAME>/docs/playbook-infra.md` | YES / NO | |
-| 6 | `CLAUDE.md` — app technical spec | `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | |
+| 6 | `AGENTS.md` — app technical spec | `../<APP_REPO_NAME>/app/AGENTS.md` | YES / NO | |
 
 **If any doc is stale:**
 - Fix it now if the change is factual and unambiguous (e.g., new route, new component, new migration)
@@ -91,9 +91,9 @@ Rows are the Core Docs that ship with the scaffold. Skip any row whose doc this 
 
 Verify docs don't contradict each other or the actual system:
 
-- [ ] Project structure in `../<APP_REPO_NAME>/app/CLAUDE.md` matches actual `app/` directory layout
-- [ ] Routes listed in `../<APP_REPO_NAME>/app/CLAUDE.md` match actual routes in `src/app/`
-- [ ] Tech stack in `../<APP_REPO_NAME>/app/CLAUDE.md` matches `package.json` dependencies
+- [ ] Project structure in `../<APP_REPO_NAME>/app/AGENTS.md` matches actual `app/` directory layout
+- [ ] Routes listed in `../<APP_REPO_NAME>/app/AGENTS.md` match actual routes in `src/app/`
+- [ ] Tech stack in `../<APP_REPO_NAME>/app/AGENTS.md` matches `package.json` dependencies
 - [ ] Pipeline phase statuses match block doc statuses
 - [ ] Any new tables referenced in block docs exist in `app/supabase/migrations/`
 - [ ] Agent docs reference skills that actually exist in `skills/`

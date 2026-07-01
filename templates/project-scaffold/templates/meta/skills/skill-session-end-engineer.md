@@ -77,9 +77,9 @@ Rows are the Core Docs that ship with the scaffold. Skip any row whose doc this 
 | `principles.md` | YES / NO | ✅ / N/A |
 | `../<APP_REPO_NAME>/docs/guidelines-coding.md` | YES / NO | ✅ / N/A |
 | `../<APP_REPO_NAME>/docs/playbook-infra.md` | YES / NO | ✅ / N/A |
-| `../<APP_REPO_NAME>/app/CLAUDE.md` | YES / NO | ✅ / N/A |
+| `../<APP_REPO_NAME>/app/AGENTS.md` | YES / NO | ✅ / N/A |
 
-Also sweep the project structure tree (CLAUDE.md / AGENTS.md): any new files created this session (routes, lib modules, components, migrations) must appear there. Missing entries → add them now.
+Also sweep the project structure tree (AGENTS.md): any new files created this session (routes, lib modules, components, migrations) must appear there. Missing entries → add them now.
 
 ---
 
