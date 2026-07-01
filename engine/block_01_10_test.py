@@ -313,10 +313,30 @@ def t_runner_crash_resume():
     jobs.release(wid)
 
 
+# ── worker->engine return path (01-10 follow-up): the two-step ONLINE handshake fires off a
+#    deterministic runner liveness signal (spawn-turn completion), NOT a classified report — so
+#    the assignment delivers without the agent running report.sh, and without forwarding turns
+#    (which duplicated report.sh + tripped the DONE gate; see the 02-02-02 tron-03 run). ──
+def t_runner_liveness_online_signal():
+    os.environ["TRON_RUNNER_POLL_S"] = "0.2"
+    store = tempfile.mkdtemp(prefix="tron-online-")
+    jobs.configure(store)
+    wid = "ENG-D-04"
+    wd = os.path.join(store, wid)
+    os.makedirs(wd)
+    jobs.send(wd, 1, "spawn.engineer", "come online")   # identity-only spawn; no assignment yet
+    jobs.spawn_runner(wid, wd, "sess-online", cwd=store, adapter="echo")
+    ok("online signal: spawn turn completes", _wait(lambda: _hwm(wd) >= 1))
+    # turns>=1 is the exact deterministic fact fsm._sweep reads to deliver the pending assignment
+    ok("online signal: turns>=1 surfaced via jobs.index (deterministic handshake)",
+       _wait(lambda: (jobs.find(wid) or {}).get("turns", 0) >= 1))
+    jobs.release(wid)
+
+
 def main():
     for t in (t_no_remote_trunk, t_fsm_threads_remote, t_judge_stdin, t_worker_online,
               t_mailbox_append, t_seq_idempotent, t_runner_e2e, t_runner_resume,
-              t_runner_crash_resume):
+              t_runner_crash_resume, t_runner_liveness_online_signal):
         try:
             t()
         except Exception as e:

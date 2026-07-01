@@ -1313,6 +1313,13 @@ class Engine:
             if not alive:
                 self._emit("worker:stalled", {"worker_id": w.get("id")})
                 continue
+            # Deterministic two-step online handshake (01-10 return-path fix): a spawned worker is
+            # "online" once its runner has completed the identity/spawn turn (turns >= 1) — a runner
+            # liveness FACT, not a classified message. Deliver its pending assignment off that
+            # signal; no report.sh dependency, no turn-forwarding, no classify. Idempotent: the
+            # handler clears pending_assign, so a later report.sh "online" is a harmless no-op.
+            if w.get("pending_assign") and (jobs.find(w.get("id"), idx) or {}).get("turns", 0) >= 1:
+                self._h_worker_online({"worker_id": w.get("id")})
             sig = jobs.activity_signals(w.get("id"), since_iso=last, idx=idx)
             if jobs.has_positive_activity(sig):
                 continue

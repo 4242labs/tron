@@ -14,8 +14,11 @@ stable; the session id is not). Each worker owns a directory under `<instance>/w
     timeline.jsonl     the worker's turn log     (console tail + the engine's liveness sweep)
     .stop              release sentinel          (engine writes it; the runner exits cleanly)
 
-The worker->engine direction is unchanged: workers call `report.sh` -> `worker-inbox.jsonl`,
-which the engine drains every tick. This module is the symmetric mirror for engine->worker.
+The worker->engine direction: a worker calls `report.sh` -> `worker-inbox.jsonl` for explicit
+reports (progress/done/questions), which the engine drains every tick. The two-step *online*
+handshake needs no message at all — the engine reads the runner's spawn-turn completion (`turns`
+in runner.json) as a deterministic liveness signal (see fsm `_sweep`). This module is the
+symmetric mirror for engine->worker.
 """
 import os
 import json
@@ -92,6 +95,7 @@ def index():
             "state": st.get("state"),
             "updated_at": st.get("updated_at"),
             "pid": st.get("pid"),
+            "turns": st.get("turns", 0),   # completed turns; >=1 => the spawn/identity turn is done
             "dir": wdir,
         }
     return out
