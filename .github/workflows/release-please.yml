@@ -2,14 +2,13 @@ name: release-please
 
 # Maintains VERSION + CHANGELOG.md from conventional-commit history on merge to main.
 # See CONTRIBUTING.md (commit convention) and blocks/m-06-blueprint-versioning.md.
+# Uses WWW_SYNC_TOKEN (a PAT) to open the release PR — this repo's default GITHUB_TOKEN
+# can't create PRs (Settings -> Actions -> General -> Workflow permissions), same reason
+# publish-diagram.yml doesn't rely on it either.
 
 on:
   push:
     branches: [main]
-
-permissions:
-  contents: write
-  pull-requests: write
 
 jobs:
   release-please:
@@ -17,5 +16,6 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
+          token: ${{ secrets.WWW_SYNC_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
