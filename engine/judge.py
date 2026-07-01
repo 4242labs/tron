@@ -106,9 +106,13 @@ def _call_llm(tool, payload, ctx, correction=None):
     if correction:
         parts.append(f"\n\nYour previous output failed validation: {correction}")
     from jobs import RUNTIME
-    cmd = [RUNTIME, "-p", "--model", TIER[tool], "".join(parts)]
+    # The prompt body goes on STDIN, never as a positional arg: tron.md leads with `---`
+    # frontmatter, which the runtime would parse as an unknown CLI option (empty output ->
+    # every classify fails). Only the model/tier flags stay as argv.
+    cmd = [RUNTIME, "-p", "--model", TIER[tool]]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(cmd, input="".join(parts),
+                           capture_output=True, text=True, timeout=120)
         return r.stdout or ""
     except subprocess.SubprocessError:
         return ""

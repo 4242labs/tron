@@ -98,6 +98,16 @@ class Ctx:
     def logs_dir(self):
         return self.p("logs")
 
+    # ── worker store (01-10): TRON-owned, keyed by STABLE worker id (never session id). Each
+    # worker's mailbox (engine->worker), runner state, and turn timeline live here. Replaces the
+    # host job store: workers are runner-wrapped processes TRON owns, not free-running bg agents. ──
+    @property
+    def workers_dir(self):
+        return self.p("workers")
+
+    def worker_dir(self, worker_id):
+        return self.p("workers", worker_id)
+
     @property
     def scripts_dir(self):
         return self.p("scripts")
@@ -128,6 +138,7 @@ class Ctx:
             "root": root,
             "main_branch": repo.get("main_branch", "main"),
             "staging": repo.get("staging", "none"),
+            "remote": repo.get("remote"),   # None/"none" -> local trunk mode (read HEAD in place, no fetch)
             "pipeline": under("pipeline_path", "meta/pipeline.md"),
             "blocks": under("blocks_dir", "meta/blocks/"),
             "archive": under("archive_dir", "meta/blocks/archive/"),

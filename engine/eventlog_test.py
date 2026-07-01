@@ -150,15 +150,15 @@ def induce_gate_stuck(ctx):
 def induce_dispatch_fail(ctx):
     eng = engine(ctx)
     eng.dry = False                                    # so _spawn reaches the spawn call
-    orig = jobs.spawn_detached
-    jobs.spawn_detached = lambda *a, **k: (_ for _ in ()).throw(OSError("simulated spawn failure"))
+    orig = jobs.spawn_runner
+    jobs.spawn_runner = lambda *a, **k: (_ for _ in ()).throw(OSError("simulated spawn failure"))
     raised = False
     try:
         eng._spawn("ENG-A-01", "spawn.engineer", "engineer", block="A-01")
     except OSError:
         raised = True
     finally:
-        jobs.spawn_detached = orig
+        jobs.spawn_runner = orig
     return raised, [r for r in failures(ctx) if r.get("fclass") == "dispatch-fail"]
 
 

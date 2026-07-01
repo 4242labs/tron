@@ -22,12 +22,19 @@ def _run(args, cwd=None, timeout=_TIMEOUT):
         return 1, "", str(e)
 
 
-def refresh(repo_root, main_branch="main", dry=False):
+def refresh(repo_root, main_branch="main", dry=False, remote=None):
     """Fast-forward the trunk checkout to origin. Best-effort: never raises, never
     blocks the loop. Returns (ok, detail). On failure the caller reuses the last
-    snapshot (the files already on disk)."""
+    snapshot (the files already on disk).
+
+    Local / no-remote mode: when the project declares no remote (`repo.remote`
+    absent or `none`), the root IS the authority — there is nothing to fetch, so we
+    read HEAD in place (mirrors the `not repo_root` branch) instead of treating the
+    missing remote as a boot-fatal fetch failure. The remote path is unchanged."""
     if dry or not repo_root:
         return True, "dry/none — read in place"
+    if not remote or remote == "none":
+        return True, "no remote — read in place"
     rc, _, err = _run(["git", "-C", repo_root, "fetch", "origin", main_branch])
     if rc != 0:
         return False, f"fetch failed: {err.strip()[:120]}"

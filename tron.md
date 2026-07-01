@@ -83,6 +83,9 @@ Read the sender first, then the intent.
   question, or just confirmation). Pull `block`, `worker_id`, `detail`, and a `kind` if the text names
   one (`checkpoint` / `scope` / `blueprint` / `trivial`). The engine picks the rung deterministically —
   you only tag it; it always reaches the operator when a checkpoint is pre-registered.
+- `worker.online` — a spawned worker's first check-in: it has come up and is ready for work. The
+  engine replies with its pending assignment. This is the one-time "I'm up" that unblocks dispatch —
+  not `worker.progress` (a mid-block heartbeat). Pull `worker_id`.
 - `worker.progress` — a heartbeat with nothing to act on.
 
 **From the architect** (its own reports, not a worker's):

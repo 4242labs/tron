@@ -29,6 +29,7 @@ into triggers, drain the trigger queue to quiescence, persist atomically, exit.
 """
 import os
 import json
+import uuid
 import hashlib
 
 import util
@@ -90,6 +91,7 @@ class Engine:
         self._trunk_sha = ""                          # last-known trunk HEAD (forensic state context)
         self._snapshot_hash = ""                      # hash of the rebuilt trunk-read snapshot (per-tick provenance)
         self.events = eventlog.EventLog(ctx, self._log_env)
+        jobs.configure(ctx.workers_dir)               # point the worker store at this instance (01-10)
 
     def _log_env(self):
         """Live forensic context stamped on every structured record (01-06): the run handle,
@@ -103,18 +105,34 @@ class Engine:
                 "trunk": self._trunk_sha}
 
     # ── emit: every human-visible line comes from messages.yaml ──
-    def emit(self, template_id, slots=None, worker_session=None):
+    def emit(self, template_id, slots=None, worker_id=None):
         line = self.renderer.render(template_id, slots or {})
         channel = self.renderer.channel(template_id)
         util.append_jsonl(self.ctx.home_log,
                           {"at": util.now_iso(), "channel": channel, "text": line})
-        if channel == "worker" and worker_session and not self.dry:
-            jobs.send(worker_session, line)
+        if channel == "worker" and worker_id and not self.dry:
+            self._to_worker(worker_id, line, template_id)
         elif channel == "tg" and not self.dry:
             self._tg_send(line)
         else:
             print(line)
         return line
+
+    def _to_worker(self, worker_id, text, kind):
+        """Engine -> worker delivery (01-10): append one seq'd line to the worker's mailbox
+        (jobs.send), keyed by the STABLE worker id — never the session id. The seq is a per-worker
+        monotonic counter on the durable worker record; it is bumped in memory here and persisted
+        only at the tick's save(), so an at-least-once re-emit (crash before save) recomputes the
+        SAME seq and the runner dedupes it by high-water. No delivery re-opens a session (finding #5).
+        `kind` is forensic metadata on the mailbox line (the message's template id / intent)."""
+        if self.dry:
+            return
+        w = next((x for x in self.st.workers if x.get("id") == worker_id), None)
+        if not w:
+            return
+        seq = int(w.get("mbox_seq", 0)) + 1
+        w["mbox_seq"] = seq
+        jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
 
     def _tg_send(self, line):
         import subprocess
@@ -184,7 +202,8 @@ class Engine:
         a failed fetch reuses the last on-disk snapshot — never block the loop.
         `count=False` (the initial load at start) skips the done-counting so pre-existing
         ✅ history is NOT mistaken for fresh completions — _seed_seen_done primes it instead."""
-        ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry)
+        ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry,
+                                   remote=self.paths.get("remote"))   # F1: thread the remote (absent/none -> local mode)
         if ok:
             self.st.counters["refresh_fail"] = 0
             self._trunk_sha = trunk.head_sha(self.paths["root"], self.dry)  # pin the tree we're reading
@@ -246,10 +265,9 @@ class Engine:
             self.st.blocked.remove(block)
         self.events.event("block_done", block=block)
         self.emit("terminal.block_done", {"block": block})
-        sess = self._session_for_block(block)
-        if sess:
+        if self._worker_id_for_block(block):
             g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
-            self._drive_close(block, g, sess, self._worker_id("engineer", block))
+            self._drive_close(block, g, self._worker_id("engineer", block))
             self.log("flow", f"{block} ✅ on trunk -> CLOSE (slot held), cadence++")
         else:
             self.st.gate.pop(block, None)                # no engineer to close out
@@ -582,17 +600,21 @@ class Engine:
 
     def _spawn(self, wid, template_id, role, block=None, rtype=None):
         """Identity-only spawn (01-07 two-step): fill PMT-SPAWN's slots and bring the worker
-        online — no assignment. `persona` (the project's agent file) and `report` (report.sh)
-        are now carried by the SPAWN copy itself (delta-only over the project's persona), so they're
-        filled here. The work follows on the worker's `online` report (assign.*)."""
+        online — no assignment. The persona prompt is delivered as the worker's FIRST mailbox
+        message (seq 1 -> the runner's turn 1); the work follows on its `online` report (assign.*).
+        `persona` (the project's agent file) and `report` (report.sh) ride the SPAWN copy itself
+        (delta-only over the project's persona). Returns (session_id, shortid) — the session id is
+        engine-minted and stable for the worker's whole life; the shortid is the worker id."""
         persona = self._agent_file(rtype and f"reviewer-{rtype}" or role) or self._agent_file(role)
         report = self.ctx.p("scripts", "report.sh")
         slots = {"worker_id": wid, "role": role, "persona": persona, "report": report}
         prompt = self.renderer.render(template_id, slots)
         if self.dry:
             return "dry", "dry"
+        session_id = str(uuid.uuid4())                 # engine-minted; stable identity, never re-minted
         try:
-            rec = jobs.spawn_detached(wid, prompt, cwd=self.paths["root"])
+            self._to_worker(wid, prompt, template_id)  # turn 1: the persona/onboarding, via the mailbox
+            jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=self.paths["root"])
         except Exception as e:
             self.events.failure(                          # forensic record (AC-2/AC-6)
                 "dispatch-fail", "spawn-failed", "spawn a worker process",
@@ -600,7 +622,7 @@ class Engine:
                 inputs={"template": template_id, "role": role, "rtype": rtype},
                 node="SWITCHBOARD dispatch", next_action="crash (reservation recovered next sweep)")
             raise
-        return rec.get("session_id", ""), rec.get("shortid", "")
+        return session_id, wid
 
     def _agent_file(self, role):
         for a in (self.project.get("agents") or []):
@@ -645,15 +667,14 @@ class Engine:
         pend = w.get("pending_assign")
         if not pend:
             return
-        sess = w.get("session_id")
         # ASSIGN is role-neutral (PMT-ASSIGN); the per-role {assignment} was composed at dispatch.
         assignment = pend.get("assignment", "")
         if pend.get("kind") == "reviewer":
             self.emit("assign.reviewer", {"worker_id": wid, "assignment": assignment},
-                      worker_session=sess)
+                      worker_id=wid)
         else:
             self.emit("assign.engineer", {"worker_id": wid, "assignment": assignment},
-                      worker_session=sess)
+                      worker_id=wid)
         w["pending_assign"] = None
         self.log("flow", f"{wid} online -> assign ({pend.get('kind')})")
 
@@ -723,10 +744,9 @@ class Engine:
             self.st.gate[gkey] = {"stage": "review"}
             self.events.event("gate_advance", block=gkey,
                               **{"from": None, "to": "review", "detail": "attest coverage"})
-            sess = rev.get("session_id") if rev else None
             wid = rev.get("id") if rev else self._worker_id("reviewer", typ)
-            if sess:
-                self.emit("gate.review", {"worker_id": wid}, worker_session=sess)
+            if rev:
+                self.emit("gate.review", {"worker_id": wid}, worker_id=wid)
             self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
             self._emit("pulse")
             return
@@ -768,7 +788,6 @@ class Engine:
         worker_id = m.get("worker_id")
         detail = m.get("detail", "")
         kind = (m.get("kind") or "").lower()
-        sess = self._session_for_worker(worker_id) or self._session_for_block(block)
         if self._is_checkpoint(block, m):                                   # rung (a)
             case_id = self._open_case(block, "await", worker_id, detail)
             self.emit("escalate.await",
@@ -780,8 +799,10 @@ class Engine:
             self._triage_to_architect(f"await[{block or '?'}]: {detail}",     # rung (b)
                                       sender=worker_id, block=block)
         else:                                                               # rung (c)
-            if sess and sess != "dry" and not self.dry:
-                jobs.send(sess, "Proceed — no checkpoint registered here and nothing to escalate.")
+            if worker_id and not self.dry:
+                self._to_worker(worker_id,
+                                "Proceed — no checkpoint registered here and nothing to escalate.",
+                                "await.proceed")
             self.log("await", f"auto-ack {worker_id or '?'} on {block or '?'}")
         self._emit("pulse")
 
@@ -793,10 +814,6 @@ class Engine:
         if m.get("checkpoint") is True:
             return True
         return bool(block) and block in (self.st.data.get("checkpoints") or [])
-
-    def _session_for_worker(self, worker_id):
-        w = next((w for w in self.st.workers if w.get("id") == worker_id), None)
-        return w.get("session_id") if w else None
 
     def _open_case(self, block, kind, worker_id, detail):
         """Stamp a correlation id on a parked operator case (02-10). The reply carries it back and
@@ -866,9 +883,10 @@ class Engine:
                 self._drive_gate(block, g, reason="operator self-merge")
             elif decision in ("changes", "amend"):                # 3. changes requested -> relay + rework
                 note = m.get("detail") or "Changes requested before merge."
-                sess = self._session_for_block(block)
-                if sess and sess != "dry" and not self.dry:
-                    jobs.send(sess, f"[TRON] Operator requested changes before merge: {note}")
+                twid = self._worker_id_for_block(block)
+                if twid and not self.dry:
+                    self._to_worker(twid, f"[TRON] Operator requested changes before merge: {note}",
+                                    "gate.changes")
                 g["awaiting_rework"] = True
                 g["stall_attempts"] = 0
                 self._close_case(m.get("case"), case)
@@ -978,9 +996,8 @@ class Engine:
             self.st.gate.pop(block, None)
             return
         wid = self._worker_id("engineer", block)
-        sess = self._session_for_block(block)
         if row and row.get("status") == "done":          # ✅ on trunk -> CLOSE (slot held, T7)
-            self._drive_close(block, g, sess, wid)
+            self._drive_close(block, g, wid)
             return
         branch = self._block_branch(block)               # the worker-named branch (T2), never a guess
         pr = (self.st.open_prs or {}).get(branch)
@@ -1019,14 +1036,14 @@ class Engine:
         if stage != g.get("stage") or renudge:
             prev = g.get("stage")
             g["stage"], g["pr"] = stage, ((pr or {}).get("number") or g.get("pr"))
-            if msg and sess:
-                self.emit(msg, {"worker_id": wid, "block": block}, worker_session=sess)
+            if msg and wid:
+                self.emit(msg, {"worker_id": wid, "block": block}, worker_id=wid)
             self.log("flow", f"gate[{block}] -> {stage}" + (f" ({reason})" if reason else ""))
             if stage != prev:                            # a real stage advance (01-09), not a re-nudge
                 self.events.event("gate_advance", block=block,
                                   **{"from": prev, "to": stage, "detail": reason})
 
-    def _drive_close(self, block, g, sess, wid):
+    def _drive_close(self, block, g, wid):
         """CLOSE stage (T7): ✅ landed. Fire CLOSE once and HOLD the slot — the worker wraps up
         (nothing unmerged, no loose worktree, local synced). The slot frees only on its clean
         confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
@@ -1034,8 +1051,8 @@ class Engine:
         if g.get("stage") != "close":
             prev = g.get("stage")
             g["stage"] = "close"
-            if sess:
-                self.emit("close.worker", {"worker_id": wid}, worker_session=sess)
+            if wid:
+                self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
             self.events.event("gate_advance", block=block,
                               **{"from": prev, "to": "close", "detail": "✅ on trunk"})
             self.log("flow", f"gate[{block}] -> close (slot held)")
@@ -1047,8 +1064,8 @@ class Engine:
             self.log("flow", f"gate[{block}] close cap -> force release")
             return
         g["close_nudges"] = n + 1
-        if sess:
-            self.emit("close.worker", {"worker_id": wid}, worker_session=sess)
+        if wid:
+            self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
 
     def _confirm_close(self, block, g):
         """The worker confirmed a clean exit -> kill its process + free the slot (T7)."""
@@ -1073,10 +1090,10 @@ class Engine:
         self._emit("wall:raised:" + block,
                    {"block": block, "worker_id": wid, "detail": detail})
 
-    def _session_for_block(self, block):
+    def _worker_id_for_block(self, block):
         w = next((w for w in self.st.workers
                   if w.get("role") == "engineer" and w.get("block") == block), None)
-        return w.get("session_id") if w else None
+        return w.get("id") if w else None
 
     def _merge_gated(self, block, g, wid):
         """Ask-before-merging (T8). Returns True = HOLD (park ONE operator case at the trunk-merge
@@ -1142,19 +1159,19 @@ class Engine:
             return
         job = self.st.architect_queue.pop(0)
         arch["status"], arch["current_job"] = "busy", job
-        sess = arch.get("session_id")
+        awid = arch.get("id")
         if job["kind"] == "forward":                      # author a missing block file (PMT-SCOPE)
-            self.emit("arch.forward", {"block": job["block"]}, worker_session=sess)
+            self.emit("arch.forward", {"block": job["block"]}, worker_id=awid)
         elif job["kind"] == "reconcile":                  # re-check an existing block vs a landed one
             self.emit("arch.reconcile", {"block": job["block"], "after": job.get("after", "")},
-                      worker_session=sess)
+                      worker_id=awid)
         elif job["kind"] == "triage":
             self.emit("arch.triage",
                       {"detail": self._triage_detail(job),
                        "sender": job.get("sender") or "the sender"},
-                      worker_session=sess)
+                      worker_id=awid)
         else:                                             # log-review -> remediation blocks
-            self.emit("arch.remediation", {"type": job.get("type", "code")}, worker_session=sess)
+            self.emit("arch.remediation", {"type": job.get("type", "code")}, worker_id=awid)
         self.log("architect", f"dispatch {job}")
 
     def _triage_detail(self, job):
@@ -1176,11 +1193,12 @@ class Engine:
 
     # ── worker release ──
     def _release_worker(self, w, notify=True, reason="released"):
-        sess = w.get("session_id")
-        if notify and sess and sess != "dry" and not self.dry:
-            jobs.send(sess, self.renderer.render("close.worker", {"worker_id": w["id"]}))
-        if sess and sess != "dry" and not self.dry:
-            jobs.release(sess)
+        wid = w.get("id")
+        if notify and not self.dry:
+            self._to_worker(wid, self.renderer.render("close.worker", {"worker_id": wid}),
+                            "close.worker")
+        if not self.dry:
+            jobs.release(wid)
         if w in self.st.workers:
             self.st.workers.remove(w)
         # Forensic record (01-09): a worker slot was freed. Single chokepoint — every release
@@ -1232,9 +1250,8 @@ class Engine:
         cur = arch.get("current_job") if arch else None
         target = (cur or {}).get("sender") or slots.get("worker_id")
         answer = slots.get("detail", "")
-        sess = self._session_for_worker(target) if target else None
-        if sess and sess != "dry" and not self.dry:
-            jobs.send(sess, f"[TRON] Architect: {answer}")
+        if target and not self.dry:
+            self._to_worker(target, f"[TRON] Architect: {answer}", "architect.relay")
         self.log("flow", f"relay architect answer -> {target or '?'}")
         self._architect_advance()
         self._emit("pulse")
@@ -1306,7 +1323,7 @@ class Engine:
                 self._emit("worker:stalled", {"worker_id": w.get("id")})
             elif delta > ping * 60 and not w.get("pinged_at"):
                 w["pinged_at"] = util.now_iso()
-                self.emit("heartbeat.ping", {"worker_id": w.get("id")}, worker_session=sess)
+                self.emit("heartbeat.ping", {"worker_id": w.get("id")}, worker_id=w.get("id"))
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):
@@ -1542,9 +1559,7 @@ class Engine:
         if self.dry:
             return
         for w in self._pool():
-            sess = w.get("session_id")
-            if sess and sess != "dry":
-                jobs.send(sess, line)
+            self._to_worker(w.get("id"), line, "broadcast")
 
     def set_scope(self, mode, value=None):
         self.st.data["scope"] = {"mode": mode, "value": value}
@@ -1564,10 +1579,11 @@ class Engine:
         if self.ended:
             return
         for w in self.st.workers:
-            sess = w.get("session_id")
-            if sess and sess != "dry" and not self.dry:
-                jobs.send(sess, self.renderer.render("close.worker", {"worker_id": w["id"]}))
-                jobs.release(sess)
+            wid = w.get("id")
+            if not self.dry:
+                self._to_worker(wid, self.renderer.render("close.worker", {"worker_id": wid}),
+                                "close.worker")
+                jobs.release(wid)
             w["status"] = "released"
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
         self.events.event("session_end", done=done)
@@ -1582,8 +1598,8 @@ class Engine:
         self._archive_manifest()             # clean-end archive (H4) + empty-archive signal for next run
 
     def recover(self):
-        """Reattach: rebuild live workers from the host job store, re-arm lost work, and
-        re-read the canon trunk. No status writes (TRON owns none)."""
+        """Reattach: rebuild live workers from the TRON worker store (runner.json per worker),
+        re-arm lost work, and re-read the canon trunk. No status writes (TRON owns none)."""
         self._refresh_from_trunk()
         idx = jobs.index()
         alive, purged, rebuilt = 0, 0, []

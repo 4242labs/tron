@@ -7,7 +7,7 @@ Entry points exposed as a callable the front (B7) builds on:
   wake                    the WAKE daemon loop (ND-08): the in-process tick scheduler
   msg "<text>"            queue an operator line and run a tick (immediate, atomic)
   stop [--force]          guard unfinished work, release the fleet, end the session
-  recover                 reattach: rebuild live workers from ~/.claude/jobs
+  recover                 reattach: rebuild live workers from the TRON worker store
   validate [--project P]  blueprint-lint (L1-L13); nonzero exit on any failure
   doctor                  validate + environment checks
   log [filters]           query the forensic event/failure log (01-06): why did TRON fail

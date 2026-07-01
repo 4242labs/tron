@@ -27,10 +27,9 @@ Obey the constraints in **What the seeder must NOT do** (bottom of this file). C
 
 TRON lives **next to the crew it dispatches.** The operator names the **agents directory** `<agents>`; TRON installs:
 
-- `<agents>/tron.md` — the judgment-tool prompt context (canon)
-- `<agents>/tron/` — TRON's folder (config, canon, scripts, state)
+- `<agents>/tron/` — TRON's folder: config, canon (including `tron.md`, the judgment-tool prompt context the engine reads via `ctx.tron_md`), scripts, state
 
-Deleting those two removes TRON cleanly. `<agents>` is project-specific — never hardcode it.
+Deleting that folder removes TRON cleanly. `<agents>` is project-specific — never hardcode it.
 
 ## What TRON needs from the host
 
@@ -44,8 +43,8 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
 ## The instance layout (what the seeder writes)
 
 ```
-<agents>/tron.md                 # canon judgment context (copied)
 <agents>/tron/
+  tron.md                        # canon judgment context (copied) — the classify_message context the engine reads (ctx.tron_md)
   tron                           # canon, copied (chmod +x) — the operator entrypoint (seeder/start)
   engine/                        # canon, copied — the deterministic engine (Python)
   project.yaml                   # seeder writes — pointers, agents, repo facts, notifications
@@ -55,7 +54,7 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
   prompts/                       # canon, copied verbatim — the PMT-* worker prompts + registry
   protocols/  scripts/  templates/   # canon, copied (scripts chmod +x)
   manifest.yaml            # the MANIFEST — runtime run-state (gitignored)
-  current-id dispatched.log .tg-offset .env logs/                       # runtime (gitignored)
+  current-id dispatched.log .tg-offset .env logs/ workers/              # runtime (gitignored; workers/ = the per-worker mailbox + runner store)
   worker-inbox.jsonl operator-inbox.jsonl tg-inbox.jsonl home-events.jsonl   # runtime (gitignored)
   seed-trace.md  .gitignore
 ```
@@ -106,7 +105,7 @@ Create `<agents>/tron/` and install TRON. No host files touched.
 
 Copy canon (verbatim — never edit):
 
-- `tron.md` → `<agents>/tron.md`
+- `tron.md` → `<agents>/tron/tron.md`  (inside the instance the engine reads via `ctx.tron_md`)
 - `tron` → `<agents>/tron/tron` (`chmod +x` — the operator entrypoint)
 - all of `engine/` → `<agents>/tron/engine/` (the deterministic engine)
 - `routing.yaml`, `messages.yaml` → `<agents>/tron/`
@@ -135,6 +134,7 @@ worker-inbox.jsonl
 operator-inbox.jsonl
 home-events.jsonl
 logs/
+workers/
 manifest.yaml
 *.proc
 engine/__pycache__/
@@ -211,6 +211,6 @@ Safely re-runnable: show current values before overwriting; diff file-by-file fo
 - Modify any file in the canon `tron/` repo.
 - Author or edit `routing.yaml` or `messages.yaml` (canon — copied verbatim only).
 - Create or edit agent files, the pipeline, or block files in the project (TRON only reads them; agents write them via PR).
-- Scaffold any host structure — write only inside `<agents>/tron/` and `<agents>/tron.md`.
+- Scaffold any host structure — write only inside `<agents>/tron/`.
 - Spawn TRON itself (the operator does that post-seed).
 - Inline secrets anywhere but `.env`.

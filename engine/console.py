@@ -27,6 +27,7 @@ class Console:
     def __init__(self, ctx):
         self.ctx = ctx
         self.renderer = Renderer(ctx)
+        jobs.configure(ctx.workers_dir)   # point the worker store at this instance (01-10)
 
     # ── event log (the engine's home-events.jsonl is the shared transcript) ──
     def _events(self):
