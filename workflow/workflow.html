@@ -84,6 +84,9 @@
   .flowhead .logo__mark{fill:var(--accent);}
   .flowhead .logo__type{fill:var(--logo);}
   .flowhead .hsep{width:1px; height:18px; background:var(--border-cool);}
+  /* version+build stamp (M-06) — reads VERSION/BUILD_DATE synced alongside this page; corner overlay, never blocks the canvas */
+  .verstamp{position:fixed; right:14px; bottom:10px; z-index:15; pointer-events:none;
+    font-family:var(--font-mono); font-size:11px; color:var(--mid-stone); letter-spacing:.02em;}
 </style>
 </head>
 <body>
@@ -95,6 +98,7 @@
     </div>
   </div></header>
   <div id="core"></div>
+  <div class="verstamp" id="verstamp"></div>
 </div>
 
 <aside class="notes-panel" id="notes" aria-label="annotations">
@@ -1101,6 +1105,17 @@ function nyanify(viewer){
     mkText(n.h-4, '10', '600', n.name);                        // descriptive name below
   });
 }
+
+// M-06: version + build-date stamp. VERSION/BUILD_DATE are synced alongside this page by
+// publish-diagram.yml (same directory) — no fetch means an older publish; fail silent, not blank canvas.
+(async ()=>{
+  try{
+    const [v, d] = await Promise.all(['VERSION','BUILD_DATE'].map(f=>
+      fetch(f).then(r=>r.ok ? r.text() : '').catch(()=>'')));
+    const stamp = [v.trim() && `v${v.trim()}`, d.trim()].filter(Boolean).join(' · ');
+    if(stamp) document.getElementById('verstamp').textContent = stamp;
+  }catch(e){ /* no stamp files published yet — leave the corner empty */ }
+})();
 
 (async ()=>{
   document.getElementById('corehead').innerHTML = headBar({name:'workflow'});   // same header component as the subs

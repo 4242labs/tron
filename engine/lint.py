@@ -15,6 +15,9 @@ A malformed flow must fail at seed/validate time, not at runtime. Two layers:
     every registry id resolves to a self-contained file · every worker-channel
     message references a PMT id that the registry knows (closed + total).
 
+  VERSION (M-06) — the instance's stamped `project.yaml.tron_version` against its
+    own copied canon `VERSION`: any gap means a partial/manual patch, not a full seed.
+
 Wired into `engine.py doctor` / `validate`. Grammar-driven: the legal token set
 is read FROM routing.yaml, so the rules check internal consistency rather than a
 hardcoded duplicate.
@@ -282,11 +285,33 @@ def _prompts(ctx):
     return r
 
 
+# ── VERSION rule (M-06): the instance's stamped tron_version vs its own copied
+# canon VERSION — the two are written from the same source at every seed, so any
+# gap means the instance was patched or partially re-seeded, not fully. A canon
+# self-lint (no project.yaml, e.g. a contributor's `./tron validate`) has no
+# per-project stamp to check — skipped, mirroring L13. ──
+def _version(ctx, project):
+    if not project:
+        return [Result("L18 version stamp matches canon", True, "(no project.yaml — skipped)")]
+    canon_v = ctx.load_version()
+    stamped = project.get("tron_version")
+    if canon_v is None:
+        return [Result("L18 version stamp matches canon", False,
+                        f"no VERSION file at {ctx.version_file} — re-seed")]
+    if not stamped:
+        return [Result("L18 version stamp matches canon", False,
+                        f"instance has no tron_version stamp (pre-M-06 seed); canon is {canon_v} — re-seed")]
+    if stamped != canon_v:
+        return [Result("L18 version stamp matches canon", False,
+                        f"drift: instance stamped {stamped}, canon VERSION is {canon_v} — re-seed")]
+    return [Result("L18 version stamp matches canon", True)]
+
+
 def run(ctx, project=None):
     """Full lint. Returns (ok, results). project optional (L13 skipped if absent)."""
     routing = ctx.load_routing()
     comp = ctx.load_knobs()
     if project is None:
         project = ctx.load_project()
-    results = _canon(routing) + _composition(comp, project) + _prompts(ctx)
+    results = _canon(routing) + _composition(comp, project) + _prompts(ctx) + _version(ctx, project)
     return all(x.ok for x in results), results

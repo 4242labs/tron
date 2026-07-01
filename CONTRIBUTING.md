@@ -46,5 +46,12 @@ A genuinely new *shape* of control is a bigger conversation: open an issue first
 3. Open a PR into `main`. Keep it focused; describe what and why.
 4. CI green → merge. Squash or merge — keep history readable.
 
+## Commit convention
+
+Commit subjects (or the squash-merge title) follow [Conventional Commits](https://www.conventionalcommits.org/)
+— `feat: …`, `fix: …`, `chore: …`, `docs: …`. **`release-please`** reads this history on every merge to
+`main` to bump `VERSION` and write `CHANGELOG.md`; a non-conventional subject is simply not counted toward
+the next release.
+
 Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
 We're glad you're here.

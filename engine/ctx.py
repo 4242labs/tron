@@ -29,6 +29,10 @@ class Ctx:
     def tron_md(self):
         return self.p("tron.md")
 
+    @property
+    def version_file(self):
+        return self.p("VERSION")
+
     # ── prompt layer (canon, copied verbatim at seed; PMT-* resolved by id) ──
     @property
     def prompts_dir(self):
@@ -121,6 +125,14 @@ class Ctx:
 
     def load_project(self):
         return util.load_yaml(self.project) if os.path.exists(self.project) else {}
+
+    def load_version(self):
+        """The instance's own copied canon VERSION — its byte-identical stamp at last
+        seed. None if absent (pre-M-06 instance)."""
+        if not os.path.exists(self.version_file):
+            return None
+        with open(self.version_file) as f:
+            return f.read().strip()
 
     # ── canon paths in the target repo (TRON reads these; never writes them) ──
     def repo_paths(self, project):

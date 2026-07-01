@@ -8,6 +8,8 @@
 # PR — and adapts to whatever agents the project defines. The pointers below say
 # where that canon lives; TRON never writes any of it.
 
+tron_version: 0.4.2-dev      # stamped by the seeder from canon VERSION at every seed/re-seed; NEVER hand-edit — drift hard-fails validate + start
+
 pointers:
   agents: meta/agents/        # the project's worker personas (TRON reads these; it ships none)
 

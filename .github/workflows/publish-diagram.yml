@@ -36,6 +36,9 @@ jobs:
           cp workflow/favicon-32x32.png       tron-www/public/workflow/favicon-32x32.png
           cp workflow/favicon-192x192.png     tron-www/public/workflow/favicon-192x192.png
           cp workflow/nyan-cat.gif            tron-www/public/workflow/nyan-cat.gif
+          # M-06: the page's version+build-date corner stamp reads these two files, synced fresh every publish.
+          cp VERSION                          tron-www/public/workflow/VERSION
+          date -u +%Y-%m-%d > tron-www/public/workflow/BUILD_DATE
           for f in index.html flow-description.html; do
             target="tron-www/public/workflow/$f"
             awk -v b="$banner" '{print} /<head>/ && !done {print b; done=1}' "$target" > "$target.tmp"

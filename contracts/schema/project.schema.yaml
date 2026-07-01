@@ -5,6 +5,9 @@
 #
 # Annotations:  # REQUIRED | # OPTIONAL | <placeholder>  | a | b  (enum)
 
+tron_version: <str>         # REQUIRED. Stamped by the seeder from canon VERSION at every seed/re-seed.
+                            # Never hand-edit — lint L18 + `tron start` hard-fail on drift vs the instance's own VERSION.
+
 # ── Pointers ─────────────────────────────────────────────────────────
 pointers:
   agents: <path>            # REQUIRED. The project's worker personas (TRON reads; ships none). e.g. meta/agents/
