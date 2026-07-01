@@ -9,6 +9,7 @@ name: release-please
 on:
   push:
     branches: [main]
+  workflow_dispatch:   # manual re-run, e.g. after a bootstrap-tag fix
 
 jobs:
   release-please:
