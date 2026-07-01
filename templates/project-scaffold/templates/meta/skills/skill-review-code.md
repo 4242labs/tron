@@ -46,7 +46,7 @@ Before reviewing, read the applicable standards:
 
 - [ ] `principles.md` — project rules, security, data integrity, testing
 - [ ] `context.md` — service profile, architecture, domain rules
-- [ ] `../<APP_REPO_NAME>/app/CLAUDE.md` — app technical spec, project structure, key concepts
+- [ ] `../<APP_REPO_NAME>/app/AGENTS.md` — app technical spec, project structure, key concepts
 - [ ] Active block plan(s) in `blocks/` relevant to the reviewed scope
 
 ---
@@ -101,7 +101,7 @@ These are the reviewer's **surface-level** checks. The authoritative auth / RLS 
 | **No DB code in components** — components import types + hooks only; no DB client in client modules | BLOCKER | `context.md` |
 | **Server-only DB layer** — server DB modules never imported into client modules | BLOCKER | `context.md` |
 | **UI state vs server data** — client state stores hold UI state only, not server/business data | HIGH | `context.md` |
-| **Theme / design-system compliance** — reference design tokens; no ad-hoc values | HIGH | `../<APP_REPO_NAME>/app/CLAUDE.md` |
+| **Theme / design-system compliance** — reference design tokens; no ad-hoc values | HIGH | `../<APP_REPO_NAME>/app/AGENTS.md` |
 | **Fallback states** — empty, loading, and error states handled | MEDIUM | — |
 | **No unauthenticated access** to user data on any page | BLOCKER | `principles.md` §Security |
 | **Browser validation evidence** — any UI-touching/visible-behavior diff has browser-MCP evidence (screenshots, console, network); findings citing browser behavior link the artifact path | BLOCKER | `../<APP_REPO_NAME>/docs/playbook-browser-testing.md` |
@@ -137,7 +137,7 @@ These are the reviewer's **surface-level** checks. The authoritative auth / RLS 
 
 | Check | Severity | Reference |
 |:------|:---------|:----------|
-| **`../<APP_REPO_NAME>/app/CLAUDE.md`** matches actual code behavior and structure | HIGH | — |
+| **`../<APP_REPO_NAME>/app/AGENTS.md`** matches actual code behavior and structure | HIGH | — |
 | **Agent docs** reference skills that exist in `skills/` | MEDIUM | — |
 | **Block plans** accurately describe what was implemented | MEDIUM | — |
 
@@ -202,7 +202,7 @@ These are the reviewer's **surface-level** checks. The authoritative auth / RLS 
 Standards (read before every review):
   principles.md
   context.md
-  ../<APP_REPO_NAME>/app/CLAUDE.md
+  ../<APP_REPO_NAME>/app/AGENTS.md
 
 Agent docs:
   agents/reviewer-code.md
