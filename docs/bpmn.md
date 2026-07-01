@@ -175,8 +175,8 @@ copy matches.
 
 - **Automated (fully hands-free):** the CI Action `.github/workflows/publish-diagram.yml` runs on a push to
   `main` touching `workflow/**`, opens a sync PR on `tron-www`, and **auto-merges it** — Pages then deploys.
-  No manual step. Triggering publish = pushing **tron-app**, not meta. (`WWW_SYNC_TOKEN` is provisioned; the
-  Action authenticates the cross-repo sync + auto-merge with it.)
+  No manual step. Triggering publish = pushing **tron-app**, not meta. (The Action authenticates the
+  cross-repo sync + auto-merge with a repository secret.)
 - **Manual fallback** (only if the Action is disabled/broken): copy `workflow/`'s files into
   `tron-www/public/workflow/` (`workflow.html` → `index.html`, plus `flow-description.html` + favicons +
   `nyan-cat.gif`), keep the banner, push `main`. Verify live.

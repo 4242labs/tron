@@ -3,7 +3,7 @@ name: Publish BPMN diagram to tron-www
 # SSoT: workflow/ (workflow.html + flow-description.html + assets) lives HERE (4242labs/tron).
 # tron-www/public/workflow/ holds a GENERATED copy, served at tron.42labs.io/workflow/.
 # On a merge that touches the workflow/ folder, open a sync PR on tron-www; merging it deploys (GitHub Pages).
-# See docs/bpmn.md. Requires secret WWW_SYNC_TOKEN — a token with write + PR access to 4242labs/tron-www.
+# See docs/bpmn.md. Requires the repository secret WWW_SYNC_TOKEN.
 
 on:
   push:
