@@ -81,6 +81,17 @@ def open_prs(repo_root, dry=False):
     return prs
 
 
+def branch_merged(repo_root, branch, main_branch="main", dry=False):
+    """True iff `branch`'s tip is already an ancestor of trunk HEAD (MG-01) — the block's
+    commits reached trunk directly, with no PR for the gate to have seen. Best-effort: False
+    if the branch is unresolvable (never existed here, or was pruned) or on any git error —
+    an unknown branch is never treated as a merge."""
+    if dry or not repo_root or not branch:
+        return False
+    rc, _, _ = _run(["git", "-C", repo_root, "merge-base", "--is-ancestor", branch, main_branch])
+    return rc == 0
+
+
 def _rollup(checks):
     """Reduce gh's per-check rollup to one of: passing | failing | pending | none."""
     if not checks:

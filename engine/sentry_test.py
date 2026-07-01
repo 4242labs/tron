@@ -39,7 +39,7 @@ def _block_md(bid, status="📋", deps="none", deploy="none"):
     return (f"# Block {bid}: test {bid}\n"
             f"**Phase:** Phase 1: Test\n**Status:** {status}\n"
             f"**Depends on:** {deps}\n**Reviewer class:** code\n"
-            f"**Merge:** self\n**Deploy:** {deploy}\n\n---\n\n## Body\n")
+            f"**Merge approval:** auto\n**Deploy:** {deploy}\n\n---\n\n## Body\n")
 
 
 def build(blocks=None, scope=None):

@@ -6,7 +6,7 @@
 **Depends on:** <Block IDs this requires, or "none">  
 **Blocks:** <Block IDs that depend on this, or "none">  
 **Reviewer class:** <code | security | data | none>  ← which reviewer the supervising process dispatches on its review cadence; pinned at scoping, not pickable by engineer
-**Merge:** <self | needs-user>  ← default `self` (merge authorized per the supervising process's merge policy); stamp `needs-user` for genuinely risky blocks that require explicit human sign-off before merge
+**Merge approval:** <auto | needs-user>  ← default `auto` (the supervising process's gate drives the merge, no human sign-off); stamp `needs-user` for genuinely risky blocks that require explicit human sign-off before merge
 **Deploy:** <none | check>  ← default inherits the project deploy check (`context.md → Deploy`); `none` opts this block out; `check` overrides with a block-specific success check
 **Created:** <YYYY-MM-DD>
 
