@@ -202,7 +202,8 @@ class Engine:
         a failed fetch reuses the last on-disk snapshot — never block the loop.
         `count=False` (the initial load at start) skips the done-counting so pre-existing
         ✅ history is NOT mistaken for fresh completions — _seed_seen_done primes it instead."""
-        ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry)
+        ok, detail = trunk.refresh(self.paths["root"], self.paths["main_branch"], self.dry,
+                                   remote=self.paths.get("remote"))   # F1: thread the remote (absent/none -> local mode)
         if ok:
             self.st.counters["refresh_fail"] = 0
             self._trunk_sha = trunk.head_sha(self.paths["root"], self.dry)  # pin the tree we're reading

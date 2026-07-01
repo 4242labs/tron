@@ -102,11 +102,22 @@ def _pid_alive(pid):
         return False
     try:
         os.kill(int(pid), 0)          # signal 0: existence check, no-op if alive
-        return True
     except (ProcessLookupError, ValueError, TypeError):
         return False
     except PermissionError:
         return True                   # exists but not ours to signal -> alive
+    # It answers signal 0 — but a ZOMBIE (a crashed child not yet reaped) answers too. If it is our
+    # child and already exited, reap it and report dead; otherwise it is genuinely alive. Without
+    # this, a SIGKILL'd runner would read as alive and the sweep would never recover it.
+    try:
+        gone, _ = os.waitpid(int(pid), os.WNOHANG)
+        if gone == int(pid):
+            return False
+    except ChildProcessError:
+        pass                          # not our child -> the signal-0 success is authoritative
+    except (OSError, ValueError):
+        pass
+    return True
 
 
 def find(worker_id, idx=None):

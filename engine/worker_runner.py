@@ -24,6 +24,7 @@ import os
 import sys
 import json
 import time
+import select
 import signal
 import argparse
 import subprocess
@@ -33,6 +34,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jobs  # single source of the per-worker file-name constants  # noqa: E402
 
 POLL_S = float(os.environ.get("TRON_RUNNER_POLL_S", "2.0"))
+# A single turn's wall-clock ceiling: a hung agent -> TimeoutError -> turn_error -> the engine's
+# sweep recovers, instead of the runner blocking forever on a silent process. Generous by default
+# (build turns are long); tune with TRON_TURN_TIMEOUT_S.
+TURN_TIMEOUT_S = float(os.environ.get("TRON_TURN_TIMEOUT_S", "1800"))
+# The worker's permission posture — config-driven, NOT hardcoded. The default suits a sandboxed
+# autonomous worker; set TRON_WORKER_PERMS="" to drop it, or to a different flag set, upstream.
+WORKER_PERMS = os.environ.get("TRON_WORKER_PERMS", "--dangerously-skip-permissions")
 
 
 def _now():
@@ -59,8 +67,9 @@ class HostCliAdapter:
             "--output-format", "stream-json",
             "--verbose",
             "--session-id", self.session_id,
-            "--dangerously-skip-permissions",   # autonomous worker in a sandbox; overridable upstream
         ]
+        if WORKER_PERMS:
+            cmd += WORKER_PERMS.split()   # config-driven worker permission posture (see WORKER_PERMS)
         self.proc = subprocess.Popen(
             cmd, cwd=self.cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -73,8 +82,22 @@ class HostCliAdapter:
                "message": {"role": "user", "content": text}}
         self.proc.stdin.write(json.dumps(msg) + "\n")
         self.proc.stdin.flush()
-        # Block until THIS turn's result event. A dead process -> raise so the runner records error.
-        for line in self.proc.stdout:
+        # Block until THIS turn's result event, under a wall-clock ceiling. A dead process OR a
+        # hung agent -> raise, so the runner records turn_error and TRON's sweep recovers (never
+        # an unbounded block). One turn ends at exactly its `result` event (one-turn atomicity).
+        deadline = time.time() + TURN_TIMEOUT_S
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(f"turn exceeded {TURN_TIMEOUT_S:.0f}s")
+            rlist, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 1.0))
+            if not rlist:
+                if self.proc.poll() is not None:
+                    raise RuntimeError("host-cli process exited before a result event")
+                continue
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("host-cli stream ended before a result event")
             line = line.strip()
             if not line:
                 continue
@@ -84,7 +107,6 @@ class HostCliAdapter:
                 continue
             if ev.get("type") == "result":
                 return ev.get("result", "") or ""
-        raise RuntimeError("host-cli stream ended before a result event")
 
     def close(self):
         if self.proc and self.proc.poll() is None:

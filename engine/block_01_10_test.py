@@ -15,6 +15,7 @@ import os
 import sys
 import json
 import time
+import signal
 import shutil
 import tempfile
 import subprocess
@@ -85,12 +86,32 @@ def _turns_done(wd):
     return out
 
 
-def _mini_ctx():
+def _pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+    except (ProcessLookupError, ValueError, TypeError):
+        return False
+    try:
+        gone, _ = os.waitpid(int(pid), os.WNOHANG)   # reap a zombie child -> report dead
+        if gone == int(pid):
+            return False
+    except (ChildProcessError, OSError, ValueError):
+        pass
+    return True
+
+
+def _mini_ctx(remote="__omit__"):
     d = tempfile.mkdtemp(prefix="tron-b1010-")
     for f in ("routing.yaml", "messages.yaml", "knobs.yaml", "tron.md"):
         shutil.copy(os.path.join(ROOT, f), os.path.join(d, f))
     shutil.copy(os.path.join(ROOT, "templates", "manifest.yaml"), os.path.join(d, "manifest.yaml"))
     shutil.copytree(os.path.join(ROOT, "prompts"), os.path.join(d, "prompts"))
+    if remote != "__omit__":                      # write a project.yaml with (or without) a remote
+        repo = {"root": d, "main_branch": "main"}
+        if remote is not None:
+            repo["remote"] = remote
+        with open(os.path.join(d, "project.yaml"), "w") as fh:
+            json.dump({"repo": repo}, fh)          # JSON is valid YAML -> the loader reads it
     return Ctx(d)
 
 
@@ -114,6 +135,35 @@ def t_no_remote_trunk():
     # The remote path is UNCHANGED: with a declared remote but no origin, it still fetch-fails.
     okr, _ = trunk.refresh(d, "main", dry=False, remote="org/repo")
     ok("AC-1 remote path still fetch-refreshes (unchanged)", not okr)
+
+
+def t_fsm_threads_remote():
+    """The regression the isolated unit missed: the fsm MUST pass repo.remote into trunk.refresh,
+    or every project runs local mode and TRON goes blind to trunk. Exercises fsm -> refresh."""
+    cap = {}
+
+    def fake_refresh(root, main_branch, dry, remote=None):
+        cap["remote"] = remote
+        return True, "stub"
+
+    r0, p0, h0 = trunk.refresh, trunk.open_prs, trunk.head_sha
+    trunk.refresh = fake_refresh
+    trunk.open_prs = lambda *a, **k: {}
+    trunk.head_sha = lambda *a, **k: "abc123"
+    try:
+        eng = Engine(_mini_ctx(remote="acme/widgets"))
+        eng.dry = False
+        eng._refresh_from_trunk(count=False)
+        got_remote = cap.get("remote")
+        cap.clear()
+        eng2 = Engine(_mini_ctx(remote=None))     # project.yaml with no remote declared
+        eng2.dry = False
+        eng2._refresh_from_trunk(count=False)
+        got_none = cap.get("remote")
+    finally:
+        trunk.refresh, trunk.open_prs, trunk.head_sha = r0, p0, h0
+    ok("AC-1 fsm threads repo.remote into trunk.refresh", got_remote == "acme/widgets")
+    ok("AC-1 no declared remote -> None passed (local mode)", got_none is None)
 
 
 # ── AC-3 (F3): classifier prompt on stdin ──
@@ -239,9 +289,34 @@ def t_runner_resume():
     jobs.release(wid)
 
 
+def t_runner_crash_resume():
+    """A LIVE runner is hard-killed (SIGKILL — no graceful released) after processing to its
+    high-water; a fresh runner on the same dir resumes from it, replaying nothing (recover corner)."""
+    os.environ["TRON_RUNNER_POLL_S"] = "0.2"
+    store = tempfile.mkdtemp(prefix="tron-crash-")
+    jobs.configure(store)
+    wid = "ENG-C-03"
+    wd = os.path.join(store, wid)
+    os.makedirs(wd)
+    jobs.send(wd, 1, "spawn.engineer", "persona")
+    jobs.send(wd, 2, "assign.engineer", "build C-03")
+    jobs.spawn_runner(wid, wd, "sess-crash", cwd=store, adapter="echo")
+    ok("AC-7 crash: live runner reaches high-water", _wait(lambda: _hwm(wd) >= 2))
+    pid = _state(wd).get("pid")
+    os.kill(int(pid), signal.SIGKILL)                       # hard crash: no clean shutdown
+    ok("AC-7 crash: runner is dead", _wait(lambda: not _pid_alive(pid), 5))
+    ok("AC-7 crash: sweep sees it as not-alive", not jobs.is_alive(wid))
+    jobs.send(wd, 3, "gate.merge", "merge approved")        # a message arrives while dead
+    jobs.spawn_runner(wid, wd, "sess-crash", cwd=store, adapter="echo")   # restart
+    ok("AC-7 restart advances to the new seq", _wait(lambda: _hwm(wd) >= 3))
+    ok("AC-7 crash-restart replays nothing at/under high-water", _turns_done(wd) == [1, 2, 3])
+    jobs.release(wid)
+
+
 def main():
-    for t in (t_no_remote_trunk, t_judge_stdin, t_worker_online, t_mailbox_append,
-              t_seq_idempotent, t_runner_e2e, t_runner_resume):
+    for t in (t_no_remote_trunk, t_fsm_threads_remote, t_judge_stdin, t_worker_online,
+              t_mailbox_append, t_seq_idempotent, t_runner_e2e, t_runner_resume,
+              t_runner_crash_resume):
         try:
             t()
         except Exception as e:
