@@ -4,6 +4,15 @@ Versions the meta/app/workspace template payload. Every entry pairs with the SUP
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 
+## 1.4.0 — 2026-07-01
+
+Renames the block header field `**Merge:** self | needs-user` → `**Merge approval:** auto |
+needs-user` (`meta/blocks/block-template.md`). `self` read as an instruction for the *engineer* to
+self-merge — it was never that; it meant the supervising process's gate merges without a human.
+Renamed to remove the ambiguity; parser key `merge` → `merge_approval`, default value `self` →
+`auto`. `needs-user` is unchanged. Additive to the parsed pipeline row shape only (`merge` →
+`merge_approval`), no other project-facing behavior change.
+
 ## 1.3.0 — 2026-06-30
 
 Adopts the model-agnostic **`AGENTS.md`** standard in place of `CLAUDE.md` — canon carries no

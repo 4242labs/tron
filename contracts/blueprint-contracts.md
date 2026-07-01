@@ -285,7 +285,7 @@ TRON owns no pipeline. It **reads** the project's git-tracked canon — the form
   `### Phase N: <Title>` headers, and `ID | Task | Status | Notes` tables. The Status cell is **exactly
   one emoji** from `📋 🔄 ✅ 📌 🔧 ❌ 📦 ✂️`; a row with a block file names it in Notes as `Block `blocks/<id>.md``.
 - **Block files** (`blocks/<id>.md`): fixed `**Key:** value` headers — `Status`, `Depends on`,
-  `Reviewer class`, `Merge`, `Deploy`, `Phase`. The block file is **dispatch truth**; the living doc gives order.
+  `Reviewer class`, `Merge approval`, `Deploy`, `Phase`. The block file is **dispatch truth**; the living doc gives order.
 
 Emoji → status: `📋`→to-do (dispatchable when deps `✅`), `🔄`→in-progress, `✅`→done; the rest
 (`📌 🔧 ❌ 📦 ✂️`) are not dispatchable. The seeder confirms the project complies; it never rewrites the

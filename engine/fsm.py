@@ -1006,7 +1006,19 @@ class Engine:
 
         if not pr:
             if not g.get("pr"):
-                stage, msg = "local", "gate.local"       # no PR yet -> validate locally first
+                # MG-01: trunk is the only done-truth. Before parking at local, check whether
+                # the block's branch already reached trunk with no PR for the gate to have
+                # seen (an out-of-gate merge) — never silently accept it.
+                if trunk.branch_merged(self.paths["root"], branch,
+                                       self.paths.get("main_branch", "main"), self.dry):
+                    if g.get("case_merge") and not (g.get("approved_merge") or g.get("self_merge")):
+                        self._gate_giveup(block, g, wid,
+                                          "merged to trunk outside the gate (bypassed a pending merge hold)",
+                                          "gate-bypass", "audit the out-of-gate merge; re-validate on trunk")
+                        return
+                    stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
+                else:
+                    stage, msg = "local", "gate.local"   # no PR yet -> validate locally first
             else:
                 # PR gone, not ✅ yet -> merged; re-validate on trunk (DONE-TRUNK). No-silent-stuck:
                 # re-nudge each tick up to the cap, then escalate.
@@ -1032,6 +1044,28 @@ class Engine:
                 stage, msg = "trunk", "gate.trunk"        # operator merges; agent re-validates on trunk
             else:
                 stage, msg = "merge", "gate.merge"
+
+        # MG-01 T4: universal gate idle-timeout. Any stage that isn't advancing on its own
+        # nudge/cap logic above (renudge already covers those) gets a tick-based liveness cap,
+        # gated on jobs.activity_signals — a genuinely working (dirty/growing worktree) worker
+        # never trips this, only a silent one does. Closes the "stall cap only increments on
+        # repeat worker reports" gap (a silently-dead worker used to strand the gate forever).
+        if stage == g.get("stage") and not renudge:
+            idx = jobs.index()
+            sig = jobs.activity_signals(
+                wid, since_iso=(self.st.data.get("last_sweep") or {}).get("at"), idx=idx)
+            if jobs.has_positive_activity(sig):
+                g["idle_ticks"] = 0
+            else:
+                n = g.get("idle_ticks", 0) + 1
+                g["idle_ticks"] = n
+                if n >= int(self.knobs.get("gate_idle_cap", 3)):
+                    self._gate_giveup(block, g, wid,
+                                      f"gate stalled at '{stage}' — no worker activity for {n} ticks",
+                                      "gate-idle-cap", "check worker liveness; resume or reassign")
+                    return
+        else:
+            g["idle_ticks"] = 0
 
         if stage != g.get("stage") or renudge:
             prev = g.get("stage")
@@ -1095,17 +1129,25 @@ class Engine:
                   if w.get("role") == "engineer" and w.get("block") == block), None)
         return w.get("id") if w else None
 
+    def _block_merge_approval(self, block):
+        """The block's own `Merge approval:` header (MG-01) — 'auto' or 'needs-user'."""
+        row = next((r for r in self.st.pipeline if r.get("id") == block), None)
+        return (row or {}).get("merge_approval", "auto")
+
     def _merge_gated(self, block, g, wid):
-        """Ask-before-merging (T8). Returns True = HOLD (park ONE operator case at the trunk-merge
-        step), False = proceed. APPROVED (or a prior grant on this gate) proceeds; ASK parks once and
-        holds quietly each tick. While reworking after a 'changes requested', holds without re-asking.
+        """Ask-before-merging (T8) + per-block merge approval (MG-01). Returns True = HOLD (park
+        ONE operator case at the trunk-merge step), False = proceed. A block stamped
+        `Merge approval: needs-user` always holds, regardless of the global ask-before-merging knob.
+        Otherwise: APPROVED (or a prior grant on this gate) proceeds; ASK parks once and holds
+        quietly each tick. While reworking after a 'changes requested', holds without re-asking.
         The four operator outcomes (approve / self-merge / changes / drop) resolve via
         _h_apply_decision. Prod promotion is operator-only and never reaches this gate."""
         if g.get("approved_merge") or g.get("self_merge"):
             return False
         if g.get("awaiting_rework"):
             return True                                  # agent reworking; don't re-ask until it re-reports
-        if self.st.approvals.get("merge", "APPROVED") == "APPROVED":
+        needs_user = self._block_merge_approval(block) == "needs-user"
+        if self.st.approvals.get("merge", "APPROVED") == "APPROVED" and not needs_user:
             return False
         if not g.get("case_merge"):                      # escalate once; then hold quietly each tick
             case = self._open_case(block, "merge", wid, f"merge {block} to trunk")

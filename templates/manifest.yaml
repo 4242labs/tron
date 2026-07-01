@@ -79,7 +79,7 @@ live_config:
 
 # ── Pipeline (READ-ONLY trunk cache; rebuilt every wake — never authority) ──
 # list of merged rows: {id, task, status, phase, section, order, depends_on,
-#                       reviewer_class, merge, deploy, has_block_file}
+#                       reviewer_class, merge_approval, deploy, has_block_file}
 pipeline: []
 
 # ── Last sweep ──
