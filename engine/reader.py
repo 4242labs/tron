@@ -8,7 +8,7 @@ via PR. This module is the deterministic reader over that canon (NEVER an LLM):
                          `ID | Task | Status | Notes` tables, emoji status, and
                          the block-file ref (Block `blocks/<id>.md`) out of Notes.
   parse_block(path)      one block file's fixed `**Key:** value` headers
-                         (Status, Depends on, Reviewer class, Merge, Deploy, Phase).
+                         (Status, Depends on, Reviewer class, Merge approval, Deploy, Phase).
   load(pipeline, blocks) the merged dispatch view: each pipeline row enriched
                          with its block file's headers. Dispatch truth is the
                          block file (canon §3); the living doc gives order only.
@@ -108,13 +108,13 @@ def parse_pipeline(path):
 def parse_block(path):
     """Parse one block file's fixed headers. Returns {} if absent.
 
-    Keys: id, title, phase, status, depends_on (list), reviewer_class, merge, deploy.
+    Keys: id, title, phase, status, depends_on (list), reviewer_class, merge_approval, deploy.
     Header lines are `**Key:** value`; a trailing `← comment` annotation is dropped.
     """
     if not os.path.isfile(path):
         return {}
     out = {"id": None, "title": None, "phase": None, "status": "unknown",
-           "depends_on": [], "reviewer_class": None, "merge": "self", "deploy": None}
+           "depends_on": [], "reviewer_class": None, "merge_approval": "auto", "deploy": None}
     with open(path) as fh:
         in_headers = True
         for line in fh:
@@ -143,8 +143,8 @@ def parse_block(path):
                 out["depends_on"] = _id_list(val)
             elif key == "reviewer class":
                 out["reviewer_class"] = _none_or(val)
-            elif key == "merge":
-                out["merge"] = (val or "self").lower()
+            elif key == "merge approval":
+                out["merge_approval"] = (val or "auto").lower()
             elif key == "deploy":
                 out["deploy"] = _none_or(val)
     return out
@@ -199,13 +199,13 @@ def load(pipeline_path, blocks_dir):
             row["status"] = b.get("status", row["status"])     # block file wins
             row["depends_on"] = b.get("depends_on", [])
             row["reviewer_class"] = b.get("reviewer_class")
-            row["merge"] = b.get("merge", "self")
+            row["merge_approval"] = b.get("merge_approval", "auto")
             row["deploy"] = b.get("deploy")
             row["has_block_file"] = True
         else:
             row["depends_on"] = []
             row["reviewer_class"] = None
-            row["merge"] = "self"
+            row["merge_approval"] = "auto"
             row["deploy"] = None
             row["has_block_file"] = False
         view.append(row)
