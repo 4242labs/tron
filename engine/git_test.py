@@ -185,8 +185,95 @@ def t_two_step_architect_noop():
                for t in events(ctx)[n1:]))
 
 
+# ── local mode (no remote): the ENGINE owns the trunk merge — ff-only, ASK-gated ──
+# These cover the DECISION logic under TRON_DRY (no git): the block branch is taken to exist
+# (branch_exists stubbed True) and the ff-merge to succeed (dry) — the REAL git ff-merge, non-ff
+# refusal, and branch-existence are proven against a live repo in the real-git suite.
+import trunk as _trunk
+
+
+def _stub_branch(exists=True, ff=(True, "")):
+    _trunk.branch_exists = lambda *a, **k: exists
+    _trunk.merge_ff_only = lambda *a, **k: ff
+
+
+def t_local_merge_no_remote():
+    orig = (_trunk.branch_exists, _trunk.merge_ff_only)
+    _stub_branch()
+    try:
+        eng = _eng()                                        # _eng fixture declares no remote
+        eng.st.branches["A-01"] = "feat/A-01"
+        g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
+        eng._drive_gate("A-01", g)                          # first pass: no PR -> request local validation
+        ok("local: no PR -> first pass requests local validation", g["stage"] == "local")
+        eng._drive_gate("A-01", g, on_report=True)          # evidence back, default APPROVED -> ff-merge
+        ok("local: validated -> engine ff-merges -> re-validate on trunk", g["stage"] == "trunk")
+        ok("local: default APPROVED raised no merge case", not eng.st.pending_cases)
+    finally:
+        _trunk.branch_exists, _trunk.merge_ff_only = orig
+
+
+def t_local_merge_ask_gated():
+    orig = (_trunk.branch_exists, _trunk.merge_ff_only)
+    _stub_branch()
+    try:
+        eng = _eng()
+        eng.st.branches["A-01"] = "feat/A-01"
+        eng.st.approvals["merge"] = "ASK"                   # ask-before-merging ON
+        g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
+        eng._drive_gate("A-01", g)                          # -> local
+        eng._drive_gate("A-01", g, on_report=True)          # evidence -> ASK parks, does NOT merge
+        ok("local ASK: parks a merge case, holds at local (no merge)",
+           g["stage"] == "local"
+           and any(c.get("kind") == "merge" for c in eng.st.pending_cases.values()))
+        eng._drive_gate("A-01", g)                          # tick while parked -> hold quietly
+        ok("local ASK: parked tick holds quietly (gate not given up)",
+           "A-01" in eng.st.gate and g["stage"] == "local")
+        cid = next(c for c in eng.st.pending_cases)
+        eng._h_apply_decision({"case": cid, "decision": "approve", "block": "A-01"})
+        ok("local ASK: approve -> engine ff-merges -> trunk",
+           g.get("approved_merge") is True and g["stage"] == "trunk")
+    finally:
+        _trunk.branch_exists, _trunk.merge_ff_only = orig
+
+
+def t_local_merge_non_ff():
+    # A non-ff (trunk moved under the branch) never fabricates a merge commit: the gate re-nudges
+    # the worker to rebase and retry, and stays at local.
+    orig = (_trunk.branch_exists, _trunk.merge_ff_only)
+    _stub_branch(ff=(False, "not a fast-forward"))
+    try:
+        eng = _eng()
+        eng.st.branches["A-01"] = "feat/A-01"
+        g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
+        eng._drive_gate("A-01", g)                          # -> local
+        eng._drive_gate("A-01", g, on_report=True)          # ff refused -> rebase + retry, no force
+        ok("local non-ff: stays at local for rebase, never force-merges", g["stage"] == "local")
+    finally:
+        _trunk.branch_exists, _trunk.merge_ff_only = orig
+
+
+def t_local_merge_no_branch():
+    # No block branch exists yet (branch_exists False) => nothing to merge: the gate stays at
+    # local and never fabricates a merge — the AC-11 stall/escalate path is preserved.
+    orig = _trunk.branch_exists
+    _trunk.branch_exists = lambda *a, **k: False
+    try:
+        eng = _eng()
+        eng.st.branches["A-01"] = "feat/A-01"
+        g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
+        eng._drive_gate("A-01", g)
+        eng._drive_gate("A-01", g, on_report=True)          # branch absent -> no merge attempt
+        ok("local no-branch: stays at local, no merge, no case", g["stage"] == "local"
+           and not eng.st.pending_cases)
+    finally:
+        _trunk.branch_exists = orig
+
+
 def main():
     for t in (t_branch_ownership, t_single_gate, t_ask_before_merging,
+              t_local_merge_no_remote, t_local_merge_ask_gated, t_local_merge_non_ff,
+              t_local_merge_no_branch,
               t_two_step_engineer, t_two_step_reviewer,
               t_two_step_architect_noop):
         t()

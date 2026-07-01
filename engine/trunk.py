@@ -92,6 +92,30 @@ def branch_merged(repo_root, branch, main_branch="main", dry=False):
     return rc == 0
 
 
+def branch_exists(repo_root, branch, dry=False):
+    """True iff `branch` resolves to a real commit in this repo. The local/no-remote gate needs
+    this: with no PR to prove a branch was pushed, the engine merges the block's branch (reported
+    name, else the `feat/<block>` convention) ONLY when it actually exists — verified, never a
+    guess it then blindly merges. False in dry (no git) and on any error / missing branch."""
+    if dry or not repo_root or not branch:
+        return False
+    rc, _, _ = _run(["git", "-C", repo_root, "rev-parse", "--verify", "--quiet", branch])
+    return rc == 0
+
+
+def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
+    """Fast-forward trunk to an already-validated block branch — the local/no-remote merge.
+    The engine owns the trunk merge (MG-01): with no remote there is no PR to land, so the
+    engine advances trunk itself, but ONLY as a fast-forward — never a merge commit, never a
+    force. A non-ff (trunk moved under the branch) returns ok=False so the caller re-nudges
+    the worker to rebase, rather than fabricating history. Returns (ok, err)."""
+    if dry or not repo_root or not branch:
+        return (dry, "")
+    _run(["git", "-C", repo_root, "checkout", main_branch])   # root stays on trunk; belt-and-suspenders
+    rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
+    return rc == 0, err
+
+
 def _rollup(checks):
     """Reduce gh's per-check rollup to one of: passing | failing | pending | none."""
     if not checks:

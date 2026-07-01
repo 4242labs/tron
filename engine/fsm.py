@@ -718,7 +718,7 @@ class Engine:
         g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
         g.pop("awaiting_rework", None)                # a fresh report -> rework done; re-challenge merge
         before = g.get("stage")
-        self._drive_gate(block, g, reason="worker reported done")
+        self._drive_gate(block, g, reason="worker reported done", on_report=True)
         if block in self.st.gate and before is not None and self.st.gate[block].get("stage") == before:
             # No advance on a repeat report = a failed attempt at this step (T9). Cap at N=2.
             n = g.get("stall_attempts", 0) + 1
@@ -978,7 +978,7 @@ class Engine:
         for block in list(self.st.gate.keys()):
             self._drive_gate(block, self.st.gate[block])
 
-    def _drive_gate(self, block, g, reason=None):
+    def _drive_gate(self, block, g, reason=None, on_report=False):
         """Drive a worker through the DONE gate one stage-specific prompt at a time (T5), on
         EVIDENCE — never a bare `✅`, never a multi-step dump. Stages:
           ENGINEER  LOCAL -> MERGE -> TRUNK -> CLOSE
@@ -1018,7 +1018,36 @@ class Engine:
                         return
                     stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
                 else:
-                    stage, msg = "local", "gate.local"   # no PR yet -> validate locally first
+                    # No PR, not yet on trunk. REMOTE mode: the worker opens a PR and the merge
+                    # lands via the pr path below. LOCAL mode (no remote): there is no PR to wait
+                    # on, so once local validation is back the ENGINE performs the merge itself —
+                    # ff-only, ASK-gated — exactly as the remote merge step does (MG-01: the engine
+                    # owns the trunk merge, never the worker).
+                    local_mode = not self.paths.get("remote") or self.paths.get("remote") == "none"
+                    # `branch` is the worker-declared name, else the convention (_block_branch). In local
+                    # mode we merge it only when it REALLY exists in git — the verified local analog of
+                    # "a PR exists" in remote mode (never a blind guess).
+                    have_branch = trunk.branch_exists(self.paths["root"], branch, self.dry)
+                    if local_mode and have_branch and g.get("stage") == "local":
+                        if g.get("self_merge"):
+                            stage, msg = "trunk", "gate.trunk"        # operator merged it themselves
+                        elif on_report or g.get("approved_merge"):
+                            if self._merge_gated(block, g, wid):
+                                return                                # ASK: parked on the operator, hold
+                            ok, err = trunk.merge_ff_only(
+                                self.paths["root"], branch,
+                                self.paths.get("main_branch", "main"), self.dry)
+                            if ok:
+                                stage, msg = "trunk", "gate.trunk"    # merged -> re-validate on trunk
+                            else:
+                                self.log("flow", f"gate[{block}] local ff-merge non-ff: {err.strip()}")
+                                stage, msg, renudge = "local", "gate.merge", True  # trunk moved -> rebase + retry
+                        elif g.get("case_merge"):
+                            return                                    # tick while parked on operator -> hold quietly
+                        else:
+                            stage, msg = "local", "gate.local"        # tick while worker still validating locally
+                    else:
+                        stage, msg = "local", "gate.local"   # remote: no PR yet -> validate locally first
             else:
                 # PR gone, not ✅ yet -> merged; re-validate on trunk (DONE-TRUNK). No-silent-stuck:
                 # re-nudge each tick up to the cap, then escalate.
