@@ -8,7 +8,7 @@ Entry points exposed as a callable the front (B7) builds on:
   msg "<text>"            queue an operator line and run a tick (immediate, atomic)
   stop [--force]          guard unfinished work, release the fleet, end the session
   recover                 reattach: rebuild live workers from the TRON worker store
-  validate [--project P]  blueprint-lint (L1-L13); nonzero exit on any failure
+  validate [--project P]  blueprint-lint (L1-L18); nonzero exit on any failure
   doctor                  validate + environment checks
   log [filters]           query the forensic event/failure log (01-06): why did TRON fail
 
@@ -71,6 +71,14 @@ def cmd_doctor(ctx):
 
 def cmd_start(ctx):
     from fsm import Engine
+    # Version precheck (M-06): refuse to boot on drift between the instance's
+    # tron_version stamp and its own copied canon VERSION — named clearly, not a
+    # generic lint failure, since this must stop the operator before anything spawns.
+    canon_v = ctx.load_version()
+    stamped = (ctx.load_project() or {}).get("tron_version")
+    if canon_v is None or not stamped or stamped != canon_v:
+        print(f"start: version drift — instance stamped {stamped!r}, canon VERSION is {canon_v!r}. Re-seed this instance before starting.")
+        return 4
     if not os.path.exists(ctx.state):
         tpl = os.path.join(ctx.dir, "templates", "manifest.yaml")
         if os.path.exists(tpl):

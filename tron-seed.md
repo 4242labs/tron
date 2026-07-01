@@ -47,7 +47,8 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
   tron.md                        # canon judgment context (copied) — the classify_message context the engine reads (ctx.tron_md)
   tron                           # canon, copied (chmod +x) — the operator entrypoint (seeder/start)
   engine/                        # canon, copied — the deterministic engine (Python)
-  project.yaml                   # seeder writes — pointers, agents, repo facts, notifications
+  VERSION                        # canon, copied verbatim — the canon version this instance was cut from (ctx.load_version())
+  project.yaml                   # seeder writes — pointers, agents, repo facts, notifications, tron_version stamp
   knobs.yaml                  # seeder writes — the KNOBS (worker/architect counts, cadence, git, silence), from the canon default
   routing.yaml                   # canon, copied verbatim — NEVER edited by the seeder
   messages.yaml                  # canon, copied verbatim
@@ -61,7 +62,7 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
 
 The project's canon pipeline (`pipeline.md` + `blocks/`) lives in the project tree, not here — TRON only points at it.
 
-**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `project.yaml`, `knobs.yaml`, `routing.yaml`, `messages.yaml`, `prompts/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
+**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `VERSION`, `project.yaml`, `knobs.yaml`, `routing.yaml`, `messages.yaml`, `prompts/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
 
 ---
 
@@ -108,6 +109,7 @@ Copy canon (verbatim — never edit):
 - `tron.md` → `<agents>/tron/tron.md`  (inside the instance the engine reads via `ctx.tron_md`)
 - `tron` → `<agents>/tron/tron` (`chmod +x` — the operator entrypoint)
 - all of `engine/` → `<agents>/tron/engine/` (the deterministic engine)
+- `VERSION` → `<agents>/tron/VERSION`  (the canon version this instance is cut from; `ctx.load_version()` reads it — never hand-edit)
 - `routing.yaml`, `messages.yaml` → `<agents>/tron/`
 - all of `prompts/` → `<agents>/tron/prompts/` (the PMT-* worker prompts + registry, verbatim)
 - the canon default `knobs.yaml` → `<agents>/tron/knobs.yaml` (the knobs the operator just tuned)
@@ -162,7 +164,7 @@ In sessions: a block is dispatchable only when its file is `📋` with every `De
 
 ## Step 6 — Write project.yaml
 
-Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): the `agents` pointer + the scanned role→file map, the canon pipeline paths (`pipeline_path`, `blocks_dir`, `archive_dir`), detected repo facts (name, repo root, main branch, `staging`, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the build commits via git), notifications config (`telegram` — default `off`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy success check, notes — may be blank).
+Consolidate into `<agents>/tron/project.yaml` (see `project.example.yaml` + `contracts/schema/project.schema.yaml`): `tron_version` — read straight from the canon `VERSION` file just copied at Step 3, verbatim, never asked or typed — the `agents` pointer + the scanned role→file map, the canon pipeline paths (`pipeline_path`, `blocks_dir`, `archive_dir`), detected repo facts (name, repo root, main branch, `staging`, remote, worktrees + logs dirs — detect, confirm, prompt only for unresolved), conventions (defaults; confirm), protected branches (only if the build commits via git), notifications config (`telegram` — default `off`), free-form sections (operator-only tasks, local-validation gaps, CI, deploy success check, notes — may be blank). On a re-seed, overwrite `tron_version` to the freshly copied `VERSION` unconditionally — this is the one field that must never go stale.
 
 ## Step 7 — Notifications (config-driven — do not ask)
 
@@ -184,7 +186,7 @@ On any unresolved failure: surface it, stop. (Live-loop dry-run belongs to the o
 
 ## Step 9 — Trace + sign-off
 
-Write `<agents>/tron/seed-trace.md`: date, canon path + git sha, operator choices (knob values, step toggles), deviations, flagged prerequisites. Append on re-seed; never truncate.
+Write `<agents>/tron/seed-trace.md`: date, canon path + git sha + canon `VERSION` (beside the sha), operator choices (knob values, step toggles), deviations, flagged prerequisites. Append on re-seed; never truncate.
 
 Sign off in persona, with a terse summary — **project-relative paths only** (never `/Users/…`):
 
@@ -194,6 +196,7 @@ Sign off in persona, with a terse summary — **project-relative paths only** (n
 - Pipeline: {pipeline_path} + {blocks_dir}   (read-only; agents write it)
 - Worker merge target: trunk ({staging-validated | single-gate}); prod promotion: operator-only
 - Telegram: {on | off}   Cron: {on | off}
+- Version: {VERSION}
 - Lint: pass
 - Trace: <agents>/tron/seed-trace.md
 ```
