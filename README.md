@@ -41,9 +41,10 @@ well-scoped judgments. The flow is predictable, inspectable, and lint-checked be
 - **Engineers build; reviewers check.** Engineers and reviewers share a worker pool (you set its size).
   An engineer takes one block, validates against its acceptance criteria, and reports done.
 - **Done means done.** "Reports done" is just a trigger. TRON runs the canon definition-of-done on the
-  *evidence* — local checks, PR + green CI, merge, post-merge re-validation on trunk, deploy-clean +
-  verify — and a block counts only when it shows `✅` on trunk. A merged branch that fails to deploy is
-  not-done, and gets fixed.
+  *evidence* — local checks, merge, post-merge re-validation on trunk, deploy-clean + verify — and a block
+  counts only when it shows `✅` on trunk. The merge is gate-controlled — a worker never merges on its own:
+  with a remote it merges its PR only when the gate says so (green CI); with no remote the engine
+  fast-forwards the branch to trunk itself. A merged branch that fails to deploy is not-done, and gets fixed.
 - **Review is a milestone, not a verdict.** On a cadence you set (every N blocks that land `✅`), a
   reviewer delivers a findings log; the architect turns real findings into upcoming blocks.
 - **Walls go to you.** Anything no worker can clear — an operator-only task, an external blocker, a call
@@ -51,9 +52,10 @@ well-scoped judgments. The flow is predictable, inspectable, and lint-checked be
 - **It runs on its own.** A built-in heartbeat wakes the engine — early on a new message, at least every
   cadence ceiling otherwise. Each wake is one bounded tick: fill free slots, clear ahead, wait, or end.
 
-The engine spine (dispatch loop + work-selector) is code, never an LLM call. The model is asked exactly
-one question — *classify this inbound message* — schema-in, schema-out, never free prose steering the
-flow. Anything it can't classify goes to the architect, not a second model call.
+The engine spine — dispatch loop (PULSE), work-selector (SWITCHBOARD), reactive catch-all (SENTRY) — is
+code, never an LLM call. The model is asked exactly one question — *classify this inbound message* —
+schema-in, schema-out, never free prose steering the flow. Anything it can't classify goes to the
+architect, not a second model call.
 
 ## The flow
 

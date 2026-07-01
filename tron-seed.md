@@ -149,7 +149,7 @@ With canon in place, **apply the Step 1 knob changes to `knobs.yaml`** (worker/a
 ## Step 4 — Validate agents + the canon pipeline
 
 - **Agents** (TRON ships none — it dispatches whatever the project provides): enumerate `<role>.md` in `<agents>` and record the role→file map (role = the file's stem, e.g. `reviewer-code`) for `project.yaml`. TRON requires no specific agent. The only check is that the roles **TRON's own `knobs.yaml` references** resolve to a persona the project ships: each cadence lens `<type>` needs a reviewer persona the engine can resolve (a `reviewer-<type>.md`, or a generic `reviewer.md` it falls back to), and every peer-consult role must exist. **For each resolved persona, also confirm the skills it references are present and complete** — TRON's prompts are deltas over the persona + its skills, so a persona pointing at a missing skill fails the same way a missing persona does. If one doesn't (persona OR a skill it references): stop. *"Cadence runs a `code` review, but no `reviewer-code.md` or `reviewer.md` is here. Add a reviewer persona or drop the `code` cadence?"* *"`engineer.md` references `skills/skill-validate.md`, which isn't present. Add it before seeding."* Never create agent or skill files.
-- **Canon pipeline** (against the format the reader needs): confirm `pipeline.md` follows the canon contract — `### Phase N:` headers, `ID | Task | Status | Notes` tables, an emoji-only Status cell, and a block-file ref in Notes — and that `blocks/*.md` carry the fixed headers (`Status`, `Depends on`, `Reviewer class`, `Merge`, `Deploy`; `Phase` optional). This is what the deterministic reader parses. Never rewrite the project's pipeline or blocks — flag drift to the operator and let an agent fix it via PR.
+- **Canon pipeline** (against the format the reader needs): confirm `pipeline.md` follows the canon contract — `### Phase N:` headers, `ID | Task | Status | Notes` tables, an emoji-only Status cell, and a block-file ref in Notes — and that `blocks/*.md` carry the fixed headers (`Status`, `Depends on`, `Reviewer class`, `Merge approval`, `Deploy`; `Phase` optional). This is what the deterministic reader parses. Never rewrite the project's pipeline or blocks — flag drift to the operator and let an agent fix it via PR.
 
 ## Step 5 — Point at the pipeline
 
@@ -195,7 +195,7 @@ Sign off in persona, with a terse summary — **project-relative paths only** (n
 - Agents: <agents>/      TRON: <agents>/tron/
 - Pipeline: {pipeline_path} + {blocks_dir}   (read-only; agents write it)
 - Worker merge target: trunk ({staging-validated | single-gate}); prod promotion: operator-only
-- Telegram: {on | off}   Cron: {on | off}
+- Telegram: {on | off}   WAKE heartbeat: on (cooldown ≤ gap ≤ ceiling; no cron)
 - Version: {VERSION}
 - Lint: pass
 - Trace: <agents>/tron/seed-trace.md

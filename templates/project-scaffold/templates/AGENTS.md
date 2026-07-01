@@ -23,11 +23,11 @@ Invoked from `<WORKSPACE_PATH>` (this directory).
 | Code Reviewer | `<META_REPO_NAME>/agents/reviewer-code.md` | Code quality audits |
 | Security Reviewer | `<META_REPO_NAME>/agents/reviewer-security.md` | Security posture audits |
 | SUPER-M | `<META_REPO_NAME>/agents/super-m-local.md` | Workflow health monitoring |
-| Product-Designer | `42hq/product-designer/product-designer-local.md` | Idea → backlog → pipeline block frame (problem framing, market scan, JTBD) |
-| Analyst-Marketing | `42hq/analyst-marketing/analyst-marketing-local.md` | Positioning, go-to-market, pricing presentation |
-| Analyst-Finance | `42hq/analyst-finance/analyst-finance-local.md` | Pricing strategy, cost analysis, unit economics |
-| Advisor-Legal | `42hq/advisor-legal/advisor-legal-local.md` | Legal, compliance, privacy |
-| i18n | `42hq/i18n/i18n-local.md` | Multi-language localization strategy, translation quality, locale coverage |
+| Product-Designer | _(shared-KB path TBD — see TD-10)_ | Idea → backlog → pipeline block frame (problem framing, market scan, JTBD) |
+| Analyst-Marketing | _(shared-KB path TBD — see TD-10)_ | Positioning, go-to-market, pricing presentation |
+| Analyst-Finance | _(shared-KB path TBD — see TD-10)_ | Pricing strategy, cost analysis, unit economics |
+| Advisor-Legal | _(shared-KB path TBD — see TD-10)_ | Legal, compliance, privacy |
+| i18n | _(shared-KB path TBD — see TD-10)_ | Multi-language localization strategy, translation quality, locale coverage |
 
 ## Skills
 

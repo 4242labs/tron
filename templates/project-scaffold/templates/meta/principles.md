@@ -12,7 +12,7 @@ Single source for project-level paths. Every agent reads this file at session st
 
 | Variable | Value | Notes |
 |:--|:--|:--|
-| `{shared_knowledge_path}` | `42hq/knowledge-base` | The canonical shared knowledge base (principles-base, shared skills, `meta/agent.md` notifications/warnings). Every `{shared_knowledge_path}/…` reference resolves against this. If this project has **no** shared KB, set blank — then skip every `{shared_knowledge_path}/…` step. |
+| `{shared_knowledge_path}` | _(blank — set per project; TBD in canon, see TD-10)_ | The canonical shared knowledge base (principles-base, shared skills, `meta/agent.md` notifications/warnings). Every `{shared_knowledge_path}/…` reference resolves against this. If this project has **no** shared KB, set blank — then skip every `{shared_knowledge_path}/…` step. |
 
 Keep this value in sync with `agents/super-m-local.md → Configuration → shared_knowledge_path`.
 

@@ -4,8 +4,8 @@
 `engine/fsm.py`, `routing.yaml`, and `messages.yaml`. Companion to `contracts/rebuild-spec.md` (the 01-01
 behavior spec); on any conflict the spec + the built engine win.
 · **Block:** 01-03 (reconcile) · **Date:** 2026-06-28
-**Implements:** `42hq/agents/super-m/plans/tron-adr-001-deterministic-rebuild.md` (FSM + scripted I/O)
-**Conforms to:** the frozen flow — `42hq/agents/super-m/plans/tron-workflow-v2-skills.csv` (the event table + PULSE/SWITCHBOARD + grammar).
+**Implements:** the deterministic-rebuild ADR — ADR-0001 (FSM + scripted I/O). _(source path TBD — see TD-10)_
+**Conforms to:** the frozen flow (`workflow/`) — the event table + PULSE/SWITCHBOARD + grammar. _(source path TBD — see TD-10)_
 
 This is the authoritative contract set the rest of TRON is built against. **Design only** — no real
 copy. It locks: the event-table model, the standing layer (PULSE + SWITCHBOARD), the trigger
@@ -234,8 +234,10 @@ engineer ladder is fired one stage at a time: **validate-local** (`gate.local`) 
 on trunk** (`gate.trunk`) → **close** (`close.worker`). A reviewer's gate is `gate.review` — full coverage
 since the last review, looped until clean. A failed stage re-prompts with the specific gap, never advancing.
 
-**One gated merge — to trunk (01-08, retiring 01-05's two-gate).** There is a **single** gated merge: the
-worker merges to trunk and CI auto-deploys staging. The earlier two-gate / `promote_main` model is **removed**.
+**One gated merge — to trunk (01-08, retiring 01-05's two-gate).** There is a **single** gated merge to
+trunk: with a remote the worker merges its PR and CI auto-deploys staging; with no remote (local mode) the
+engine fast-forwards the branch to trunk itself (no PR, no CI). The earlier two-gate / `promote_main` model
+is **removed**.
 The merge step is ASK-gated only when the operator turns on **"ask before merging"** — then TRON parks one
 operator case (the standard escalate/`operator:decision` path) with four outcomes: **approve** · **operator
 merges it** (the agent resumes at `gate.trunk`) · **changes requested** (relayed back to the agent) · **drop**.

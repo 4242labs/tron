@@ -1,6 +1,6 @@
 # Playbook: Browser Testing (Devtools-class MCP + Automation-class MCP)
 
-Canonical project-local reference for browser validation in `<PROJECT_NAME>`. Both MCPs are configured locally and invoked via the agent runtime's MCP layer. This playbook is the authoritative project-local guide — skills and agents point here. The 42hq-level guideline at `{shared_knowledge_path}/reference/guidelines-browser-testing.md` is the parent doc; this file inherits its rules and adds project-specific URLs, accounts, and paths.
+Canonical project-local reference for browser validation in `<PROJECT_NAME>`. Both MCPs are configured locally and invoked via the agent runtime's MCP layer. This playbook is the authoritative project-local guide — skills and agents point here. The shared-KB guideline at `{shared_knowledge_path}/reference/guidelines-browser-testing.md` is the parent doc; this file inherits its rules and adds project-specific URLs, accounts, and paths.
 
 **When it's mandatory:** every block that touches UI or visible browser behavior. Full trigger rule in `../<META_REPO_NAME>/skills/skill-validate.md §3 Browser MCP Validation`.
 

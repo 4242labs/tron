@@ -4,10 +4,10 @@
 
 | What | Where |
 |------|-------|
-| Service profile (12-Q + values) | `42hq/super-m/skills/skill-project-profile.md` |
-| Scaffold procedure (zero → live project) | `42hq/super-m/skills/skill-project-scaffold.md` |
-| Audit checklist (existing project gap analysis) | `42hq/super-m/skills/skill-project-audit.md` |
-| Upgrade procedure (close gaps to 100%) | `42hq/super-m/skills/skill-project-upgrade.md` |
+| Service profile (12-Q + values) | _(shared-KB path TBD — see TD-10)_ |
+| Scaffold procedure (zero → live project) | _(shared-KB path TBD — see TD-10)_ |
+| Audit checklist (existing project gap analysis) | _(shared-KB path TBD — see TD-10)_ |
+| Upgrade procedure (close gaps to 100%) | _(shared-KB path TBD — see TD-10)_ |
 | Modes that trigger the chains | `SCAFFOLD PROJECT` and `UPGRADE PROJECT` in `super-m/super-m.md` §Session Start |
 
 ## How to use

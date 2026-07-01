@@ -11,7 +11,7 @@ Applies to **every** diagram — the core map and each drill-down sub, retrofits
 - Assets (favicons, `nyan-cat.gif`) live beside them in `workflow/`; this doc stays in `docs/`.
 
 These are the **single source of truth**. Governing companions in `tron-meta/`: `pipeline.md` (committed
-work + status), `backlog.md` (open requirements), `context-revamp.md` (agent orientation). Read them before
+work + status), `backlog.md` (open requirements). Read them before
 changing the flow.
 
 ---
