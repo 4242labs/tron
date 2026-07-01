@@ -20,7 +20,7 @@ Workspace-level, meta repo, and app repo file templates with `<PLACEHOLDER>` tok
 
 | Subdir | Holds |
 |--------|-------|
-| `templates/` (root) | Workspace `CLAUDE.md`, `.claude/settings.json` |
+| `templates/` (root) | Workspace `AGENTS.md`, `.claude/settings.json` |
 | `templates/meta/` | Meta-repo agents, skills, principles, pipeline, blocks, ref formats, lens |
 | `templates/app/` | App-repo `lefthook.yml`, `.nvmrc`, `.env.example`, MCP/services setup, `.github/workflows/`, optional `infra/` |
 

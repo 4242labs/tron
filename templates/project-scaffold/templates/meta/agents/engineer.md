@@ -23,7 +23,7 @@ Before any work, read and internalize:
 - [ ] Read `pipeline.md` — always
 - [ ] Read `<APP_REPO_NAME>/docs/guidelines-coding.md` — always (code standards + secure coding)
 - [ ] Read `<APP_REPO_NAME>/docs/playbook-infra.md` — always (infra, secrets, services)
-- [ ] Read `<APP_REPO_NAME>/app/CLAUDE.md` when touching app code
+- [ ] Read `<APP_REPO_NAME>/app/AGENTS.md` when touching app code
 - [ ] If anything is unclear → ask immediately
 
 ---

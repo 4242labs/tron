@@ -93,7 +93,7 @@ Every agent reads these at session start:
 - `context.md` — always
 - `<APP_REPO_NAME>/docs/guidelines-coding.md` — code standards + secure coding (when touching app code)
 - `<APP_REPO_NAME>/docs/playbook-infra.md` — infra, secrets, services (when touching app code or infra)
-- `<APP_REPO_NAME>/app/CLAUDE.md` — when touching app code
+- `<APP_REPO_NAME>/app/AGENTS.md` — when touching app code
 
 **Rules:**
 

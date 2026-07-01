@@ -40,7 +40,7 @@ Single home for the skill ↔ file ↔ trigger registry: `<META_REPO_NAME>/princ
 - `<META_REPO_NAME>/pipeline.md` — Single source of truth for all active work
 - `<META_REPO_NAME>/context.md` — Project context for all agents
 - `<META_REPO_NAME>/principles.md` — Agent behavior rules (includes Skills registry and Core Docs list)
-- `<APP_REPO_NAME>/app/CLAUDE.md` — App technical spec
+- `<APP_REPO_NAME>/app/AGENTS.md` — App technical spec
 - **42labs Design System (canon, cross-app)** — <https://42labs.io/design> (repo `github.com/42piratas/42labs`; optional offline mirror at `<DESIGN_SYSTEM_LOCAL_PATH>` if the contributor keeps one — never hardcode a machine-specific absolute path here per `principles-base.md §14`). Color, typography, radius, spacing, base components — shared by all Labs apps. Project-local design guidelines extend but never contradict this canon.
 - `<APP_REPO_NAME>/docs/guidelines-coding.md` — Durable code standards + secure-coding baseline (anyone touching `app/`)
 - `<APP_REPO_NAME>/docs/playbook-infra.md` — Infrastructure operational guide (secrets, services, rotation)
