@@ -1188,6 +1188,7 @@ class Engine:
                     # "a PR exists" in remote mode (never a blind guess).
                     have_branch = trunk.branch_exists(self.paths["root"], branch, self.dry)
                     if local_mode and have_branch and g.get("stage") == "local":
+                        g.pop("branch_gap", None)         # W12: the branch is visible again
                         if g.get("self_merge"):
                             stage, msg = "trunk", "gate.trunk"        # operator merged it themselves
                             g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
@@ -1226,6 +1227,22 @@ class Engine:
                             return                                    # tick while parked on operator -> hold quietly
                         else:
                             stage, msg = "local", "gate.local"        # tick while worker still validating locally
+                    elif local_mode and not have_branch and g.get("stage") == "local" and on_report:
+                        # W12 (tron-13 attempt 1): the worker says done but NO branch is
+                        # visible under the name the gate would merge (declared or the
+                        # convention placeholder) — re-ordering validation is the WRONG
+                        # remedy (it walked a worker through three re-validations into
+                        # the idle cap). Name the actual gap; the W10 hoist makes the
+                        # one-message remedy real (a done re-report can carry --branch).
+                        # The idle machinery keeps re-sending THIS line (branch_gap flag
+                        # flips the nudge template) and its cap stays the backstop.
+                        g["branch_gap"] = True
+                        if wid and not self.dry:
+                            self._to_worker(wid, self._branch_gap_line(wid, block),
+                                            "gate.branch-gap")
+                        self.log("flow", f"gate[{block}] done reported but no visible "
+                                         f"branch -> ask for the declaration")
+                        stage, msg = "local", None
                     else:
                         stage, msg = "local", "gate.local"   # remote: no PR yet -> validate locally first
             else:
@@ -1279,11 +1296,17 @@ class Engine:
                         and not g.get("nudged_at") and wid):
                     # Re-send the pending stage prompt — a deliberate duplicate on a FRESH
                     # mailbox seq (_to_worker bumps it), so the runner's seq-keyed dedupe
-                    # delivers it (R1-4). One nudge per idle episode.
+                    # delivers it (R1-4). One nudge per idle episode. W12: while the gap
+                    # is a missing branch, the nudge names THAT — never "validate again".
                     nudge = self._stage_template(stage)
                     if nudge:
                         g["nudged_at"] = now
-                        self.emit(nudge, self._stage_slots(stage, wid, block), worker_id=wid)
+                        if g.get("branch_gap") and stage == "local":
+                            self._to_worker(wid, self._branch_gap_line(wid, block),
+                                            "gate.branch-gap")
+                        else:
+                            self.emit(nudge, self._stage_slots(stage, wid, block),
+                                      worker_id=wid)
                         self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
         else:
             g.pop("idle_since", None)
@@ -1458,6 +1481,15 @@ class Engine:
         self.emit("escalate.wall", {"worker_id": wid or "?", "block": "?",
                                     "detail": f"{role} paperwork unlandable — {detail}",
                                     "case": cid})
+
+    def _branch_gap_line(self, wid, block):
+        """W12: the missing-branch remedy names the actual gap and prescribes the
+        ONE-message recovery — the W10 hoist carries `--branch` on any verb, so the
+        re-reported done and the declaration ride together (peer rider 1)."""
+        return (f"[TRON]  {wid} — I can't see a branch for {block}: you've reported "
+                f"done, but nothing exists under the name I have (or you never named "
+                f"one). Report done again and carry your branch with it — add "
+                f"`--branch <your branch name>` to the report command.")
 
     def _land_nudge(self, wid, detail):
         # Engine-composed (gate.changes precedent): the PMT surface stays untouched.

@@ -822,6 +822,75 @@ def t_branch_registry_owner_only():
        f"branches={eng2.st.branches} arch={eng2._architect()}")
 
 
+# ── W12: a missing branch gets named, never "validate again" ──
+def _capture_to_worker(eng):
+    sent = []
+    eng._to_worker = (lambda wid, text, kind: sent.append((wid, kind, text)))
+    return sent
+
+
+def t_branch_gap_names_the_gap():
+    eng = _eng()
+    eng.dry = False                                       # _to_worker path (captured)
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
+    direct = _capture_to_worker(eng)
+    sent = _capture(eng)
+    clock = _clocked(eng)                                 # BEFORE any idle anchor
+    orig_idle0 = jobs.runner_idle
+    jobs.runner_idle = lambda *a, **k: True
+    orig_be = trunk.branch_exists
+    trunk.branch_exists = lambda *a, **k: False
+    orig_lm = eng._local_mode
+    eng._local_mode = lambda: True
+    try:
+        eng._drive_gate("A-01", g, on_report=True)        # done, but no visible branch
+        ok("W12 done-with-no-branch asks for the declaration",
+           any(k == "gate.branch-gap" and "--branch" in t for _, k, t in direct),
+           f"direct={direct}")
+        ok("W12 no gate.local re-order on the gap",
+           not any(t == "gate.local" for t, _ in sent), f"sent={sent}")
+        ok("W12 the gap is flagged for the nudge machinery",
+           g.get("branch_gap") is True and g.get("stage") == "local", f"g={g}")
+        # The idle re-nudge repeats the branch-gap line, not the validation order.
+        eng._drive_gate("A-01", g)                        # anchors idle
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._drive_gate("A-01", g)                        # nudge fires
+        ok("W12 the idle nudge repeats the gap line",
+           sum(1 for _, k, _t in direct if k == "gate.branch-gap") == 2
+           and not any(t == "gate.local" for t, _ in sent), f"direct={direct}")
+        # Rider 2a: still no branch -> the idle cap stays the backstop.
+        clock["t"] += eng._pace("gate_idle_cap", 3) + 1
+        eng._drive_gate("A-01", g)
+        ok("W12 repeated bare done still walls at the cap",
+           "A-01" not in eng.st.gate, f"gate={eng.st.gate}")
+    finally:
+        jobs.runner_idle = orig_idle0
+        trunk.branch_exists = orig_be
+        eng._local_mode = orig_lm
+
+
+def t_branch_gap_compliant_rereport_recovers():
+    # Rider 2b: the one-message remedy — a done re-report WITH the branch visible
+    # clears the flag and the gate proceeds (here: to the ASK park).
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
+                                        "branch_gap": True})
+    eng.st.approvals["merge"] = "ASK"
+    eng.st.branches["A-01"] = "fix/named-late"
+    orig_be, orig_ts = trunk.branch_exists, trunk.tip_sha
+    trunk.branch_exists = lambda *a, **k: True
+    trunk.tip_sha = lambda *a, **k: "abc1234"
+    orig_lm = eng._local_mode
+    eng._local_mode = lambda: True
+    try:
+        eng._drive_gate("A-01", g, on_report=True)
+        ok("W12 a compliant re-report clears the gap and proceeds",
+           "branch_gap" not in g and g.get("case_merge"), f"g={g}")
+    finally:
+        trunk.branch_exists, trunk.tip_sha = orig_be, orig_ts
+        eng._local_mode = orig_lm
+
+
 # ── W9: trunk truth is the PINNED COMMITTED tree, never the working tree ──
 def t_snapshot_reads_pinned_tree():
     d = _mkrepo()
@@ -940,6 +1009,8 @@ TESTS = [
     t_worktree_residue_named,
     t_lander_deletes_already_merged_branch,
     t_branch_registry_owner_only,
+    t_branch_gap_names_the_gap,
+    t_branch_gap_compliant_rereport_recovers,
 ]
 
 
