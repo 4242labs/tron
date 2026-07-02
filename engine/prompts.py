@@ -20,9 +20,17 @@ class Prompts:
     def __init__(self, ctx):
         self.ctx = ctx
 
-    def _registry(self):
+    def _registry_doc(self):
         # Read fresh: the registry travels with the canon and may be edited between ticks.
-        return (util.load_yaml(self.ctx.prompts_registry) or {}).get("prompts", {})
+        return util.load_yaml(self.ctx.prompts_registry) or {}
+
+    def _registry(self):
+        return self._registry_doc().get("prompts", {})
+
+    def reply_line(self):
+        """The shared reply-line copy (01-11 FX-1) — the single source of the channel
+        instruction, appended to every PMT flagged `reply_expected`."""
+        return (self._registry_doc().get("reply_line") or "").strip()
 
     def ids(self):
         return set(self._registry().keys())
@@ -45,6 +53,13 @@ class Prompts:
             raise UnknownPrompt(f"prompts: PMT '{pmt_id}' file missing: {spec['file']}")
         with open(path, encoding="utf-8") as fh:
             body = fh.read()
+        # 01-11 FX-1: a reply-expecting PMT ends in the shared reply line — appended by the
+        # MECHANISM, never per-PMT prose, so no prompt can silently skip the channel (L19
+        # keeps the flag set total; the copy lives once, at the registry's reply_line).
+        if spec.get("reply_expected"):
+            line = self.reply_line()
+            if line:
+                body = body.rstrip("\n") + "\n\n" + line + "\n"
         try:
             return body.format(**slots)
         except KeyError as e:

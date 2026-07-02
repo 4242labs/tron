@@ -231,8 +231,13 @@ Atomic state + idempotent ticks ⇒ a crashed wake is safely retried.
 the gate then judges on **evidence** at each stage — never the worker's `✅`, never bare trunk presence. The
 engineer ladder is fired one stage at a time: **validate-local** (`gate.local`) → **merge to trunk**
 (`gate.merge`: PR merged + CI green; CI auto-deploys staging, the agent's validation target) → **re-validate
-on trunk** (`gate.trunk`) → **close** (`close.worker`). A reviewer's gate is `gate.review` — full coverage
-since the last review, looped until clean. A failed stage re-prompts with the specific gap, never advancing.
+on trunk** (`gate.trunk`) → **record** (`gate.record`, 01-11: the gate orders the worker's ✅ status commit
+once the trunk evidence is accepted — content-checked to exactly the block doc's Status field; a remote
+record-PR is ASK-exempt and merged by the worker under the order) → **close** (`close.worker`, released only
+after the engine verifies the replica is clean — root, worktrees, branch). A reviewer's gate is `gate.review`
+— full coverage since the last review, looped until clean. A failed stage re-prompts with the specific gap,
+never advancing; an idle worker at any stage is re-nudged (`gate_nudge_after`) then escalated
+(`gate_idle_cap`) off the runner's own idle state — a gate can never hang silently.
 
 **One gated merge — to trunk (01-08, retiring 01-05's two-gate).** There is a **single** gated merge to
 trunk: with a remote the worker merges its PR and CI auto-deploys staging; with no remote (local mode) the

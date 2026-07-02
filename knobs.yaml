@@ -18,9 +18,12 @@ knobs:
                            # (Prod promotion is operator-only regardless — never a worker stage.)
   silence_ping_min: 6      # worker silent this many minutes -> heartbeat ping
   silence_escalate_min: 8  # silent past this -> engine emits worker:stalled (> ping)
-  # DONE-gate liveness caps — ticks stalled at the same stage with no worker activity before
-  # escalating (MG-01). Read by name via knobs.get(key, default); default applies if unset.
-  gate_idle_cap: 3         # any stage (local/merge/ci/ci-wait) — no positive activity signal
+  # DONE-gate liveness caps — ticks stalled at the same stage before escalating (MG-01,
+  # rewired by 01-11: idle = the runner's own `state: idle`, a deterministic file read —
+  # heartbeat freshness can't mask it). Read by name via knobs.get(key, default).
+  gate_idle_cap: 3         # idle ticks at one stage before the gate escalates (raise-and-defer)
+  gate_nudge_after: 2      # idle ticks before the pending stage prompt is re-sent once (01-11);
+                           # a deliberate duplicate on a fresh mailbox seq — keep < gate_idle_cap
   gate_post_merge_cap: 3   # trunk re-validate stage specifically (merged, not yet ✅)
   gate_close_cap: 3        # close-confirm stage specifically (✅ landed, awaiting clean exit)
   # WAKE pulse-timing bounds (the daemon reads these, 01-04). Fixed knobs: edit here,

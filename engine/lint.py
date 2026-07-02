@@ -30,7 +30,7 @@ from fsm import TABLE, Engine
 
 # The closed tag enum the engine knows how to route (mirrors routing.yaml tags).
 CANON_TAGS = {
-    "worker.online",
+    "worker.online", "worker.recorded",
     "worker.done", "worker.wall", "worker.review_done", "worker.await_confirm",
     "worker.branch", "worker.progress", "worker.question_peer", "worker.question_tron",
     "architect.reconciled", "architect.logged", "architect.relay", "architect.escalate",
@@ -285,6 +285,34 @@ def _prompts(ctx):
     return r
 
 
+def _reply_contract(ctx):
+    # L19 — the reply contract (01-11 FX-1/FX-5/FX-8): a worker reply that never reaches the
+    # channel does not exist to the engine, so EVERY PMT must carry the channel instruction —
+    # either flagged `reply_expected: true` (the loader appends the shared reply_line) or its
+    # body references {report} inline (PMT-SPAWN's bespoke check-in). The shared line itself
+    # must exist and render both {report} and {worker_id}. Data, not convention: a new PMT
+    # cannot silently skip the channel.
+    doc = util.load_yaml(ctx.prompts_registry) if os.path.exists(ctx.prompts_registry) else {}
+    doc = doc or {}
+    reg = doc.get("prompts", {})
+    line = (doc.get("reply_line") or "")
+    d19 = []
+    if "{report}" not in line or "{worker_id}" not in line:
+        d19.append("reply_line missing or lacks {report}/{worker_id}")
+    for pid, spec in reg.items():
+        if (spec or {}).get("reply_expected"):
+            continue
+        f = (spec or {}).get("file")
+        path = os.path.join(ctx.prompts_dir, f) if f else None
+        body = ""
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read()
+        if "{report}" not in body:
+            d19.append(f"{pid}: not reply_expected and no {{report}} in body")
+    return [Result("L19 every PMT carries the reply channel", not d19, "; ".join(d19))]
+
+
 # ── VERSION rule (M-06): the instance's stamped tron_version vs its own copied
 # canon VERSION — the two are written from the same source at every seed, so any
 # gap means the instance was patched or partially re-seeded, not fully. A canon
@@ -313,5 +341,6 @@ def run(ctx, project=None):
     comp = ctx.load_knobs()
     if project is None:
         project = ctx.load_project()
-    results = _canon(routing) + _composition(comp, project) + _prompts(ctx) + _version(ctx, project)
+    results = (_canon(routing) + _composition(comp, project) + _prompts(ctx)
+               + _version(ctx, project) + _reply_contract(ctx))
     return all(x.ok for x in results), results
