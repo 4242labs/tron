@@ -9,7 +9,9 @@ design of record: tron-meta logs/engineer/260702-tron-13-design.md).
 Run: python3 engine/tron13_test.py   (exit 0 = pass). No tokens, no network.
 """
 import os
+import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -359,6 +361,321 @@ def t_admission_is_declarative():
        got is not None, f"got={got}")
 
 
+# ── D1/F-1: the unified paperwork lander (real git — trunk.land_docs) ──
+def _git(cwd, *args):
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+
+def _mkrepo():
+    d = tempfile.mkdtemp(prefix="tron13-lander-")
+    _git(d, "init", "-q", "-b", "main")
+    _git(d, "config", "user.email", "t@t")
+    _git(d, "config", "user.name", "t")
+    os.makedirs(os.path.join(d, "meta", "blocks", "archive"))
+    os.makedirs(os.path.join(d, "meta", "logs"))
+    os.makedirs(os.path.join(d, "src"))
+    files = {
+        "meta/pipeline.md": "| A-01 | logic | 📋 |\n| A-02 | ui | 📋 |\n",
+        "meta/blocks/A-01.md": "# A-01\n**Status:** ✅ Done\n",
+        "meta/blocks/archive/.keep": "",
+        "meta/logs/.keep": "",
+        "src/app.txt": "code\n",
+        "README.md": "readme\n",
+    }
+    for p, c in files.items():
+        with open(os.path.join(d, p), "w") as fh:
+            fh.write(c)
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "base")
+    return d
+
+
+def _on_branch(d, branch, fn):
+    _git(d, "checkout", "-qb", branch)
+    fn()
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "paperwork")
+    _git(d, "checkout", "-q", "main")
+
+
+ALLOW = ["meta/", "README.md"]
+DENY = ["meta/blocks/", "meta/pipeline.md"]
+
+
+def t_lander_lands_paperwork():
+    d = _mkrepo()
+
+    def w():
+        with open(os.path.join(d, "meta", "logs", "log-1.md"), "w") as fh:
+            fh.write("session log\n")
+    _on_branch(d, "docs/close", w)
+    code, detail = trunk.land_docs(d, "docs/close", ALLOW, "main", False, denylist=DENY)
+    ok("D1 paperwork-only branch lands", code == "landed", f"{code}: {detail}")
+    ok("D1 landed branch is deleted", not trunk.branch_exists(d, "docs/close"))
+    ok("D1 paperwork is on trunk",
+       os.path.exists(os.path.join(d, "meta", "logs", "log-1.md")))
+
+
+def t_lander_code_violation():
+    d = _mkrepo()
+
+    def w():
+        with open(os.path.join(d, "src", "sneak.txt"), "w") as fh:
+            fh.write("code\n")
+        with open(os.path.join(d, "meta", "logs", "log.md"), "w") as fh:
+            fh.write("log\n")
+    _on_branch(d, "docs/dirty", w)
+    code, detail = trunk.land_docs(d, "docs/dirty", ALLOW, "main", False, denylist=DENY)
+    ok("D1 code on a paperwork branch is a violation",
+       code == "violation" and "src/sneak.txt" in detail, f"{code}: {detail}")
+    ok("D1 violating branch is NOT landed or deleted",
+       trunk.branch_exists(d, "docs/dirty"))
+
+
+def t_lander_own_block_exceptions():
+    # The co-signed ask-2 fix: the engineer's close-out archives its OWN block doc,
+    # adds Completed, and flips its own pipeline line — all allowed, mechanically scoped.
+    d = _mkrepo()
+
+    def w():
+        _git(d, "mv", "meta/blocks/A-01.md", "meta/blocks/archive/A-01.md")
+        with open(os.path.join(d, "meta", "blocks", "archive", "A-01.md"), "a") as fh:
+            fh.write("**Completed:** 2026-07-02\n")
+        p = os.path.join(d, "meta", "pipeline.md")
+        with open(p) as fh:
+            txt = fh.read()
+        with open(p, "w") as fh:
+            fh.write(txt.replace("| A-01 | logic | 📋 |", "| A-01 | logic | ✅ |"))
+        with open(os.path.join(d, "meta", "logs", "log.md"), "w") as fh:
+            fh.write("log\n")
+    _on_branch(d, "feat/a-01", w)
+    allow = ALLOW + ["meta/blocks/A-01.md", "meta/blocks/archive/A-01.md"]
+    code, detail = trunk.land_docs(d, "feat/a-01", allow, "main", False,
+                                   denylist=DENY,
+                                   line_scoped={"meta/pipeline.md": "A-01"})
+    ok("D1 own-block archival + Completed + own pipeline line lands",
+       code == "landed", f"{code}: {detail}")
+    ok("D1 archive move is on trunk",
+       os.path.exists(os.path.join(d, "meta", "blocks", "archive", "A-01.md")))
+
+
+def t_lander_foreign_pipeline_line():
+    d = _mkrepo()
+
+    def w():
+        p = os.path.join(d, "meta", "pipeline.md")
+        with open(p) as fh:
+            txt = fh.read()
+        with open(p, "w") as fh:
+            fh.write(txt.replace("| A-02 | ui | 📋 |", "| A-02 | ui | ✅ |"))
+    _on_branch(d, "feat/a-01-sneaky", w)
+    code, detail = trunk.land_docs(d, "feat/a-01-sneaky", ALLOW, "main", False,
+                                   denylist=DENY,
+                                   line_scoped={"meta/pipeline.md": "A-01"})
+    ok("D1 a pipeline line naming ANOTHER block is a violation",
+       code == "violation" and "pipeline" in detail, f"{code}: {detail}")
+
+
+def t_lander_nonff():
+    d = _mkrepo()
+
+    def w():
+        with open(os.path.join(d, "meta", "logs", "log.md"), "w") as fh:
+            fh.write("log\n")
+    _on_branch(d, "docs/behind", w)
+    with open(os.path.join(d, "src", "app.txt"), "a") as fh:
+        fh.write("moved\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "trunk moved")
+    code, detail = trunk.land_docs(d, "docs/behind", ALLOW, "main", False, denylist=DENY)
+    ok("D1 a moved trunk is non-ff (the engine never rebases)",
+       code == "non-ff", f"{code}: {detail}")
+    ok("D1 non-ff branch survives for its owner to rebase",
+       trunk.branch_exists(d, "docs/behind"))
+
+
+def t_lander_architect_union():
+    d = _mkrepo()
+
+    def w():
+        with open(os.path.join(d, "meta", "blocks", "B-01.md"), "w") as fh:
+            fh.write("# B-01 adhoc\n**Status:** 📋\n")
+        with open(os.path.join(d, "meta", "pipeline.md"), "a") as fh:
+            fh.write("| B-01 | adhoc | 📋 |\n")
+    _on_branch(d, "chore/adhoc", w)
+    allow = ALLOW + ["meta/blocks/", "meta/pipeline.md"]     # explicit union, no deny
+    code, detail = trunk.land_docs(d, "chore/adhoc", allow, "main", False)
+    ok("D1 architect union lands block files + pipeline edits",
+       code == "landed", f"{code}: {detail}")
+    # Reviewer strictness over the same content:
+    d2 = _mkrepo()
+
+    def w2():
+        with open(os.path.join(d2, "meta", "blocks", "B-01.md"), "w") as fh:
+            fh.write("# B-01\n")
+    _on_branch(d2, "docs/rev", w2)
+    code, detail = trunk.land_docs(d2, "docs/rev", ALLOW, "main", False, denylist=DENY)
+    ok("D1 reviewer stays strict on pipeline content",
+       code == "violation", f"{code}: {detail}")
+
+
+# ── D1 flow: the landing points (dry engine, lander mocked) ──
+def _mock_land(code, detail=""):
+    orig = trunk.land_docs
+    trunk.land_docs = lambda *a, **k: (code, detail)
+    return lambda: setattr(sys.modules["trunk"], "land_docs", orig)
+
+
+def t_close_lands_first():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "close"})
+    restore = _mock_land("landed", "2 file(s) @ abc1234")
+    orig_rc = trunk.replica_clean
+    trunk.replica_clean = lambda *a, **k: (True, "")
+    try:
+        eng._confirm_close("A-01", g)
+        ok("D1 close lands then releases", "A-01" not in eng.st.gate
+           and not any(w.get("block") == "A-01" for w in eng.st.workers),
+           f"gate={eng.st.gate}")
+        ok("D1 landing is a docs_landed event",
+           any(e.get("type") == "docs_landed" for e in _events(eng)))
+    finally:
+        restore()
+        trunk.replica_clean = orig_rc
+
+
+def t_close_violation_holds_then_caps():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "close"})
+    sent = _capture(eng)
+    restore = _mock_land("violation", "src/sneak.txt")
+    try:
+        eng._confirm_close("A-01", g)
+        ok("D1 unlandable close re-holds with the named files",
+           "A-01" in eng.st.gate
+           and any(t == "close.dirty" and "src/sneak.txt" in s.get("detail", "")
+                   for t, s in sent), f"sent={sent}")
+        eng._confirm_close("A-01", g)
+        eng._confirm_close("A-01", g)                         # cap (gate_close_cap=3)
+        ok("D1 landing failures cap into a gate escalation",
+           "A-01" not in eng.st.gate
+           and any(e.get("code") == "gate-close-dirty"
+                   for e in _events(eng) if e.get("kind") == "failure"))
+    finally:
+        restore()
+
+
+def t_reviewer_declaration_fifo():
+    # FS-3: blockless declaration keyed purely on the sender record; st.branches untouched.
+    eng = _eng()
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+                           "block": "review:code", "session_id": "dry",
+                           "status": "working"})
+    eng._ingest("worker.branch", {"branch": "docs/review-1"}, {"id": "REV-code"})
+    eng._ingest("worker.branch", {"branch": "docs/review-2"}, {"id": "REV-code"})
+    rev = next(w for w in eng.st.workers if w.get("id") == "REV-code")
+    ok("D1/FS-3 blockless declarations queue FIFO on the sender record",
+       rev.get("pending_landings") == ["docs/review-1", "docs/review-2"],
+       f"rev={rev}")
+    ok("D1/FS-3 st.branches stays block-gate territory",
+       "docs/review-1" not in (eng.st.branches or {}).values(),
+       f"branches={eng.st.branches}")
+
+
+def t_review_landing_holds_then_releases():
+    eng = _eng()
+    eng.st.workers.append({"id": "ARCH-PERSIST", "role": "architect",
+                           "session_id": "dry", "status": "idle"})
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+                           "block": "review:code", "session_id": "dry",
+                           "status": "working", "pending_landings": ["docs/rev"]})
+    eng.st.gate["review:code"] = {"stage": "review"}
+    restore = _mock_land("non-ff", "trunk moved")
+    try:
+        eng._h_release_reviewer({"type": "code", "block": "A-01"})   # confirmation leg
+        g = eng.st.gate.get("review:code")
+        ok("D1 blocked review landing holds the gate at `landing`",
+           g and g.get("stage") == "landing", f"g={g}")
+    finally:
+        restore()
+    restore = _mock_land("landed", "1 file(s) @ abc1234")
+    try:
+        eng._drive_review_landing("review:code", eng.st.gate["review:code"])
+        ok("D1 the driver lands and releases the reviewer",
+           "review:code" not in eng.st.gate
+           and not any(w.get("id") == "REV-code" for w in eng.st.workers))
+        arch = eng._architect()
+        ok("D1 remediation still queues after a deferred landing",
+           any(j.get("kind") == "log" for j in eng.st.architect_queue)
+           or (arch.get("current_job") or {}).get("kind") == "log",
+           f"queue={eng.st.architect_queue} job={arch.get('current_job')}")
+    finally:
+        restore()
+
+
+def t_review_landing_cap_leaves_named_residue():
+    # Rider (b)-2: cap-release residue is provably caught by the session-end sweep.
+    eng = _eng()
+    clock = _clocked(eng)
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+                           "block": "review:code", "session_id": "dry",
+                           "status": "working", "pending_landings": ["docs/rev"]})
+    eng.st.gate["review:code"] = {"stage": "landing", "block": "A-01"}
+    restore = _mock_land("non-ff", "trunk moved")
+    orig_idle = jobs.runner_idle
+    jobs.runner_idle = lambda *a, **k: True
+    try:
+        eng._drive_review_landing("review:code", eng.st.gate["review:code"])  # anchors
+        clock["t"] += eng._pace("gate_close_cap", 3) + 1
+        eng._drive_review_landing("review:code", eng.st.gate["review:code"])  # cap
+        ok("D1 landing cap releases the reviewer with a named failure",
+           "review:code" not in eng.st.gate
+           and any(e.get("code") == "paperwork-unlandable"
+                   for e in _events(eng) if e.get("kind") == "failure"))
+        ok("D1 the failed branch is durable residue",
+           any(f.get("branch") == "docs/rev"
+               for f in eng.st.data.get("failed_landings", [])),
+           f"failed={eng.st.data.get('failed_landings')}")
+        eng._end_session()
+        ok("D1 the session-end sweep re-names the residue",
+           any(e.get("fclass") == "session-residue" and "docs/rev" in (e.get("cause") or "")
+               for e in _events(eng) if e.get("kind") == "failure"))
+    finally:
+        restore()
+        jobs.runner_idle = orig_idle
+
+
+def t_architect_fifo_never_deadlocks():
+    # FS-1: a blocked head caps aside as residue; the queue keeps draining.
+    eng = _eng()
+    clock = _clocked(eng)
+    eng.st.workers.append({"id": "ARCH-PERSIST", "role": "architect",
+                           "session_id": "dry", "status": "idle",
+                           "pending_landings": ["docs/j1", "docs/j2"]})
+    restore = _mock_land("violation", "meta-oops")
+    try:
+        eng._drive_landings()                                 # anchors + nudge
+        clock["t"] += eng._pace("gate_close_cap", 3) + 1
+        eng._drive_landings()                                 # cap -> j1 aside
+        arch = eng._architect()
+        ok("D1/FS-1 capped head moves aside as residue",
+           any(f.get("branch") == "docs/j1"
+               for f in eng.st.data.get("failed_landings", []))
+           and arch.get("pending_landings") == ["docs/j2"],
+           f"arch={arch} failed={eng.st.data.get('failed_landings')}")
+    finally:
+        restore()
+    restore = _mock_land("landed", "ok")
+    try:
+        eng._drive_landings()
+        ok("D1/FS-1 the queue keeps draining after the cap",
+           eng._architect().get("pending_landings") == [],
+           f"arch={eng._architect()}")
+    finally:
+        restore()
+
+
 TESTS = [
     t_ratchet_floor_paperwork_commits,
     t_ratchet_record_holds,
@@ -374,6 +691,18 @@ TESTS = [
     t_structured_clean_confirms_at_close,
     t_structured_review_type_from_sender,
     t_admission_is_declarative,
+    t_lander_lands_paperwork,
+    t_lander_code_violation,
+    t_lander_own_block_exceptions,
+    t_lander_foreign_pipeline_line,
+    t_lander_nonff,
+    t_lander_architect_union,
+    t_close_lands_first,
+    t_close_violation_holds_then_caps,
+    t_reviewer_declaration_fifo,
+    t_review_landing_holds_then_releases,
+    t_review_landing_cap_leaves_named_residue,
+    t_architect_fifo_never_deadlocks,
 ]
 
 

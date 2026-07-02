@@ -30,9 +30,6 @@ knobs:
   #   force-release a silent close   gate_close_cap  x 30s = 90s of idle.
   # A WORKING runner never accrues — its own turn deadline (TRON_TURN_TIMEOUT_S, runner-
   # declared) bounds long turns; past it the sweep escalates + hard-kills after a grace.
-  # NOTE (S-3 interim, rider 5): until the unified paperwork-lander block lands,
-  # worker_count > 1 close-outs may race on landing their parked docs — run multi-worker
-  # sessions only after that block.
   gate_idle_cap: 3         # x wake_ceiling_sec of continuous idle at one stage -> escalate
   gate_nudge_after: 2      # x wake_ceiling_sec of continuous idle -> re-send the stage prompt once
                            # (fresh mailbox seq); keep < gate_idle_cap

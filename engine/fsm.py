@@ -225,6 +225,7 @@ class Engine:
         if rc != "pause":
             self._drive_gates()          # S-1: pacing is wall-clock inside the gate machinery
             self._drive_cases()          # F-4/R-7: parked-case re-ping ladder -> safe-park
+            self._drive_landings()       # D1: architect paperwork FIFO, job-queue-independent
         self._drain_triggers()
         self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
@@ -814,7 +815,29 @@ class Engine:
             self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
             self._emit("pulse")
             return
-        self.st.gate.pop(gkey, None)                 # confirmation -> release + remediation
+        # Confirmation -> land declared paperwork BEFORE release (tron-13 D1 point 2):
+        # the findings log parked on the reviewer's named branch is landed by the ENGINE
+        # (content-checked, ff-only, branch deleted) — say-so provenance ends here. A
+        # branch that won't land holds the gate at `landing` (a stage that exists only
+        # when a branch was declared — paperwork-less reviews release exactly as before);
+        # the wall-clock driver (_drive_review_landing) paces it from here.
+        if rev and rev.get("pending_landings"):
+            code, detail = self._drain_landings(rev, "reviewer")
+            if code == "blocked":
+                g = self.st.gate[gkey]
+                prev = g.get("stage")
+                g["stage"] = "landing"
+                g["block"] = block
+                self.events.event("gate_advance", block=gkey,
+                                  **{"from": prev, "to": "landing", "detail": detail})
+                self.log("flow", f"{gkey} paperwork won't land ({detail}) -> hold at landing")
+                self._land_nudge(rev.get("id"), detail)
+                return
+        self._finish_review(typ, block)
+
+    def _finish_review(self, typ, block):
+        # Release + remediation — the single exit for a completed review cycle.
+        self.st.gate.pop(f"review:{typ}", None)
         for w in list(self.st.workers):
             if w.get("role") == "reviewer" and w.get("rtype") == typ:
                 self._release_worker(w, reason="review-complete")
@@ -1050,7 +1073,17 @@ class Engine:
 
     def _drive_gates(self):
         for block in list(self.st.gate.keys()):
-            self._drive_gate(block, self.st.gate[block])
+            g = self.st.gate.get(block)
+            if g is None:
+                continue
+            if str(block).startswith("review:"):
+                # tron-13 D1 rider (b): review gates are event-driven EXCEPT the landing
+                # stage — a reviewer silent after a failed paperwork landing would
+                # otherwise be a W6c-class stall no clock ever catches.
+                if g.get("stage") == "landing":
+                    self._drive_review_landing(block, g)
+                continue
+            self._drive_gate(block, g)
 
     def _drive_gate(self, block, g, reason=None, on_report=False):
         """Drive a worker through the DONE gate one stage-specific prompt at a time (T5), on
@@ -1344,14 +1377,181 @@ class Engine:
             g["close_nudged_at"] = now
             self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
 
+    # ── the unified paperwork lander (F-1/S-3+R-6, tron-13 D1) ──
+    def _paperwork_rules(self, role, block=None):
+        """Per-role paperwork rules -> (allow, deny, line_scoped). The project declares
+        the paperwork area (`paperwork_paths`, seeder-authored; default the meta dir).
+        Pipeline content is carved OUT for engineer/reviewer — the pipeline's shape is
+        the architect's product — with two mechanically-scoped exceptions for the
+        engineer's own close-out (co-signed ask-2 fix): its OWN block doc + archive path
+        (the archive move + Completed line), and pipeline edits whose every changed line
+        names its own block id. The architect gets the explicit UNION — a config where
+        blocks_dir isn't under a paperwork path must not silently exclude it."""
+        base = list(self.paths.get("paperwork") or [])
+        pipe = self.paths.get("pipeline_rel") or "meta/pipeline.md"
+        blocks = self.paths.get("blocks_rel") or "meta/blocks/"
+        if role == "architect":
+            return base + [blocks, pipe], None, None
+        deny = [blocks, pipe]
+        if role == "engineer" and block:
+            rel = self._block_relpath(block)
+            archive_rel = os.path.relpath(
+                os.path.join(self.paths["archive"], os.path.basename(rel)),
+                self.paths["root"])
+            return base + [rel, archive_rel], deny, {pipe: str(block)}
+        return base, deny, None
+
+    def _drain_landings(self, w, role):
+        """FS-1: land the worker's declared paperwork branches FIFO head-first — a second
+        declaration never orphans a parked first. Returns ("ok", detail) when the FIFO is
+        empty(ied), ("blocked", detail) when the head won't land — it STAYS queued; the
+        caller paces nudges and caps into a named escalation."""
+        fifo = w.setdefault("pending_landings", [])
+        while fifo:
+            branch = fifo[0]
+            allow, deny, scoped = self._paperwork_rules(role)
+            code, detail = trunk.land_docs(self.paths["root"], branch, allow,
+                                           self.paths.get("main_branch", "main"),
+                                           self.dry, denylist=deny, line_scoped=scoped)
+            if code in ("landed", "none"):
+                fifo.pop(0)
+                if code == "landed":
+                    self.events.event("docs_landed", actor=w.get("id"),
+                                      **{"role": role, "branch": branch,
+                                         "detail": detail})
+                    self.log("flow", f"paperwork[{w.get('id')}] landed {branch}: {detail}")
+                continue
+            return "blocked", f"{branch}: {code}: {detail}"
+        return "ok", "nothing pending"
+
+    def _fail_landing(self, w, role, detail):
+        """The bounded rung capped: move the head branch aside as NAMED residue (the
+        session-end sweep re-names it), record the failure, park a case on the operator."""
+        wid = w.get("id")
+        fifo = w.get("pending_landings") or []
+        branch = fifo.pop(0) if fifo else "?"
+        self.st.data.setdefault("failed_landings", []).append(
+            {"worker": wid, "role": role, "branch": branch, "detail": detail})
+        self.events.failure("gate-stuck", "paperwork-unlandable",
+                            f"land {role} paperwork branch", detail, actor=wid,
+                            node="paperwork lander", next_action="escalate")
+        cid = self._open_case(None, "paperwork", wid,
+                              f"{role} paperwork unlandable — {detail}")
+        self.emit("escalate.wall", {"worker_id": wid or "?", "block": "?",
+                                    "detail": f"{role} paperwork unlandable — {detail}",
+                                    "case": cid})
+
+    def _land_nudge(self, wid, detail):
+        # Engine-composed (gate.changes precedent): the PMT surface stays untouched.
+        self._to_worker(wid, f"[TRON]  {wid} — your paperwork branch won't land: "
+                             f"{detail}. Move anything that isn't paperwork off it, "
+                             f"rebase onto the trunk if it moved, and leave the branch "
+                             f"in place — I land it.", "land.nudge")
+
+    def _drive_landings(self):
+        """D1 landing point 3 (architect, each tick — independent of the job queue,
+        FS-1): a stuck landing nudges its owner on the close pacing law and caps into a
+        named escalation + residue, so the queue keeps draining and a stuck landing
+        never deadlocks the architect."""
+        arch = self._architect()
+        if not arch or not arch.get("pending_landings"):
+            return
+        code, detail = self._drain_landings(arch, "architect")
+        if code != "blocked":
+            arch.pop("land_since", None)
+            arch.pop("land_nudged_at", None)
+            return
+        now = self._now_s()
+        since = arch.setdefault("land_since", now)
+        if now - since >= self._pace("gate_close_cap", 3):
+            arch.pop("land_since", None)
+            arch.pop("land_nudged_at", None)
+            self._fail_landing(arch, "architect", detail)
+            return
+        last = arch.get("land_nudged_at")
+        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
+        if last is None or now - last >= ceiling:
+            arch["land_nudged_at"] = now
+            self._land_nudge(arch.get("id"), detail)
+
+    def _drive_review_landing(self, gkey, g):
+        """D1 rider (b): a review gate holds at `landing` ONLY when the reviewer declared
+        a paperwork branch that wouldn't land — same wall-clock idle law as close: retry
+        each tick (trunk may move back into ff reach), re-nudge once per ceiling while
+        idle, cap -> named escalation + release (the branch becomes named residue the
+        session-end sweep re-surfaces)."""
+        typ = gkey.split(":", 1)[1]
+        rev = next((w for w in self.st.workers
+                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+        if rev is None:
+            self.st.gate.pop(gkey, None)
+            return
+        code, detail = self._drain_landings(rev, "reviewer")
+        if code != "blocked":
+            self.log("flow", f"{gkey} paperwork landed -> release")
+            self._finish_review(typ, g.get("block"))
+            return
+        wid = rev.get("id")
+        if wid and not jobs.runner_idle(wid):
+            g.pop("landing_idle_since", None)
+            g.pop("landing_nudged_at", None)
+            return
+        now = self._now_s()
+        since = g.setdefault("landing_idle_since", now)
+        if now - since >= self._pace("gate_close_cap", 3):
+            self._fail_landing(rev, "reviewer", detail)
+            self._finish_review(typ, g.get("block"))
+            return
+        last = g.get("landing_nudged_at")
+        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
+        if wid and (last is None or now - last >= ceiling):
+            g["landing_nudged_at"] = now
+            self._land_nudge(wid, detail)
+
     def _confirm_close(self, block, g):
-        """The worker confirmed a clean exit -> verify, then free the slot (T7 + 01-11 FX-9).
-        The "clean" tag is a say-so — the engine checks the replica itself (plain git reads:
-        root clean, no leftover worktrees, the block branch gone) before releasing. Dirty ->
-        name the leftovers and re-hold; at the cap -> escalate, never a silent trust-release."""
-        clean, detail = trunk.replica_clean(self.paths["root"], self._block_branch(block),
-                                            self.paths.get("main_branch", "main"), self.dry)
+        """The worker confirmed a clean exit -> land its parked paperwork, verify, then
+        free the slot (T7 + 01-11 FX-9 + tron-13 D1). The close contract: the worker
+        parks paperwork commits on its OWN block branch, removes its worktree, syncs
+        local, confirms — the ENGINE lands (content-checked per role, ff-only, branch
+        deleted on success; serialized inside the tick lock, which is what kills the
+        multi-worker close race). The "clean" claim is a say-so — the engine checks the
+        replica itself before releasing. Unlandable/dirty -> name it and re-hold; at the
+        cap -> escalate, never a silent trust-release."""
         wid = self._worker_id_for_block(block)
+        branch = self._block_branch(block)
+        allow, deny, scoped = self._paperwork_rules("engineer", block)
+        code, ldetail = trunk.land_docs(self.paths["root"], branch, allow,
+                                        self.paths.get("main_branch", "main"), self.dry,
+                                        denylist=deny, line_scoped=scoped)
+        if code == "landed":
+            self.events.event("docs_landed", actor=wid, block=block,
+                              **{"role": "engineer", "branch": branch,
+                                 "detail": ldetail})
+            self.log("flow", f"paperwork[{block}] landed: {ldetail}")
+        elif code in ("violation", "non-ff", "error"):
+            reason = {
+                "violation": f"your branch carries non-paperwork: {ldetail} — unmerged "
+                             f"code at close is a wall to report, never a cleanup",
+                "non-ff": "trunk moved under your parked paperwork — rebase your branch "
+                          "onto the trunk, leave it in place, then confirm again",
+                "error": f"paperwork landing failed: {ldetail}",
+            }[code]
+            n = g.get("close_nudges", 0) + 1
+            g["close_nudges"] = n
+            if n >= int(self.knobs.get("gate_close_cap", 3)):
+                self._gate_giveup(block, g, wid,
+                                  f"close confirmed but paperwork won't land "
+                                  f"({code}): {ldetail}",
+                                  "gate-close-dirty",
+                                  "resolve the paperwork branch, then confirm")
+                return
+            if wid:
+                self.emit("close.dirty", {"worker_id": wid, "detail": reason},
+                          worker_id=wid)
+            self.log("flow", f"gate[{block}] paperwork landing {code}: {ldetail}")
+            return
+        clean, detail = trunk.replica_clean(self.paths["root"], branch,
+                                            self.paths.get("main_branch", "main"), self.dry)
         if not clean:
             n = g.get("close_nudges", 0) + 1
             g["close_nudges"] = n
@@ -1700,8 +1900,22 @@ class Engine:
 
     def _record_branch(self, slots):
         """The worker reported the branch it NAMED for its block (T2). Record it so the DONE gate
-        resolves the block's PR/CI by the real name — TRON never guesses `feat/<block>`."""
+        resolves the block's PR/CI by the real name — TRON never guesses `feat/<block>`.
+        tron-13 D1/FS-1/FS-3: a blockless declaration from a non-engineer (reviewer /
+        architect) names a PAPERWORK branch — keyed purely on the sender's worker record
+        (never `st.branches`, which is block-gate territory and R-4-guarded), FIFO so a
+        second declaration never orphans a parked first."""
         block, branch = slots.get("block"), slots.get("branch")
+        if branch and not block:
+            wid = slots.get("worker_id")
+            w = next((x for x in self.st.workers if x.get("id") == wid), None)
+            if w is None or w.get("role") == "engineer":
+                return                               # an engineer's branch always carries its block (A-1)
+            fifo = w.setdefault("pending_landings", [])
+            if branch not in fifo:
+                fifo.append(branch)
+            self.log("flow", f"paperwork branch[{wid}] += {branch}")
+            return
         if not block or not branch:
             return
         # R-4: one live gate per branch name. A second block declaring an already-claimed
@@ -2119,9 +2333,34 @@ class Engine:
         self.st.save()
         return True, "stopped"
 
+    def _residue_sweep(self):
+        """D1 landing point 4: session-end residue — NAMED, never silent, and NEVER
+        auto-landed (nobody is left to rebase or answer a violation; the operator
+        decides). One failure record naming every leftover + one parked case that rides
+        the session-end park surfacing (F-4/R-7)."""
+        residue = []
+        for w in self.st.workers:
+            for br in (w.get("pending_landings") or []):
+                residue.append(f"{w.get('id')}: unlanded paperwork branch {br}")
+        for f in (self.st.data.get("failed_landings") or []):
+            residue.append(f"{f.get('worker')}: failed landing {f.get('branch')} "
+                           f"({f.get('detail')})")
+        for block, br in (self.st.branches or {}).items():
+            if trunk.branch_exists(self.paths["root"], br, self.dry):
+                residue.append(f"{block}: branch {br} still exists")
+        if not residue:
+            return
+        detail = "; ".join(residue)
+        self.events.failure("session-residue", "unlanded-paperwork",
+                            "session-end residue sweep", detail,
+                            node="_end_session", next_action="escalate")
+        self._open_case(None, "residue", None, f"session-end residue: {detail}")
+        self.log("flow", f"session residue: {detail}")
+
     def _end_session(self):
         if self.ended:
             return
+        self._residue_sweep()                # D1: leftovers become a named parked case first
         for w in self.st.workers:
             wid = w.get("id")
             if not self.dry:

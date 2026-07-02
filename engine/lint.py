@@ -370,6 +370,28 @@ def _emit_only_renders(ctx):
                    "bare renderer.render at: " + ", ".join(bad))]
 
 
+def _paperwork_sanity(project):
+    # L23 (tron-13 D1 rider) — paperwork_paths sanity: an entry covering the WHOLE repo
+    # makes everything landable paperwork (fails); entries outside the pipeline's meta
+    # dir are legal but NAMED, so the operator chose them with eyes open.
+    if not project:
+        return [Result("L23 paperwork paths sane", True, "(no project.yaml — skipped)")]
+    paths = project.get("paperwork_paths")
+    if not paths:
+        return [Result("L23 paperwork paths sane", True, "(default: the pipeline's meta dir)")]
+    whole = [p for p in paths if str(p).strip() in ("", ".", "./", "/")]
+    if whole:
+        return [Result("L23 paperwork paths sane", False,
+                       f"entry covers the whole repo: {whole} — code is never paperwork")]
+    meta = (os.path.dirname(project.get("pipeline_path") or "meta/pipeline.md")
+            or "meta") + "/"
+    outside = [str(p) for p in paths
+               if not (str(p) == meta or str(p).startswith(meta))]
+    note = (f"operator-declared paperwork outside {meta}: {', '.join(outside)}"
+            if outside else "")
+    return [Result("L23 paperwork paths sane", True, note)]
+
+
 def _admission_table(ctx, routing):
     # L22 (S-2-full, tron-13) — the declarative ADMISSION table is TOTAL over routing.yaml's
     # gate-facing tags (trigger opens/advances a block gate), and _admit stays the ONLY
@@ -434,5 +456,5 @@ def run(ctx, project=None):
     results = (_canon(routing) + _composition(comp, project) + _prompts(ctx)
                + _version(ctx, project) + _reply_contract(ctx)
                + _reply_prefixes(ctx) + _emit_only_renders(ctx)
-               + _admission_table(ctx, routing))
+               + _admission_table(ctx, routing) + _paperwork_sanity(project))
     return all(x.ok for x in results), results

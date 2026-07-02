@@ -138,6 +138,95 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     return rc == 0, err
 
 
+def _path_allowed(path, allowlist):
+    """Path-component-aware allowlist match (tron-13 D1 rider): `meta/` covers meta/**
+    but never `metadata/…`; a file entry matches exactly (`README.md` never matches
+    `README.md.bak`). Entries are repo-relative; a trailing slash marks a dir."""
+    for entry in allowlist or []:
+        e = entry.strip()
+        if not e:
+            continue
+        if e.endswith("/"):
+            if path.startswith(e) or path + "/" == e:
+                return True
+        elif path == e:
+            return True
+    return False
+
+
+def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
+              denylist=None, line_scoped=None):
+    """The unified paperwork lander (F-1/S-3+R-6, tron-13 D1): the ENGINE lands every
+    role's parked paperwork branch on trunk — content-checked, ff-only, then deletes the
+    branch (the engine owns the merge, so it owns the cleanup). The engine NEVER rebases:
+    a non-ff is the branch owner's to fix (the R-6 rung; the caller nudges, bounded).
+    LOCAL-mode primitive: it ff-moves the local trunk. Remote-mode paperwork landing
+    (push / PR path) is out of scope — scoped with the 02-04 remote work.
+
+    allowlist / denylist: repo-relative path prefixes (dirs end with /) and exact files —
+    the caller builds them per role. Per-file precedence:
+      1. a line_scoped entry ({path: token}) decides by content: allowed ONLY if every
+         changed (+/-) line contains the token (the engineer's own-block pipeline edit);
+      2. an EXACT-file allow entry overrides a denied dir (the engineer's own block doc
+         inside the otherwise-denied blocks dir);
+      3. a deny match is a violation;
+      4. a dir allow match passes;  5. anything else is a violation.
+
+    Returns (code, detail): none | violation | non-ff | landed | error."""
+    if dry or not repo_root or not branch or branch == main_branch:
+        return "none", "dry/none"
+    if not branch_exists(repo_root, branch):
+        return "none", f"no branch {branch}"
+    rc, out, err = _run(["git", "-C", repo_root, "diff", "--name-only",
+                         f"{main_branch}...{branch}"])
+    if rc != 0:
+        return "error", f"diff unreadable: {err.strip()}"
+    files = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if not files:
+        # Nothing beyond trunk (or already landed): delete the empty branch and be done.
+        _run(["git", "-C", repo_root, "branch", "-d", branch])
+        return "landed", "no changes beyond trunk"
+    exact_allows = [e for e in (allowlist or []) if not e.strip().endswith("/")]
+    offenders = []
+    for f in files:
+        token = (line_scoped or {}).get(f)
+        if token is not None:
+            if not _lines_scoped_ok(repo_root, branch, f, token, main_branch):
+                offenders.append(f)
+            continue
+        if _path_allowed(f, exact_allows):
+            continue
+        if _path_allowed(f, denylist):
+            offenders.append(f)
+            continue
+        if not _path_allowed(f, allowlist):
+            offenders.append(f)
+    if offenders:
+        return "violation", ", ".join(sorted(offenders))
+    okm, err = merge_ff_only(repo_root, branch, main_branch)
+    if not okm:
+        return "non-ff", err.strip()
+    sha = head_sha(repo_root)
+    _run(["git", "-C", repo_root, "branch", "-d", branch])
+    return "landed", f"{len(files)} file(s) @ {sha[:7]}"
+
+
+def _lines_scoped_ok(repo_root, branch, path, token, main_branch="main"):
+    """True iff every changed (+/-) line of `path` on the branch contains `token` —
+    the engineer touches only pipeline lines naming its OWN block; the pipeline's
+    shape stays the architect's."""
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--unified=0",
+                       f"{main_branch}...{branch}", "--", path])
+    if rc != 0:
+        return False
+    for ln in out.splitlines():
+        if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
+            continue
+        if ln.startswith(("+", "-")) and token not in ln:
+            return False
+    return True
+
+
 def record_commit_ok(repo_root, block_file, dry=False):
     """The record-commit content check (01-11 FX-3): inspect the LAST commit that touched the
     block doc — its OWN diff, never a trunk range (with worker_count > 1 another block's merge

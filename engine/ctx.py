@@ -139,19 +139,29 @@ class Ctx:
         """Resolve the trunk checkout + canon file paths from project.yaml.
 
         repo.root is the trunk checkout; pipeline/blocks/archive are relative to it.
-        Returns {root, pipeline, blocks, archive, main_branch, staging}."""
+        Returns {root, pipeline, pipeline_rel, blocks, blocks_rel, archive, paperwork,
+        main_branch, staging, remote}."""
         repo = (project or {}).get("repo") or {}
         root = os.path.expanduser(repo.get("root") or self.dir)
 
         def under(rel, default):
             return os.path.join(root, (project or {}).get(rel) or default)
 
+        pipeline_rel = (project or {}).get("pipeline_path") or "meta/pipeline.md"
+        # tron-13 D1: what counts as PAPERWORK is the project's to declare
+        # (`paperwork_paths`, seeder-authored; repo-relative, dirs end with /).
+        # Default: the meta dir holding the pipeline.
+        paperwork = (project or {}).get("paperwork_paths") or [
+            (os.path.dirname(pipeline_rel) or "meta") + "/"]
         return {
             "root": root,
             "main_branch": repo.get("main_branch", "main"),
             "staging": repo.get("staging", "none"),
             "remote": repo.get("remote"),   # None/"none" -> local trunk mode (read HEAD in place, no fetch)
             "pipeline": under("pipeline_path", "meta/pipeline.md"),
+            "pipeline_rel": pipeline_rel,
             "blocks": under("blocks_dir", "meta/blocks/"),
+            "blocks_rel": ((project or {}).get("blocks_dir") or "meta/blocks/").rstrip("/") + "/",
             "archive": under("archive_dir", "meta/blocks/archive/"),
+            "paperwork": [str(p) for p in paperwork],
         }

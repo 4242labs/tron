@@ -26,10 +26,12 @@ import util
 #   ingest-drop   — a single inbound message raised while being classified/ingested (poison-pill guard)
 #   gate-stuck    — a DONE gate exceeded its re-nudge cap and escalated (the no-silent-stuck wall)
 #   dispatch-fail — spawning a worker process failed
+#   session-residue — session end found unlanded/failed paperwork or leftover branches
+#                   (tron-13 D1 sweep: named + parked on the operator, never auto-landed)
 #   crash         — an unhandled exception escaped a whole tick (caught by the WAKE supervised loop)
 FAILURE_CLASSES = {
     "refresh-fail", "classify-fail", "ingest-drop", "gate-stuck",
-    "dispatch-fail", "crash",
+    "dispatch-fail", "session-residue", "crash",
 }
 
 # The closed vocabulary of `type` values an `event` record carries — the engine's own
@@ -46,11 +48,12 @@ FAILURE_CLASSES = {
 #   escalate      — a condition was raised to the operator (wall/await)
 #   case_reping   — a parked operator case was re-pinged (F-4/R-7 ladder, n = ping count)
 #   case_safe_parked — the re-ping ladder capped; the case is safe-parked (named, resumable)
+#   docs_landed   — the engine landed a paperwork branch on trunk (D1 lander: role · branch)
 #   block_done    — a block reached ✅ on trunk
 #   session_start / session_end / halt — session lifecycle
 EVENT_TYPES = {
     "tick", "model_call", "dispatch", "gate_advance", "settle", "release",
-    "escalate", "case_reping", "case_safe_parked", "block_done",
+    "escalate", "case_reping", "case_safe_parked", "docs_landed", "block_done",
     "session_start", "session_end", "halt",
 }
 

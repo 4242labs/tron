@@ -20,6 +20,15 @@ pipeline_path: meta/pipeline.md
 blocks_dir:    meta/blocks/
 archive_dir:   meta/blocks/archive/
 
+# ── Paperwork area (tron-13 D1) — what the engine may LAND on trunk for a worker ──
+# The engine lands every role's parked paperwork branch itself (content-checked,
+# ff-only). These paths define what counts as paperwork: repo-relative, dirs end
+# with `/`, exact files allowed. Default: the meta dir holding the pipeline.
+# Set by the seeder per project — e.g. add `README.md` if your close-out doc-sync
+# updates the root README. Keep code dirs OUT: code is never paperwork.
+paperwork_paths:
+  - meta/
+
 # agents: seeder-populated by scanning pointers.agents — the project's persona
 # files, NOT a TRON-owned set. (Omitted in this example; role-coverage lint
 # skips when absent.)
