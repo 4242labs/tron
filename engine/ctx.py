@@ -33,6 +33,13 @@ class Ctx:
     def version_file(self):
         return self.p("VERSION")
 
+    @property
+    def worker_contract(self):
+        # The worker/TRON interface doc (canon, copied at seed) — PMT-SPAWN points every
+        # worker at it before the persona; the project's docs own the METHOD, this owns
+        # the handshake.
+        return self.p("worker-contract.md")
+
     # ── prompt layer (canon, copied verbatim at seed; PMT-* resolved by id) ──
     @property
     def prompts_dir(self):

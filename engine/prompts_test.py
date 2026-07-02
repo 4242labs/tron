@@ -68,7 +68,8 @@ def main():
     #     PMT, rendering the channel command; SPAWN carries its own bespoke line instead.
     assert "/x/report.sh" in eng_out, "reply line not appended / report not filled"
     spawn_out = p.load("PMT-SPAWN", {"worker_id": "ENG-9", "role": "engineer",
-                                     "persona": "/p.md", "report": "/x/report.sh"})
+                                     "persona": "/p.md", "report": "/x/report.sh",
+                                     "contract": "/c.md"})
     assert spawn_out.count("/x/report.sh") == 1, "SPAWN must carry only its bespoke line"
 
     # 4) fresh read: edit a temp PMT, load twice, second call sees the change.

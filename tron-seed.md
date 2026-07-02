@@ -45,6 +45,7 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
 ```
 <agents>/tron/
   tron.md                        # canon judgment context (copied) — the classify_message context the engine reads (ctx.tron_md)
+  worker-contract.md             # canon, copied verbatim — the worker/TRON interface every spawn points at (ctx.worker_contract)
   tron                           # canon, copied (chmod +x) — the operator entrypoint (seeder/start)
   engine/                        # canon, copied — the deterministic engine (Python)
   VERSION                        # canon, copied verbatim — the canon version this instance was cut from (ctx.load_version())
@@ -62,7 +63,7 @@ Everything else TRON brings (its canon, scripts, state) or detects (branch, remo
 
 The project's canon pipeline (`pipeline.md` + `blocks/`) lives in the project tree, not here — TRON only points at it.
 
-**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `VERSION`, `project.yaml`, `knobs.yaml`, `routing.yaml`, `messages.yaml`, `prompts/`, `protocols/`, `scripts/`, `tron.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
+**Tracked** (committed, PR'd): `tron`, `engine/`, `templates/`, `VERSION`, `project.yaml`, `knobs.yaml`, `routing.yaml`, `messages.yaml`, `prompts/`, `protocols/`, `scripts/`, `tron.md`, `worker-contract.md`, `seed-trace.md`, `.gitignore`. **Gitignored** (runtime, edited in place): everything else.
 
 ---
 
@@ -107,6 +108,7 @@ Create `<agents>/tron/` and install TRON. No host files touched.
 Copy canon (verbatim — never edit):
 
 - `tron.md` → `<agents>/tron/tron.md`  (inside the instance the engine reads via `ctx.tron_md`)
+- `worker-contract.md` → `<agents>/tron/worker-contract.md`  (ctx.worker_contract; PMT-SPAWN renders its path into every spawn)
 - `tron` → `<agents>/tron/tron` (`chmod +x` — the operator entrypoint)
 - all of `engine/` → `<agents>/tron/engine/` (the deterministic engine)
 - `VERSION` → `<agents>/tron/VERSION`  (the canon version this instance is cut from; `ctx.load_version()` reads it — never hand-edit)

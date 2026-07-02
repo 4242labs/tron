@@ -392,6 +392,48 @@ def _paperwork_sanity(project):
     return [Result("L23 paperwork paths sane", True, note)]
 
 
+def _worker_contract(ctx):
+    # L24 (worker contract) — the contract doc exists in the instance/canon and carries the
+    # SAME closed vocabulary the engine enforces: every registry reply_prefix and every
+    # structured verb (fsm REPORT_VERBS + the branch modifier) appears verbatim. The doc
+    # teaches; the registry/engine enforce; drift between them is a lie to every worker.
+    path = ctx.p("worker-contract.md")
+    if not os.path.exists(path):
+        return [Result("L24 worker contract present + in sync", False,
+                       f"missing {path} — re-seed")]
+    with open(path, encoding="utf-8") as fh:
+        doc = fh.read()
+    reg = util.load_yaml(ctx.prompts_registry) or {}
+    missing = []
+    for pid, meta in (reg.get("prompts") or {}).items():
+        pfx = (meta or {}).get("reply_prefix")
+        if not pfx:
+            continue
+        # Verbatim or prose-normalized ({block}/{type} -> <...>) — NO first-word fallback:
+        # "done" appearing anywhere must never vouch for a specific prescription.
+        probe = pfx.replace("{block}", "<block>").replace("{type}", "<type>")
+        if pfx not in doc and probe not in doc:
+            missing.append(f"{pid} prefix '{pfx}'")
+    src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fsm.py")
+    with open(src_path, encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"REPORT_VERBS\s*=\s*\{(.*?)\n\s*\}", src, re.S)
+    verbs = set(re.findall(r'"([a-z-]+)":\s*\(', m.group(1)) if m else [])
+    # Both directions, backticked-form only: the doc must teach every live verb, and must
+    # not teach a dead one (its taught set == the engine's enum).
+    taught = set(re.findall(r"`([a-z-]+)`", doc)) & (verbs | {"done", "recorded", "wall",
+                                                              "review-done", "clean"})
+    for v in sorted(verbs - taught):
+        missing.append(f"verb '{v}' not taught")
+    for v in sorted(taught - verbs):
+        missing.append(f"doc teaches dead verb '{v}'")
+    for mod in ("--branch", "--block"):
+        if f"`{mod}" not in doc and mod not in doc:
+            missing.append(f"modifier '{mod}'")
+    return [Result("L24 worker contract present + in sync", not missing,
+                   "; ".join(missing))]
+
+
 def _admission_table(ctx, routing):
     # L22 (S-2-full, tron-13) — the declarative ADMISSION table is TOTAL over routing.yaml's
     # gate-facing tags (trigger opens/advances a block gate), and _admit stays the ONLY
@@ -456,5 +498,6 @@ def run(ctx, project=None):
     results = (_canon(routing) + _composition(comp, project) + _prompts(ctx)
                + _version(ctx, project) + _reply_contract(ctx)
                + _reply_prefixes(ctx) + _emit_only_renders(ctx)
-               + _admission_table(ctx, routing) + _paperwork_sanity(project))
+               + _admission_table(ctx, routing) + _paperwork_sanity(project)
+               + _worker_contract(ctx))
     return all(x.ok for x in results), results

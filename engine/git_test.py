@@ -130,7 +130,8 @@ def t_two_step_engineer():
     # SPAWN copy itself is identity-only (the prompt is the spawn process input, not an emit).
     spawn_copy = eng.renderer.render(
         "spawn.engineer", {"worker_id": "ENG-A-01", "role": "engineer",
-                           "persona": "/p/engineer.md", "report": "/s/report.sh"})
+                           "persona": "/p/engineer.md", "report": "/s/report.sh",
+                           "contract": "/c/worker-contract.md"})
     ok("two-step: SPAWN copy is identity-only (online check-in, no assignment)",
        "online" in spawn_copy.lower() and "acceptance criteria" not in spawn_copy.lower()
        and "/p/engineer.md" in spawn_copy and "/s/report.sh" in spawn_copy)
