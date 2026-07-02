@@ -1518,23 +1518,75 @@ class Engine:
                           **{"role": w.get("role"), "reason": reason})
 
     # ── inbound classification + side handlers ──
-    # Tags whose trigger opens/advances a block gate — the ones admission must pin to a
-    # REAL canon block before they fire (S-2-lite).
-    GATING_TAGS = ("worker.done", "worker.recorded", "worker.wall")
+    # S-2-full (tron-13 D2): the declarative tag x stage ADMISSION table — the DATA the
+    # single checkpoint interprets; no per-tag conditionals live in code anymore.
+    #   block:  the tag must resolve to a REAL canon block, sender-first (A-1/W3). This
+    #           means "resolves to a canon block", never "a gate is open" — a worker.wall
+    #           raised before any gate exists must still fire.
+    #   stages: admissible only while the block's gate is AT one of these stages; anywhere
+    #           else it is a receipt to note, never an action (W6a).
+    #   close_confirm_at: at this stage only a reply opening the registry clean-prefix —
+    #           or the structured `clean` verb (A-2 `clean_confirm` slot) — confirms.
+    # Lint L22 pins this table against routing.yaml's gate-facing tags and asserts _admit
+    # stays the only admission checkpoint (rider 4).
+    ADMISSION = {
+        "worker.done":     {"block": True, "stages": None, "close_confirm_at": "close"},
+        "worker.recorded": {"block": True, "stages": ("record",)},
+        "worker.wall":     {"block": True, "stages": None},
+    }
+    GATING_TAGS = tuple(ADMISSION)
+
+    # A-2 (tron-13 D2): the closed worker-facing verb map for STRUCTURED reports
+    # (report.sh --tag <verb>). A structured line resolves deterministically — zero LLM
+    # for the whole gate ladder; free text keeps the classify path (prefixes remain the
+    # fallback discriminator, W7a). `clean` is worker.done + a slot, never its own tag:
+    # the distinction is _admit's to enforce at one choke point, and a new tag would
+    # re-train the free-text classify vocabulary for nothing.
+    REPORT_VERBS = {
+        "done":        ("worker.done", {}),
+        "recorded":    ("worker.recorded", {}),
+        "wall":        ("worker.wall", {}),
+        "branch":      ("worker.branch", {}),
+        "review-done": ("worker.review_done", {}),
+        "clean":       ("worker.done", {"clean_confirm": True}),
+    }
+
+    def _structured(self, msg):
+        """Resolve a structured report (A-2) without the model. Returns (tag, slots) or
+        (None, None) when the line carries no verb (-> classify). An unknown verb is
+        recorded (with its sender — forensics at scale) and DROPPED: never a trigger,
+        never a guess; the gate's own pacing re-prompts the worker."""
+        verb = str(msg.get("tag") or "").strip().lower()
+        if not verb:
+            return None, None
+        hit = self.REPORT_VERBS.get(verb)
+        sender = msg.get("sender") or {}
+        if not hit:
+            self.log("flow", f"unknown structured verb '{verb}' from "
+                             f"{sender.get('id')} -> dropped")
+            self.events.unclassified(msg.get("text", "")[:200],
+                                     f"unknown structured verb '{verb}'", sender=sender)
+            return "drop", None
+        tag, extra = hit
+        slots = {**(msg.get("slots") or {}), **extra}
+        if tag == "worker.review_done" and not slots.get("type"):
+            # Sender-first (A-1 spirit): the reviewer's own record knows its type.
+            w = next((x for x in self.st.workers
+                      if x.get("id") == sender.get("id")), None)
+            if w and w.get("rtype"):
+                slots["type"] = w["rtype"]
+        return tag, slots
 
     def _admit(self, tag, slots, sender):
-        """S-2-lite (tron-07 review cycle): the SINGLE admission checkpoint at the
-        classify->trigger boundary. Everything that decides whether a classified message may
-        act on a gate lives here — nowhere else:
-          A-1  the sender's ASSIGNED block is authoritative for its gate-facing reports; the
-               classify-extracted text ref is a cross-check (workers are single-block today —
+        """The SINGLE admission checkpoint at the classify->trigger boundary (S-2, rider 4).
+        Everything that decides whether a message may act on a gate lives here — nowhere
+        else. The RULES are the declarative ADMISSION table above; this method only
+        interprets it:
+          A-1  the sender's ASSIGNED block is authoritative for its gate-facing reports;
+               the extracted text ref is a cross-check (workers are single-block today —
                R-5: load-bearing; a multi-block worker design must revisit this);
-          W3   a text ref resolves exact-then-unique-prefix; an id the canon has no row for
-               never opens a gate;
-          W6a  the record receipt is admissible only while its gate is AT the record stage —
-               at close (or with no gate) it is a receipt to note, never a confirmation;
-          risk-2  at CLOSE, only a reply opening the prescribed `clean` prefix is the
-               clean-confirmation.
+          W3   a text ref resolves exact-then-unique-prefix; an id the canon has no row
+               for never opens a gate.
         Returns the (possibly adjusted) slots, or None to refuse the trigger (SENTRY-logged)."""
         w = next((x for x in self.st.workers if x.get("id") == (sender or {}).get("id")), None)
         assigned = (w or {}).get("block")
@@ -1552,27 +1604,33 @@ class Engine:
             block = assigned
         if block:
             slots = {**slots, "block": block}
-        if tag in self.GATING_TAGS:
-            if not block or self.st.row(block) is None:
+        rule = self.ADMISSION.get(tag)
+        if rule:
+            if rule.get("block") and (not block or self.st.row(block) is None):
                 self.log("flow", f"{tag} for unknown block '{ref}' -> refused (no canon row)")
                 self.events.unclassified(f"{tag} block ref: {ref}",
                                          "unknown block id (no canon row)", sender=sender)
                 return None
             g = self.st.gate.get(block)
-            if tag == "worker.recorded" and not (g and g.get("stage") == "record"):
-                self.log("flow", f"record receipt for {block} noted "
+            stages = rule.get("stages")
+            if stages is not None and not (g and g.get("stage") in stages):
+                self.log("flow", f"{tag} for {block} noted "
                                  f"(stage={(g or {}).get('stage')}) -> no action")
                 return None
-            if tag == "worker.done" and g and g.get("stage") == "close":
+            cca = rule.get("close_confirm_at")
+            if (cca and g and g.get("stage") == cca
+                    and not slots.get("clean_confirm")):
                 raw = (slots.get("_raw") or "").strip().lower()
                 pfx = (self.renderer.prompts.close_confirm_prefix() or "clean").lower()
                 if raw and not raw.startswith(pfx):
-                    self.log("flow", f"gate[{block}] close: reply doesn't open "
+                    self.log("flow", f"gate[{block}] {cca}: reply doesn't open "
                                      f"'{pfx}' -> not a confirmation")
                     return None
         return slots
 
     def _ingest(self, tag, slots, sender):
+        if tag == "drop":                                # A-2: invalid structured line, already recorded
+            return
         action = self.tags.get(tag)
         if not isinstance(action, dict):
             self.log("flow", f"unknown tag '{tag}'")
@@ -1860,6 +1918,13 @@ class Engine:
         return {"text": text, "sender": {"kind": kind, "id": m.get("id")}}
 
     def _classify(self, msg):
+        # A-2 (tron-13 D2): a structured report resolves deterministically — the model is
+        # never consulted for a line that already carries its verb as data.
+        stag, sslots = self._structured(msg)
+        if stag == "drop":
+            return "drop", {}
+        if stag:
+            return stag, sslots
         payload = {"text": msg.get("text", ""), "sender": msg.get("sender", {})}
         sender = msg.get("sender", {})
         raw = msg.get("text", "")

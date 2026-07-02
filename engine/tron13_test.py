@@ -254,6 +254,111 @@ def t_case_visibility():
        f"ends={ends}")
 
 
+# ── D2/A-2: structured reports resolve with ZERO LLM; S-2-full admission is table-driven ──
+def _no_judge(eng):
+    import fsm as fsm_mod
+    orig = fsm_mod.judge.call
+
+    def boom(*a, **k):
+        raise AssertionError("classify_message called for a structured line")
+    fsm_mod.judge.call = boom
+    return lambda: setattr(fsm_mod.judge, "call", orig)
+
+
+def t_structured_bypasses_classify():
+    eng = _eng()
+    restore = _no_judge(eng)
+    try:
+        tag, slots = eng._classify({"text": "trunk: all green", "tag": "done",
+                                    "slots": {"block": "A-01"},
+                                    "sender": {"kind": "worker", "id": "ENG-A-01"}})
+        ok("A-2 structured done resolves without the model",
+           tag == "worker.done" and slots.get("block") == "A-01",
+           f"tag={tag} slots={slots}")
+        tag, slots = eng._classify({"text": "worktree gone, branch gone", "tag": "clean",
+                                    "sender": {"kind": "worker", "id": "ENG-A-01"}})
+        ok("A-2 clean maps to worker.done + clean_confirm slot",
+           tag == "worker.done" and slots.get("clean_confirm") is True,
+           f"tag={tag} slots={slots}")
+    finally:
+        restore()
+
+
+def t_structured_unknown_verb_drops():
+    eng = _eng()
+    restore = _no_judge(eng)
+    sent = _capture(eng)
+    try:
+        tag, slots = eng._classify({"text": "whatever", "tag": "finished",
+                                    "sender": {"kind": "worker", "id": "ENG-A-01"}})
+        ok("A-2 unknown structured verb never becomes a trigger", tag == "drop",
+           f"tag={tag}")
+        eng._ingest(tag, slots, {"kind": "worker", "id": "ENG-A-01"})
+        ok("A-2 dropped verb fires nothing", sent == [], f"sent={sent}")
+        recs = [e for e in _events(eng) if e.get("kind") == "unclassified"]
+        ok("A-2 unknown verb is recorded with its sender",
+           any("finished" in ((e.get("payload") or {}).get("why") or "")
+               and e.get("actor") == "ENG-A-01" for e in recs),
+           f"recs={recs}")
+    finally:
+        restore()
+
+
+def t_structured_clean_confirms_at_close():
+    # The clean_confirm slot is the structured equivalent of the prescribed prefix:
+    # at close it admits even when the free text doesn't open with `clean`.
+    eng = _eng()
+    eng.st.gate["A-01"] = {"stage": "close"}
+    slots = eng._admit("worker.done",
+                       {"block": "A-01", "_raw": "all tidy, nothing left",
+                        "clean_confirm": True},
+                       {"kind": "worker", "id": "ENG-A-01"})
+    ok("A-2 clean_confirm admits at close without the prefix", slots is not None,
+       f"slots={slots}")
+    refused = eng._admit("worker.done",
+                         {"block": "A-01", "_raw": "all tidy, nothing left"},
+                         {"kind": "worker", "id": "ENG-A-01"})
+    ok("S-2 free text at close still needs the prescribed prefix", refused is None,
+       f"got={refused}")
+
+
+def t_structured_review_type_from_sender():
+    eng = _eng()
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+                           "block": "review:code", "session_id": "dry",
+                           "status": "working"})
+    restore = _no_judge(eng)
+    try:
+        tag, slots = eng._classify({"text": "covered — findings log at logs/x.md",
+                                    "tag": "review-done",
+                                    "sender": {"kind": "worker", "id": "REV-code"}})
+        ok("A-2 review-done backfills the type from the sender's record",
+           tag == "worker.review_done" and slots.get("type") == "code",
+           f"tag={tag} slots={slots}")
+    finally:
+        restore()
+
+
+def t_admission_is_declarative():
+    # S-2-full: the checkpoint interprets the table — a stage-scoped tag outside its
+    # stage is receipt-noted (W6a behavior, now data-driven, no per-tag code).
+    eng = _eng()
+    eng.st.gate["A-01"] = {"stage": "close"}
+    got = eng._admit("worker.recorded", {"block": "A-01", "_raw": "recorded A-01"},
+                     {"kind": "worker", "id": "ENG-A-01"})
+    ok("S-2 table scopes the record receipt to its stage", got is None, f"got={got}")
+    eng.st.gate["A-01"] = {"stage": "record"}
+    got = eng._admit("worker.recorded", {"block": "A-01", "_raw": "recorded A-01"},
+                     {"kind": "worker", "id": "ENG-A-01"})
+    ok("S-2 table admits the receipt AT record", got is not None, f"got={got}")
+    # worker.wall pre-gate: `block: True` means canon block, never "gate open".
+    eng2 = _eng()
+    got = eng2._admit("worker.wall", {"block": "A-01", "_raw": "walled: npm broken"},
+                      {"kind": "worker", "id": "ENG-A-01"})
+    ok("S-2 a pre-gate wall still fires (block means canon row, not open gate)",
+       got is not None, f"got={got}")
+
+
 TESTS = [
     t_ratchet_floor_paperwork_commits,
     t_ratchet_record_holds,
@@ -264,6 +369,11 @@ TESTS = [
     t_case_reping_ladder,
     t_case_park_is_resumable,
     t_case_visibility,
+    t_structured_bypasses_classify,
+    t_structured_unknown_verb_drops,
+    t_structured_clean_confirms_at_close,
+    t_structured_review_type_from_sender,
+    t_admission_is_declarative,
 ]
 
 
