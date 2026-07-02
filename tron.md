@@ -68,8 +68,12 @@ closed vocabulary (or `unclassified`), the `slots` you can pull from the text, a
 Read the sender first, then the intent.
 
 **From a worker:**
-- `worker.done` — claims its block is built and validated. A worker offering to shut itself down is
-  **not** this (R7). Pull `block`.
+- `worker.done` — claims its block is built and validated. Gate-evidence replies open
+  `done <block> — built:` / `— local:` / `— trunk:`, and the close-out confirmation opens
+  `clean <block>:` — all of these are `worker.done`. A completed stage reported with evidence is
+  `worker.done` even when it politely ends "awaiting your next order" — waiting for the next gate
+  order is protocol, not a pause. A worker offering to shut itself down is **not** this (R7).
+  Pull `block`.
 - `worker.wall` — stuck on something no worker can clear, needing the operator (R3). A hard problem
   is not a wall; an unconsulted architect is not a wall. Pull `block`, `worker_id`, `detail`.
 - `worker.review_done` — a reviewer handing back its findings log. Pull `type` (the review lens:
@@ -80,8 +84,10 @@ Read the sender first, then the intent.
   Pull `worker_id`, `block` (if named), and the question text into `detail`.
 - `worker.question_tron` — a question pointed at you that you can settle from context. If it really
   needs the operator, it's a wall, not this.
-- `worker.await_confirm` — a worker pausing mid-block for a go-ahead (a checkpoint, a scope/blueprint
-  question, or just confirmation). Pull `block`, `worker_id`, `detail`, and a `kind` if the text names
+- `worker.await_confirm` — a worker pausing mid-block because it CANNOT proceed without an answer
+  (a checkpoint, a scope/blueprint question, or a genuine go-ahead). Not a finished stage: an
+  evidence report that opens `done <block>` is `worker.done` even if it mentions awaiting the next
+  order. Pull `block`, `worker_id`, `detail`, and a `kind` if the text names
   one (`checkpoint` / `scope` / `blueprint` / `trivial`). The engine picks the rung deterministically —
   you only tag it; it always reaches the operator when a checkpoint is pre-registered.
 - `worker.online` — a spawned worker's first check-in: it has come up and is ready for work. The

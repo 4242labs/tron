@@ -196,7 +196,11 @@ class Engine:
                     inputs={"text": msg.get("text", "")[:200]},
                     node="§5 tick drain", next_action="drop (re-read next tick at-least-once)")
         if rc != "pause":
-            self._drive_gates()                          # advance in-flight DONE gates on fresh evidence
+            # tron-07 W7b: idle-at-gate is a TIME concept. Event-triggered ticks arrive in
+            # bursts (three inside 22s took a live worker past the idle cap while it was
+            # actively replying); only timer-paced ticks accrue idle — event ticks still
+            # advance stages and reset the counter for a working runner.
+            self._drive_gates(accrue=(trigger_source == "timer"))
         self._drain_triggers()
         self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
@@ -1017,11 +1021,11 @@ class Engine:
         self._emit("pulse")
 
     # ── the DONE gate (realign §F): one stage-specific prompt per state, advanced on EVIDENCE ──
-    def _drive_gates(self):
+    def _drive_gates(self, accrue=False):
         for block in list(self.st.gate.keys()):
-            self._drive_gate(block, self.st.gate[block])
+            self._drive_gate(block, self.st.gate[block], accrue_idle=accrue)
 
-    def _drive_gate(self, block, g, reason=None, on_report=False):
+    def _drive_gate(self, block, g, reason=None, on_report=False, accrue_idle=True):
         """Drive a worker through the DONE gate one stage-specific prompt at a time (T5), on
         EVIDENCE — never a bare `✅`, never a multi-step dump. Stages:
           ENGINEER  LOCAL -> MERGE -> TRUNK -> CLOSE
@@ -1040,7 +1044,7 @@ class Engine:
             return
         wid = self._worker_id("engineer", block)
         if row and row.get("status") == "done":          # ✅ on trunk -> CLOSE (slot held, T7)
-            self._drive_close(block, g, wid)
+            self._drive_close(block, g, wid, accrue=accrue_idle)
             return
         branch = self._block_branch(block)               # the worker-named branch (T2), never a guess
         pr = (self.st.open_prs or {}).get(branch)
@@ -1153,6 +1157,8 @@ class Engine:
         if stage == g.get("stage") and not renudge and stage != "ci-wait":
             if not jobs.runner_idle(wid):
                 g["idle_ticks"] = 0
+            elif not accrue_idle:
+                pass                                     # event tick: never accrues (tron-07 W7b)
             else:
                 n = g.get("idle_ticks", 0) + 1
                 g["idle_ticks"] = n
@@ -1223,7 +1229,7 @@ class Engine:
             slots["record_path"] = self._record_path()
         return slots
 
-    def _drive_close(self, block, g, wid):
+    def _drive_close(self, block, g, wid, accrue=True):
         """CLOSE stage (T7): ✅ landed. Fire CLOSE once and HOLD the slot — the worker wraps up
         (nothing unmerged, no loose worktree, local synced). The slot frees only on its clean
         confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
@@ -1255,8 +1261,8 @@ class Engine:
         # tron-07 W6b: close nudges are idle-keyed, exactly like the gate's idle machinery —
         # a worker mid-close-out (runner `working`) never accrues. Per-tick accrual capped a
         # working engineer out of its own paperwork in 74 seconds and force-released without
-        # the cleanliness check.
-        if wid and not jobs.runner_idle(wid):
+        # the cleanliness check. W7b: and only timer-paced ticks accrue — event bursts don't.
+        if not accrue or (wid and not jobs.runner_idle(wid)):
             return
         n = g.get("close_nudges", 0)
         if n >= int(self.knobs.get("gate_close_cap", 3)):

@@ -189,6 +189,31 @@ def t_close_stage_discipline():
         jobs.runner_idle = orig_idle
 
 
+# ── W7b: event-tick bursts never accrue idle (idle is a TIME concept) ──
+def t_event_ticks_never_accrue_idle():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
+    orig_idle = jobs.runner_idle
+    jobs.runner_idle = lambda *a, **k: True                 # idle runner
+    try:
+        for _ in range(10):                                 # a 10-event burst inside one poll
+            eng._drive_gate("A-01", g, accrue_idle=False)
+        ok("W7b event-tick burst accrues nothing (gate intact)",
+           g.get("idle_ticks", 0) == 0 and "A-01" in eng.st.gate, f"g={g}")
+        eng._drive_gate("A-01", g)                          # a timer tick still accrues
+        ok("W7b timer tick still accrues", g.get("idle_ticks", 0) == 1)
+        # and the close stage obeys the same law
+        eng2 = _eng()
+        eng2.st.row("A-01")["status"] = "done"
+        g2 = eng2.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
+        for _ in range(10):
+            eng2._drive_close("A-01", g2, "ENG-A-01", accrue=False)
+        ok("W7b close-stage event burst accrues nothing",
+           g2.get("close_nudges", 0) == 0 and "A-01" in eng2.st.gate, f"g2={g2}")
+    finally:
+        jobs.runner_idle = orig_idle
+
+
 # ── W4: release + end-session render through emit() (universal slots injected) ──
 def t_release_renders_clean():
     eng = _eng()
@@ -222,7 +247,7 @@ def t_release_renders_clean():
 def main():
     for t in (t_gate_holds_at_trunk, t_merge_approval_single_use,
               t_block_ref_resolution, t_close_stage_discipline,
-              t_release_renders_clean):
+              t_event_ticks_never_accrue_idle, t_release_renders_clean):
         t()
     fails = [(n, d) for n, c, d in _results if not c]
     for n, c, d in _results:
