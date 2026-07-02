@@ -27,6 +27,8 @@ slots:
   count: <int>
   case: <str>           # escalation correlation id (e.g. CASE-001) — reply with it to settle
   assignment: <str>     # ASSIGN: the per-role work string the engine composes at emit
+  merge_path: <str>     # ASSIGN: the mode-true merge instruction (local: no PR, engine merges; remote: PR) — 01-11 FX-4
+  record_path: <str>    # DONE-RECORD: the mode-specific landing instruction for the gate-authorized ✅ commit — 01-11 FX-3
 
 # ── Templates, grouped by channel/situation ──
 templates:
@@ -52,52 +54,60 @@ templates:
   # the since-last-review commit range).
   assign.engineer:
     channel: worker
-    slots: [worker_id, assignment]
+    slots: [worker_id, assignment, merge_path, report]
     pmt: PMT-ASSIGN
   assign.reviewer:
     channel: worker
-    slots: [worker_id, assignment]
+    slots: [worker_id, assignment, merge_path, report]
     pmt: PMT-ASSIGN
   arch.forward:
     channel: worker
-    slots: [block]
+    slots: [block, worker_id, report]
     pmt: PMT-SCOPE
   arch.reconcile:
     channel: worker
-    slots: [block, after]
+    slots: [block, after, worker_id, report]
     pmt: PMT-RECONCILE
   arch.remediation:
     channel: worker
-    slots: [type]
+    slots: [type, worker_id, report]
     pmt: PMT-SCOPE-REMEDIATION
   arch.triage:
     channel: worker
-    slots: [detail, sender]
+    slots: [detail, sender, worker_id, report]
     pmt: PMT-TRIAGE
   close.worker:
     channel: worker
-    slots: [worker_id]
+    slots: [worker_id, report]
     pmt: PMT-CLOSE
+  close.dirty:
+    channel: worker
+    slots: [worker_id, detail, report]
+    pmt: PMT-CLOSE-DIRTY
   heartbeat.ping:
     channel: worker
-    slots: [worker_id]
+    slots: [worker_id, report]
     pmt: PMT-PING
   # DONE gate — one stage-specific prompt per gate state (no wrapper, no {detail} dump).
   gate.local:
     channel: worker
-    slots: [worker_id, block]
+    slots: [worker_id, block, report]
     pmt: PMT-DONE-LOCAL
   gate.merge:
     channel: worker
-    slots: [worker_id, block]
+    slots: [worker_id, block, report]
     pmt: PMT-DONE-MERGE
   gate.trunk:
     channel: worker
-    slots: [worker_id, block]
+    slots: [worker_id, block, report]
     pmt: PMT-DONE-TRUNK
+  gate.record:
+    channel: worker
+    slots: [worker_id, block, record_path, report]
+    pmt: PMT-DONE-RECORD
   gate.review:
     channel: worker
-    slots: [worker_id]
+    slots: [worker_id, report]
     pmt: PMT-DONE-REVIEW
 
   # between-task / terminal feedback (terminal channel; TRON voice)

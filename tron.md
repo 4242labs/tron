@@ -87,6 +87,9 @@ Read the sender first, then the intent.
 - `worker.online` — a spawned worker's first check-in: it has come up and is ready for work. The
   engine replies with its pending assignment. This is the one-time "I'm up" that unblocks dispatch —
   not `worker.progress` (a mid-block heartbeat). Pull `worker_id`.
+- `worker.recorded` — the worker confirms the gate-ordered block-status ✅ commit is on trunk
+  ("recorded <block>") — the record step's receipt, distinct from `worker.done` (a build claim).
+  Pull `block`. The engine still trusts only the ✅ it reads on trunk, never this say-so.
 - `worker.progress` — a heartbeat with nothing to act on.
 
 **From the architect** (its own reports, not a worker's):

@@ -213,6 +213,16 @@ def has_positive_activity(sig):
     return bool(sig.get("worktree_dirty") or sig.get("mtime_grew"))
 
 
+def runner_idle(worker_id, idx=None):
+    """True iff the worker's runner reports `state: idle` — the agent finished its turn and
+    sits waiting on the mailbox. THE deterministic idle fact for the gate's tick-time idle
+    cap (01-11 FX-2): the runner rewrites runner.json on every poll even when idle, so
+    freshness/heartbeat signals can never tell idle-at-gate from working (tron-06 P2).
+    A missing runner record is idle too — nothing can be working."""
+    rec = find(worker_id, idx)
+    return rec is None or rec.get("state") == "idle"
+
+
 # ── engine -> worker: append one line to the mailbox (the ONLY delivery path) ──
 def send(worker_dir, seq, kind, text):
     """Append one message to the worker's mailbox. Pure file append — no session is ever

@@ -1,0 +1,386 @@
+"""block_01_11_test — E2E loop completion acceptance (block 01-11, AC-1…AC-7).
+
+Deterministic, token-free: dry-mode engine fixtures (sentry_test's builders) for the gate
+machinery, plus REAL throwaway git repos for the record-commit content check and the
+CLOSE-cleanliness scan (those are git reads by design and must be proven against git).
+
+Covers:
+  AC-1  lint L19 negative case (a reply-expecting PMT with no channel line FAILS)
+  AC-2  idle-at-gate, generic over the stage enum: runner-idle accrues on tick ->
+        re-nudge at gate_nudge_after -> _gate_giveup escalation at gate_idle_cap;
+        MANIFEST status mirrors the runner state (working <-> idle)
+  AC-3  a re-nudge is a deliberate duplicate on a FRESH seq — the runner's seq-keyed
+        dedupe delivers it (and still dedupes a same-seq re-append)
+  AC-4  record step: trunk-stage evidence report -> gate orders RECORD (gate.record);
+        ✅ on trunk at stage record -> content-check -> CLOSE; a record-PR window never
+        parks on the operator (no merge case)
+  AC-5  content check inspects the record commit's OWN diff (real git): pure Status flip
+        passes; extra file / extra line fails; a concurrent unrelated merge in between
+        does not false-positive
+  AC-6  CLOSE cleanliness (real git): clean replica releases; leftover branch /
+        uncommitted state is rejected and escalates at the cap — never trust-released
+  AC-7  the `recorded` tag sweep is atomic: routing.yaml + tron.md + lint CANON_TAGS +
+        the classify enum all know worker.recorded
+
+Run: python3 engine/block_01_11_test.py   (exit 0 = pass). No tokens, no network.
+"""
+import os
+import sys
+import json
+import shutil
+import tempfile
+import subprocess
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+
+os.environ["TRON_DRY"] = "1"
+
+import util             # noqa: E402
+import jobs             # noqa: E402
+import trunk            # noqa: E402
+import lint             # noqa: E402
+from ctx import Ctx     # noqa: E402
+from fsm import Engine  # noqa: E402
+from sentry_test import build, started  # noqa: E402
+
+_results = []
+
+
+def ok(name, cond, detail=""):
+    _results.append((name, bool(cond), detail))
+
+
+def _eng(block="A-01", status="🔄"):
+    ctx, repo = build(blocks=[(block, status, "none")])
+    eng = Engine(ctx)
+    started(eng)
+    eng.st.workers.append({"id": "ENG-" + block, "role": "engineer", "block": block,
+                           "session_id": "dry", "status": "working"})
+    return eng
+
+
+def _git(cwd, *args):
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+
+def _mkrepo():
+    d = tempfile.mkdtemp(prefix="tron-0111-")
+    _git(d, "init", "-q", "-b", "main")
+    _git(d, "config", "user.email", "t@t")
+    _git(d, "config", "user.name", "t")
+    os.makedirs(os.path.join(d, "blocks"))
+    with open(os.path.join(d, "blocks", "A-01.md"), "w") as fh:
+        fh.write("# Block A-01\n**Status:** 🔄 In progress\n**Merge approval:** auto\n\nbody\n")
+    with open(os.path.join(d, "src.txt"), "w") as fh:
+        fh.write("code\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "base")
+    return d
+
+
+# ── AC-1: lint L19 fails on a reply-expecting PMT with no channel line ──
+def t_l19_negative():
+    d = tempfile.mkdtemp(prefix="tron-l19-")
+    pdir = os.path.join(d, "prompts")
+    os.makedirs(pdir)
+    util.atomic_write(os.path.join(pdir, "PMT-BAD.md"), "no channel here\n")
+    util.atomic_write(os.path.join(pdir, "registry.yaml"),
+                      'reply_line: "reply: bash {report} {worker_id}"\n'
+                      "prompts:\n  PMT-BAD: { file: PMT-BAD.md, slots: [] }\n")
+
+    class _C:
+        prompts_dir = pdir
+        prompts_registry = os.path.join(pdir, "registry.yaml")
+    res = lint._reply_contract(_C())
+    ok("AC-1 L19 fails on an unflagged PMT without {report}",
+       len(res) == 1 and not res[0].ok and "PMT-BAD" in res[0].detail)
+    util.atomic_write(os.path.join(pdir, "registry.yaml"),
+                      'reply_line: "reply: bash {report} {worker_id}"\n'
+                      "prompts:\n  PMT-BAD: { file: PMT-BAD.md, slots: [], reply_expected: true }\n")
+    res = lint._reply_contract(_C())
+    ok("AC-1 L19 passes once flagged (loader appends the line)", res[0].ok)
+    util.atomic_write(os.path.join(pdir, "registry.yaml"),
+                      'reply_line: "no slots at all"\n'
+                      "prompts:\n  PMT-BAD: { file: PMT-BAD.md, slots: [], reply_expected: true }\n")
+    res = lint._reply_contract(_C())
+    ok("AC-1 L19 fails on a reply_line without {report}/{worker_id}", not res[0].ok)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── AC-2: idle-at-gate accrues on tick -> nudge -> escalate; MANIFEST mirrors runner ──
+def t_idle_gate(stage_name, setup):
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
+    setup(eng, g)
+    orig_idle = jobs.runner_idle
+    jobs.runner_idle = lambda *a, **k: True
+    sent = []
+    orig_emit = eng.emit
+    eng.emit = lambda tid, slots=None, worker_id=None: sent.append(tid) or orig_emit(tid, slots, worker_id)
+    try:
+        eng._drive_gate("A-01", g)                    # tick 1: idle_ticks 1
+        n1 = g.get("idle_ticks")
+        eng._drive_gate("A-01", g)                    # tick 2: nudge (gate_nudge_after=2)
+        nudged = list(sent)
+        eng._drive_gate("A-01", g)                    # tick 3: cap (gate_idle_cap=3) -> escalate
+        escalated = "A-01" not in eng.st.gate and any(t == ("wall:raised:A-01")
+                                                      for t, _ in eng._tq)
+    finally:
+        jobs.runner_idle = orig_idle
+    ok(f"AC-2 [{stage_name}] idle accrues on tick", n1 == 1)
+    ok(f"AC-2 [{stage_name}] re-nudge fires at gate_nudge_after",
+       any(t in ("gate.local", "gate.trunk", "gate.record", "gate.merge") for t in nudged),
+       f"sent={nudged}")
+    ok(f"AC-2 [{stage_name}] escalates at gate_idle_cap (gate dropped -> wall)", escalated)
+
+
+def t_idle_stages():
+    def at_local(eng, g):
+        g["stage"] = "local"
+        # local mode, branch not present -> stage recomputes to local each tick
+    t_idle_gate("local", at_local)
+
+    def at_record(eng, g):
+        g["stage"] = "record"
+    t_idle_gate("record", at_record)
+
+
+def t_busy_never_accrues():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
+    orig_idle = jobs.runner_idle
+    jobs.runner_idle = lambda *a, **k: False          # runner working
+    try:
+        for _ in range(5):
+            eng._drive_gate("A-01", g)
+        ok("AC-2 busy worker never accrues idle_ticks",
+           g.get("idle_ticks", 0) == 0 and "A-01" in eng.st.gate)
+    finally:
+        jobs.runner_idle = orig_idle
+
+
+def t_manifest_mirror():
+    d = tempfile.mkdtemp(prefix="tron-wst-")
+    jobs.configure(d)
+    wdir = os.path.join(d, "ENG-A-01")
+    os.makedirs(wdir)
+    with open(os.path.join(wdir, jobs.RUNNER_STATE), "w") as fh:
+        json.dump({"worker_id": "ENG-A-01", "session_id": "s", "pid": os.getpid(),
+                   "state": "idle", "turns": 3, "updated_at": "2026-07-01T00:00:00Z"}, fh)
+    idx = jobs.index()
+    rstate = (jobs.find("ENG-A-01", idx) or {}).get("state")
+    w = {"id": "ENG-A-01", "status": "working"}
+    if w.get("status") in ("working", "idle") and rstate in ("working", "idle"):
+        w["status"] = rstate                          # the _sweep reconcile line, unit-level
+    ok("AC-2 MANIFEST mirrors the runner state (working -> idle)", w["status"] == "idle")
+    jobs.configure(None)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── AC-3: re-nudge survives dedupe — fresh seq delivered, same seq deduped ──
+def t_dedupe_seq():
+    from worker_runner import Runner
+    d = tempfile.mkdtemp(prefix="tron-mbox-")
+    wdir = os.path.join(d, "w")
+    os.makedirs(wdir)
+    r = Runner("W", wdir, "s", None, "echo", "echo")
+    jobs.send(wdir, 1, "gate.local", "validate")      # first send
+    jobs.send(wdir, 1, "gate.local", "validate")      # at-least-once re-append: SAME seq
+    jobs.send(wdir, 2, "gate.local", "validate")      # the re-nudge: FRESH seq
+    pending = r._pending(0)
+    ok("AC-3 fresh-seq re-nudge is delivered (2 messages, not 1 or 3)",
+       [m["seq"] for m in pending] == [1, 2], f"got {[m['seq'] for m in pending]}")
+    pending_after = r._pending(1)                     # hwm=1 -> only the nudge remains
+    ok("AC-3 hwm dedupe still drops the applied seq", [m["seq"] for m in pending_after] == [2])
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── AC-4: the record step ──
+def t_record_step():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "trunk", "pr": None})
+    sent = []
+    orig_emit = eng.emit
+    eng.emit = lambda tid, slots=None, worker_id=None: sent.append((tid, dict(slots or {}))) or orig_emit(tid, slots, worker_id)
+    eng._drive_gate("A-01", g, reason="worker reported done", on_report=True)
+    ok("AC-4 trunk-stage evidence report -> stage record", g.get("stage") == "record")
+    rec = [s for t, s in sent if t == "gate.record"]
+    ok("AC-4 gate.record ordered with a mode-filled {record_path}",
+       rec and rec[0].get("record_path") == "land it on trunk yourself, now",
+       f"sent={sent}")
+    ok("AC-4 record never parks on the operator (no merge case opened)",
+       not g.get("case_merge") and not eng.st.pending_cases)
+    # ✅ lands on trunk -> content check (stubbed ok) -> CLOSE
+    orig_ok = trunk.record_commit_ok
+    trunk.record_commit_ok = lambda *a, **k: (True, "abc12345")
+    try:
+        row = eng.st.row("A-01")
+        row["status"] = "done"
+        eng._drive_gate("A-01", g)
+        ok("AC-4 ✅ at stage record -> content check -> CLOSE (slot held)",
+           g.get("stage") == "close" and g.get("record_checked") is True)
+    finally:
+        trunk.record_commit_ok = orig_ok
+    # non-conforming record -> bypass escalation, never close
+    eng2 = _eng(block="A-01")
+    g2 = eng2.st.gate.setdefault("A-01", {"stage": "record", "pr": None})
+    orig_ok = trunk.record_commit_ok
+    trunk.record_commit_ok = lambda *a, **k: (False, "touches src.txt too")
+    try:
+        row = eng2.st.row("A-01")
+        row["status"] = "done"
+        eng2._drive_gate("A-01", g2)
+        ok("AC-4/AC-5 non-conforming record -> escalated, gate dropped, no close",
+           "A-01" not in eng2.st.gate
+           and any(t == "wall:raised:A-01" for t, _ in eng2._tq))
+    finally:
+        trunk.record_commit_ok = orig_ok
+
+
+# ── AC-5: content check against REAL git — own diff, concurrency-safe ──
+def t_record_commit_real_git():
+    d = _mkrepo()
+    bf = "blocks/A-01.md"
+    # pure Status flip -> conforming
+    with open(os.path.join(d, bf), "w") as fh:
+        fh.write("# Block A-01\n**Status:** ✅ Done\n**Merge approval:** auto\n\nbody\n")
+    _git(d, "commit", "-aqm", "record A-01")
+    okc, detail = trunk.record_commit_ok(d, bf)
+    ok("AC-5 pure Status flip conforms", okc, detail)
+    # a concurrent unrelated commit AFTER the record must not false-positive (own diff)
+    with open(os.path.join(d, "src.txt"), "a") as fh:
+        fh.write("other block's merge\n")
+    _git(d, "commit", "-aqm", "unrelated merge")
+    okc, detail = trunk.record_commit_ok(d, bf)
+    ok("AC-5 concurrent unrelated merge does not false-positive", okc, detail)
+    # flip + extra line in the block doc -> non-conforming
+    with open(os.path.join(d, bf), "a") as fh:
+        fh.write("**Completed:** 2026-07-01\n")
+    _git(d, "commit", "-aqm", "record with extras")
+    okc, detail = trunk.record_commit_ok(d, bf)
+    ok("AC-5 extra changed line fails the check", not okc, detail)
+    # flip + a second file in the same commit -> non-conforming
+    with open(os.path.join(d, bf), "w") as fh:
+        fh.write("# Block A-01\n**Status:** ✅ Done\n**Merge approval:** auto\n\nbody\n**Completed:** 2026-07-01\n")
+    with open(os.path.join(d, "src.txt"), "a") as fh:
+        fh.write("sneak\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "record + sneak")
+    okc, detail = trunk.record_commit_ok(d, bf)
+    ok("AC-5 multi-file record commit fails the check", not okc, detail)
+    shutil.rmtree(d, ignore_errors=True)
+    # full-path match (R4-3): a same-named file in another directory is a DIFFERENT path —
+    # a pure flip of the decoy conforms for the decoy's path, and the check for the real
+    # block doc still judges the real doc's own last commit (here: multi-file base -> fail).
+    d2 = _mkrepo()
+    os.makedirs(os.path.join(d2, "evil", "blocks"), exist_ok=True)
+    with open(os.path.join(d2, "evil", "blocks", "A-01.md"), "w") as fh:
+        fh.write("**Status:** ✅ Done\n")
+    _git(d2, "add", "-A")
+    _git(d2, "commit", "-qm", "decoy record")
+    okc, detail = trunk.record_commit_ok(d2, "evil/blocks/A-01.md")
+    ok("AC-5 sanity: the decoy conforms only for its own full path", okc, detail)
+    okc, detail = trunk.record_commit_ok(d2, "blocks/A-01.md")
+    ok("AC-5 full-path match: the decoy commit never answers for the real block doc",
+       not okc and "blocks/A-01.md" in detail, detail)
+    shutil.rmtree(d2, ignore_errors=True)
+
+
+# ── AC-6: CLOSE cleanliness against REAL git + the confirm path — scoped to the block ──
+def t_replica_clean_real_git():
+    d = _mkrepo()
+    clean, detail = trunk.replica_clean(d, "feat/A-01")
+    ok("AC-6 clean replica reads clean", clean, detail)
+    _git(d, "branch", "feat/A-01")
+    clean, detail = trunk.replica_clean(d, "feat/A-01")
+    ok("AC-6 leftover branch is rejected", not clean and "feat/A-01" in detail, detail)
+    # a worktree checked out on THIS block's branch is a leftover
+    wt = os.path.join(d, "wt-a01")
+    _git(d, "worktree", "add", wt, "feat/A-01")
+    clean, detail = trunk.replica_clean(d, "feat/A-01")
+    ok("AC-6 leftover worktree on the block branch is rejected",
+       not clean and "worktree" in detail, detail)
+    _git(d, "worktree", "remove", wt)
+    _git(d, "branch", "-D", "feat/A-01")
+    # ANOTHER worker's live worktree/branch must never read as this closer's dirt (concurrency)
+    _git(d, "branch", "feat/B-02")
+    wt2 = os.path.join(d, "wt-b02")
+    _git(d, "worktree", "add", wt2, "feat/B-02")
+    clean, detail = trunk.replica_clean(d, "feat/A-01")
+    ok("AC-6 another worker's worktree does not false-positive", clean, detail)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_confirm_close_gate():
+    eng = _eng()
+    g = eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
+    orig = trunk.replica_clean
+    trunk.replica_clean = lambda *a, **k: (False, "leftover branch feat/A-01")
+    try:
+        eng._confirm_close("A-01", g)                 # claim 1 -> rejected, held
+        held = "A-01" in eng.st.gate and any(w.get("block") == "A-01"
+                                             for w in eng.st.workers)
+        eng._confirm_close("A-01", g)                 # claim 2
+        eng._confirm_close("A-01", g)                 # claim 3 -> cap -> escalate
+        escalated = "A-01" not in eng.st.gate and any(t == "wall:raised:A-01"
+                                                      for t, _ in eng._tq)
+    finally:
+        trunk.replica_clean = orig
+    ok("AC-6 dirty close claim is rejected (slot held)", held)
+    ok("AC-6 dirty at the cap escalates — never trust-released", escalated)
+    eng2 = _eng()
+    g2 = eng2.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
+    orig = trunk.replica_clean
+    trunk.replica_clean = lambda *a, **k: (True, "")
+    try:
+        eng2._confirm_close("A-01", g2)
+        ok("AC-6 clean close claim releases the slot",
+           "A-01" not in eng2.st.gate and not any(w.get("block") == "A-01"
+                                                  for w in eng2.st.workers))
+    finally:
+        trunk.replica_clean = orig
+
+
+# ── AC-7: the recorded-tag sweep is atomic across every catalog ──
+def t_tag_sweep():
+    routing = util.load_yaml(os.path.join(ROOT, "routing.yaml"))
+    tags = routing.get("tags", {})
+    ok("AC-7 routing.yaml knows worker.recorded",
+       tags.get("worker.recorded") == {"trigger": "block:next:done"})
+    ok("AC-7 lint CANON_TAGS knows worker.recorded", "worker.recorded" in lint.CANON_TAGS)
+    with open(os.path.join(ROOT, "tron.md")) as fh:
+        ok("AC-7 tron.md catalog documents worker.recorded", "worker.recorded" in fh.read())
+    ctx = Ctx(ROOT) if hasattr(Ctx, "__call__") else None
+    import judge
+    judge._tags_cache = None
+
+    class _C:
+        routing = os.path.join(ROOT, "routing.yaml")
+    ok("AC-7 classify enum admits worker.recorded",
+       "worker.recorded" in judge._allowed_tags(_C()))
+    judge._tags_cache = None
+
+
+def main():
+    t_l19_negative()
+    t_idle_stages()
+    t_busy_never_accrues()
+    t_manifest_mirror()
+    t_dedupe_seq()
+    t_record_step()
+    t_record_commit_real_git()
+    t_replica_clean_real_git()
+    t_confirm_close_gate()
+    t_tag_sweep()
+    fails = [x for x in _results if not x[1]]
+    for name, good, detail in _results:
+        print(f"  [{'PASS' if good else 'FAIL'}] {name}" + (f" — {detail}" if detail and not good else ""))
+    print(f"block_01_11_test: {'PASS' if not fails else 'FAIL'} ({len(_results) - len(fails)}/{len(_results)})")
+    return 0 if not fails else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -12,16 +12,25 @@
 # id scheme: PMT-<PURPOSE> (role-generic — the lane carries the role); a non-role
 # qualifier that adds meaning stays (e.g. PMT-SCOPE-REMEDIATION, a SCOPE variant).
 
+# ── The shared reply line (01-11 FX-1) — the SINGLE source of the channel instruction.
+# Appended by the prompt loader to every PMT flagged `reply_expected: true`; lint L19 keeps
+# the flag set total. A worker reply that never reaches the channel does not exist to TRON.
+reply_line: >-
+  Reply on the channel, always — `bash {report} {worker_id} "<your report>"` —
+  a reply that is not on the channel does not exist to me.
+
 prompts:
-  PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report] }
-  PMT-ASSIGN:            { file: PMT-ASSIGN.md,            slots: [worker_id, assignment] }
-  PMT-SCOPE:             { file: PMT-SCOPE.md,             slots: [block] }
-  PMT-RECONCILE:         { file: PMT-RECONCILE.md,         slots: [block, after] }
-  PMT-SCOPE-REMEDIATION: { file: PMT-SCOPE-REMEDIATION.md, slots: [type] }
-  PMT-TRIAGE:            { file: PMT-TRIAGE.md,            slots: [detail, sender] }
-  PMT-DONE-LOCAL:        { file: PMT-DONE-LOCAL.md,        slots: [worker_id, block] }
-  PMT-DONE-MERGE:        { file: PMT-DONE-MERGE.md,        slots: [worker_id, block] }
-  PMT-DONE-TRUNK:        { file: PMT-DONE-TRUNK.md,        slots: [worker_id, block] }
-  PMT-DONE-REVIEW:       { file: PMT-DONE-REVIEW.md,       slots: [worker_id] }
-  PMT-CLOSE:             { file: PMT-CLOSE.md,             slots: [worker_id] }
-  PMT-PING:              { file: PMT-PING.md,              slots: [worker_id] }
+  PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report] }   # bespoke check-in line inline (its reply is the literal "online")
+  PMT-ASSIGN:            { file: PMT-ASSIGN.md,            slots: [worker_id, assignment, merge_path, report], reply_expected: true }
+  PMT-SCOPE:             { file: PMT-SCOPE.md,             slots: [block, worker_id, report],  reply_expected: true }
+  PMT-RECONCILE:         { file: PMT-RECONCILE.md,         slots: [block, after, worker_id, report], reply_expected: true }
+  PMT-SCOPE-REMEDIATION: { file: PMT-SCOPE-REMEDIATION.md, slots: [type, worker_id, report],   reply_expected: true }
+  PMT-TRIAGE:            { file: PMT-TRIAGE.md,            slots: [detail, sender, worker_id, report], reply_expected: true }
+  PMT-DONE-LOCAL:        { file: PMT-DONE-LOCAL.md,        slots: [worker_id, block, report],  reply_expected: true }
+  PMT-DONE-MERGE:        { file: PMT-DONE-MERGE.md,        slots: [worker_id, block, report],  reply_expected: true }
+  PMT-DONE-TRUNK:        { file: PMT-DONE-TRUNK.md,        slots: [worker_id, block, report],  reply_expected: true }
+  PMT-DONE-RECORD:       { file: PMT-DONE-RECORD.md,       slots: [worker_id, block, record_path, report], reply_expected: true }
+  PMT-DONE-REVIEW:       { file: PMT-DONE-REVIEW.md,       slots: [worker_id, report],         reply_expected: true }
+  PMT-CLOSE:             { file: PMT-CLOSE.md,             slots: [worker_id, report],         reply_expected: true }
+  PMT-CLOSE-DIRTY:       { file: PMT-CLOSE-DIRTY.md,       slots: [worker_id, detail, report], reply_expected: true }
+  PMT-PING:              { file: PMT-PING.md,              slots: [worker_id, report],         reply_expected: true }

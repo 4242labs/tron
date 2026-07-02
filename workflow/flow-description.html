@@ -125,7 +125,7 @@
       <li><b class="k">Reviews are PULL</b> — each tick checks whether one is due and fires it; never pushed on its own timer.</li>
       <li><b class="k">Done is a challenge, not a trunk-read.</b> <code>Flag candidates</code> only marks blocks that
         <em>might</em> be done — candidates, never confirmed. A milestone is settled by the gate's prompted
-        challenge (validate locally → merge to trunk, CI deploys staging → re-validate on trunk → close out),
+        challenge (validate locally → merge to trunk, CI deploys staging → re-validate on trunk → record the ✅ → close out),
         not by a block appearing on the trunk. The worker flow ends at trunk; promotion to prod is outside
         the run (the operator does it).</li>
       <li><b class="k">Unclassified is a tag too.</b> Classify tags every inbound message; an <em>unclassified</em>
@@ -134,7 +134,10 @@
       <li><b class="k">A worker question never dies.</b> A peer/design question goes to the <b class="k">architect</b>
         to sort — who either <b class="k">answers</b> it (TRON relays the reply back to the asker) or judges it
         the operator's call and <b class="k">escalates</b> it. No question is logged-and-forgotten.</li>
-      <li><b class="k">PULSE never merges.</b> Gates only advance state; the engineer merges once a review passes.</li>
+      <li><b class="k">Merges are gate-authorized.</b> Nothing lands on trunk outside the gate: with a remote,
+        the worker merges its PR under the gate's order; with no remote, the gate fast-forwards trunk itself.
+        The one commit a gate order licenses the worker to land — the ✅ record — is accepted only if it
+        touches exactly the block file's status.</li>
       <li><b class="k">Safe re-assignment.</b> A block counts as in-flight if it has a worker <em>or</em> an open
         PR <em>or</em> an active gate — so re-dispatching is always safe, even across the build-before-PR window
         and crash-orphaned PRs.</li>

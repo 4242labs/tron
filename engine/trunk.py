@@ -8,6 +8,7 @@ blocks the loop on the network: a failed fetch reuses the last good snapshot.
 The repo root itself is the trunk checkout — agents build in worktrees off it
 (`<workspace>/worktrees/<repo>--<branch>/`), so the root stays on the trunk branch.
 """
+import os
 import json
 import subprocess
 
@@ -114,6 +115,60 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     _run(["git", "-C", repo_root, "checkout", main_branch])   # root stays on trunk; belt-and-suspenders
     rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
     return rc == 0, err
+
+
+def record_commit_ok(repo_root, block_file, dry=False):
+    """The record-commit content check (01-11 FX-3): inspect the LAST commit that touched the
+    block doc — its OWN diff, never a trunk range (with worker_count > 1 another block's merge
+    can land between merge-accept and record; a range check would false-positive a legitimate
+    record). Conforming = exactly one file (the block doc, matched on its FULL repo-relative
+    path — a same-named file elsewhere never passes) and every changed line is the
+    `**Status:**` field. Anything else is an out-of-gate change wearing the record's clothes.
+    `block_file` must be the repo-relative path (the caller resolves it from the blocks dir).
+    Returns (ok, detail)."""
+    if dry or not repo_root or not block_file:
+        return True, "dry/none"
+    rc, out, err = _run(["git", "-C", repo_root, "log", "-n", "1", "--format=%H",
+                         "--", block_file])
+    sha = out.strip()
+    if rc != 0 or not sha:
+        return False, f"no commit found touching {block_file}"
+    rc, out, _ = _run(["git", "-C", repo_root, "show", "--name-only", "--format=", sha])
+    files = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if rc != 0 or files != [block_file]:
+        return False, (f"record commit {sha[:8]} touches {files or 'nothing'} "
+                       f"— must be exactly {block_file}")
+    rc, out, _ = _run(["git", "-C", repo_root, "show", "--unified=0", "--format=", sha])
+    if rc != 0:
+        return False, f"record commit {sha[:8]}: diff unreadable"
+    for ln in out.splitlines():
+        if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
+            continue
+        if ln.startswith(("+", "-")) and not ln[1:].strip().lower().startswith("**status:**"):
+            return False, f"record commit {sha[:8]} changes more than the Status field"
+    return True, sha[:8]
+
+
+def replica_clean(repo_root, branch, main_branch="main", dry=False):
+    """CLOSE-gate cleanliness (01-11 FX-9): deterministic git reads — the worker's clean-exit
+    claim is verified, never trusted. Scoped to THIS block (review finding: with
+    worker_count > 1 another live worker's legitimate worktree must never read as this
+    closer's dirt): clean = the block's branch is gone and no worktree is checked out on it.
+    Returns (clean, detail)."""
+    if dry or not repo_root or not branch or branch == main_branch:
+        return True, "dry/none"
+    leftovers = []
+    if branch_exists(repo_root, branch):
+        leftovers.append(f"leftover branch {branch}")
+    rc, out, _ = _run(["git", "-C", repo_root, "worktree", "list", "--porcelain"])
+    if rc == 0:
+        tree, ref = None, f"refs/heads/{branch}"
+        for ln in out.splitlines():
+            if ln.startswith("worktree "):
+                tree = ln.split(" ", 1)[1]
+            elif ln.startswith("branch ") and ln.split(" ", 1)[1] == ref:
+                leftovers.append(f"leftover worktree on {branch}: {tree}")
+    return (not leftovers), "; ".join(leftovers)
 
 
 def _rollup(checks):

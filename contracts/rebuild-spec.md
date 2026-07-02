@@ -163,10 +163,10 @@ A PMT may surface through a **node** *or* through a **message** (R-PMT.2) — th
 | Architect reconcile a block (C6) | AGENT INBOX | `PMT-RECONCILE` | `arch.reconcile` |
 | Architect remediation from a review (C6) | AGENT INBOX | `PMT-SCOPE-REMEDIATION` | `arch.remediation` |
 | Architect triage (T5 unclassified path) | AGENT INBOX | `PMT-TRIAGE` | `arch.triage` |
-| DONE gate — engineer (T4) | ND-02 gate | `PMT-DONE-LOCAL` · `PMT-DONE-MERGE` · `PMT-DONE-TRUNK` | `gate.local` · `gate.merge` · `gate.trunk` |
+| DONE gate — engineer (T4) | ND-02 gate | `PMT-DONE-LOCAL` · `PMT-DONE-MERGE` · `PMT-DONE-TRUNK` · `PMT-DONE-RECORD` | `gate.local` · `gate.merge` · `gate.trunk` · `gate.record` |
 | DONE gate — reviewer (T4) | ND-02 gate | `PMT-DONE-REVIEW` | `gate.review` |
 | Liveness ping (H1) | engine side-system | `PMT-PING` | `heartbeat.ping` |
-| Close worker (H4) | ND-02 Settle / ANCHOR | `PMT-CLOSE` | `close.worker` |
+| Close worker (H4) | ND-02 Settle / ANCHOR | `PMT-CLOSE` · `PMT-CLOSE-DIRTY` | `close.worker` · `close.dirty` |
 
 ### Does **not** carry a PMT — operator/terminal copy stays inline (human-facing, `messages.yaml`)
 `terminal.*` (between-task feedback), `escalate.*` (operator/wall copy — AIDE composes the freeform
@@ -184,14 +184,16 @@ contact is the stateless classify tag.)
 
 The DONE milestone is a **prompted challenge sequence**, never the worker's `✅` and never bare trunk
 presence (D1). `Flag candidates` (ND-02) only marks a block that *might* be done; the gate settles it.
-Driven by the stage prompts (engineer: `gate.local` → `gate.merge` → `gate.trunk`; reviewer: `gate.review`),
-each fired one at a time by the gate-state machine; the engine judges on **evidence at each step**.
+Driven by the stage prompts (engineer: `gate.local` → `gate.merge` → `gate.trunk` → `gate.record`;
+reviewer: `gate.review`), each fired one at a time by the gate-state machine; the engine judges on
+**evidence at each step**.
 
 ```
 Flag candidate (ND-02)
    └─> validate-local    ── evidence the local suite ran clean ─────────> pass ─┐  fail ─> re-prompt (gate.local)
    └─> merge to trunk    ── PR merged + CI green; CI auto-deploys staging ─────> │  (ASK-gated if "ask before merging" is on)
    └─> re-validate trunk ── every applicable AC re-run green ON trunk ─────────> │
+   └─> record            ── gate-ordered ✅ status commit lands on trunk ──────> │  (content-checked: one file, Status only)
                                                                                  └─> CLOSE → DONE
 ```
 
@@ -202,6 +204,12 @@ Flag candidate (ND-02)
   with four outcomes: approve · operator merges it (agent resumes at trunk) · changes requested · drop.
 - **Re-validate on trunk** (`gate.trunk`) — every applicable AC re-run on trunk; a block can't slide from
   merged to done without proving it there.
+- **Record** (`gate.record`, 01-11) — only after the trunk evidence is accepted, the gate orders the worker
+  to commit the block file's `✅` status flip (TRON reads status, never writes it — the flip is the worker's,
+  the order is the gate's). Landing is mode-true via `{record_path}`: local = land it on trunk directly;
+  remote = a record-PR the worker opens and merges itself, exempt from the ASK hold (ordered bookkeeping,
+  not new work). The engine accepts the ✅ only if the record commit's **own diff** is exactly one file
+  (the block doc) and exactly the Status field — anything else escalates as an out-of-gate change.
 - **Reviewer** (`gate.review`) — a reviewer's DONE is full coverage since its last review; loops until a
   clean yes (the gate path is reviewer-shaped, not the engineer ladder).
 - **Fail** at any step → re-prompt with the specific gap, never advance.

@@ -106,7 +106,14 @@ class Engine:
 
     # ── emit: every human-visible line comes from messages.yaml ──
     def emit(self, template_id, slots=None, worker_id=None):
-        line = self.renderer.render(template_id, slots or {})
+        # 01-11 FX-1: every reply-expecting PMT ends in the shared reply line, which renders
+        # {report} + {worker_id} — inject both here so every send can carry the channel
+        # instruction (str.format ignores what a template doesn't use).
+        slots = dict(slots or {})
+        if worker_id is not None:
+            slots.setdefault("worker_id", worker_id)
+        slots.setdefault("report", self.ctx.p("scripts", "report.sh"))
+        line = self.renderer.render(template_id, slots)
         channel = self.renderer.channel(template_id)
         util.append_jsonl(self.ctx.home_log,
                           {"at": util.now_iso(), "channel": channel, "text": line})
@@ -669,12 +676,12 @@ class Engine:
             return
         # ASSIGN is role-neutral (PMT-ASSIGN); the per-role {assignment} was composed at dispatch.
         assignment = pend.get("assignment", "")
+        slots = {"worker_id": wid, "assignment": assignment,
+                 "merge_path": self._merge_path(pend.get("kind") or "engineer")}   # mode-/role-true (01-11 FX-4)
         if pend.get("kind") == "reviewer":
-            self.emit("assign.reviewer", {"worker_id": wid, "assignment": assignment},
-                      worker_id=wid)
+            self.emit("assign.reviewer", slots, worker_id=wid)
         else:
-            self.emit("assign.engineer", {"worker_id": wid, "assignment": assignment},
-                      worker_id=wid)
+            self.emit("assign.engineer", slots, worker_id=wid)
         w["pending_assign"] = None
         self.log("flow", f"{wid} online -> assign ({pend.get('kind')})")
 
@@ -710,10 +717,13 @@ class Engine:
             return
         row = self.st.row(block)
         if row and row.get("status") == "done":
-            # ✅ already landed -> this report is the CLOSE clean-confirmation (T7), or a no-op.
+            # ✅ already landed -> this report is the CLOSE clean-confirmation (T7), or the
+            # record receipt (01-11 FX-3: stage record + ✅ on trunk -> content-check + close).
             g = self.st.gate.get(block)
             if g and g.get("stage") == "close":
                 self._confirm_close(block, g)
+            elif g and g.get("stage") == "record":
+                self._drive_close(block, g, self._worker_id("engineer", block))
             return
         g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
         g.pop("awaiting_rework", None)                # a fresh report -> rework done; re-challenge merge
@@ -1004,7 +1014,20 @@ class Engine:
         renudge = False
         stage, msg = None, None
 
-        if not pr:
+        if g.get("stage") == "record":
+            # 01-11 FX-3: the record order is out — the worker lands the gate-authorized ✅
+            # status commit; the next refresh shows `done` (handled at the top of this
+            # function). Nothing here recomputes from PR state, and a record-PR NEVER parks
+            # on the operator (R2-3): identification is stage==record + the content check at
+            # close, never a branch/title convention. The idle machinery below keeps it
+            # un-hangable.
+            stage = "record"
+        elif on_report and g.get("stage") == "trunk":
+            # 01-11 FX-3: the worker's trunk-stage evidence report is ACCEPTED -> order the
+            # ✅ record. The flip is ordered only after this acceptance — never before.
+            stage, msg = "record", "gate.record"
+            g.pop("trunk_nudges", None)
+        elif not pr:
             if not g.get("pr"):
                 # MG-01: trunk is the only done-truth. Before parking at local, check whether
                 # the block's branch already reached trunk with no PR for the gate to have
@@ -1023,7 +1046,7 @@ class Engine:
                     # on, so once local validation is back the ENGINE performs the merge itself —
                     # ff-only, ASK-gated — exactly as the remote merge step does (MG-01: the engine
                     # owns the trunk merge, never the worker).
-                    local_mode = not self.paths.get("remote") or self.paths.get("remote") == "none"
+                    local_mode = self._local_mode()
                     # `branch` is the worker-declared name, else the convention (_block_branch). In local
                     # mode we merge it only when it REALLY exists in git — the verified local analog of
                     # "a PR exists" in remote mode (never a blind guess).
@@ -1074,25 +1097,32 @@ class Engine:
             else:
                 stage, msg = "merge", "gate.merge"
 
-        # MG-01 T4: universal gate idle-timeout. Any stage that isn't advancing on its own
-        # nudge/cap logic above (renudge already covers those) gets a tick-based liveness cap,
-        # gated on jobs.activity_signals — a genuinely working (dirty/growing worktree) worker
-        # never trips this, only a silent one does. Closes the "stall cap only increments on
-        # repeat worker reports" gap (a silently-dead worker used to strand the gate forever).
-        if stage == g.get("stage") and not renudge:
-            idx = jobs.index()
-            sig = jobs.activity_signals(
-                wid, since_iso=(self.st.data.get("last_sweep") or {}).get("at"), idx=idx)
-            if jobs.has_positive_activity(sig):
+        # 01-11 FX-2 (rewires MG-01 T4): tick-time idle accounting off the runner's OWN state.
+        # The runner refreshes runner.json every poll even when idle, so freshness/heartbeat
+        # signals can never distinguish idle-at-gate from working — the exact reason the MG-01
+        # activity-signal cap never fired in tron-06 (P2). The deterministic idle fact is
+        # runner.json `state: idle` (the agent finished its turn and sits waiting on the
+        # mailbox). A busy worker (runner `working`) never accrues. `ci-wait` is excluded —
+        # there the worker legitimately idles on CI, and the PR machinery owns that wait.
+        if stage == g.get("stage") and not renudge and stage != "ci-wait":
+            if not jobs.runner_idle(wid):
                 g["idle_ticks"] = 0
             else:
                 n = g.get("idle_ticks", 0) + 1
                 g["idle_ticks"] = n
                 if n >= int(self.knobs.get("gate_idle_cap", 3)):
                     self._gate_giveup(block, g, wid,
-                                      f"gate stalled at '{stage}' — no worker activity for {n} ticks",
+                                      f"gate stalled at '{stage}' — worker idle for {n} ticks",
                                       "gate-idle-cap", "check worker liveness; resume or reassign")
                     return
+                if n == int(self.knobs.get("gate_nudge_after", 2)) and wid:
+                    # Re-send the pending stage prompt — a deliberate duplicate on a FRESH
+                    # mailbox seq (_to_worker bumps it), so the runner's seq-keyed dedupe
+                    # delivers it (R1-4). One nudge between accrual start and escalation.
+                    nudge = self._stage_template(stage)
+                    if nudge:
+                        self.emit(nudge, self._stage_slots(stage, wid, block), worker_id=wid)
+                        self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
         else:
             g["idle_ticks"] = 0
 
@@ -1100,17 +1130,73 @@ class Engine:
             prev = g.get("stage")
             g["stage"], g["pr"] = stage, ((pr or {}).get("number") or g.get("pr"))
             if msg and wid:
-                self.emit(msg, {"worker_id": wid, "block": block}, worker_id=wid)
+                self.emit(msg, self._stage_slots(stage, wid, block), worker_id=wid)
             self.log("flow", f"gate[{block}] -> {stage}" + (f" ({reason})" if reason else ""))
             if stage != prev:                            # a real stage advance (01-09), not a re-nudge
                 self.events.event("gate_advance", block=block,
                                   **{"from": prev, "to": stage, "detail": reason})
+
+    def _local_mode(self):
+        """No remote declared -> the root checkout IS the authority (local mode, #89)."""
+        return not self.paths.get("remote") or self.paths.get("remote") == "none"
+
+    def _record_path(self):
+        """The {record_path} slot of PMT-DONE-RECORD (01-11 FX-3, operator decision: PR for
+        remote) — the mode-specific landing instruction, one PMT body, no fork."""
+        if self._local_mode():
+            return "land it on trunk yourself, now"
+        return ("push it on a side branch, open a PR, and merge that PR yourself, now — "
+                "it needs no approval hold")
+
+    def _merge_path(self, kind="engineer"):
+        """The {merge_path} slot of PMT-ASSIGN (01-11 FX-4): the mode-true merge instruction —
+        local mode must never tell a worker to open a PR (tron-05 F2), and a reviewer must
+        never receive merge instructions at all (review is a milestone, not a merge)."""
+        if kind == "reviewer":
+            return "you review and report; you never merge — deliver your findings log and report done"
+        if self._local_mode():
+            return ("build on your branch and report done — there is no PR here; "
+                    "I run the trunk merge at the gate")
+        return "build on your branch, open a PR, report done — I authorize the merge at the gate"
+
+    def _stage_template(self, stage):
+        """Gate stage -> its worker prompt template (for the first send and the idle re-nudge)."""
+        return {"local": "gate.local", "merge": "gate.merge", "ci": "gate.merge",
+                "trunk": "gate.trunk", "record": "gate.record", "close": "close.worker"}.get(stage)
+
+    def _block_relpath(self, block):
+        """The block doc's repo-relative path — reader stores the basename; git pathspecs and
+        the record content check need the full path under the project's blocks dir."""
+        row = self.st.row(block) or {}
+        fname = os.path.basename(row.get("block_file") or f"{block}.md")
+        return os.path.relpath(os.path.join(self.paths["blocks"], fname), self.paths["root"])
+
+    def _stage_slots(self, stage, wid, block):
+        slots = {"worker_id": wid, "block": block}
+        if stage == "record":
+            slots["record_path"] = self._record_path()
+        return slots
 
     def _drive_close(self, block, g, wid):
         """CLOSE stage (T7): ✅ landed. Fire CLOSE once and HOLD the slot — the worker wraps up
         (nothing unmerged, no loose worktree, local synced). The slot frees only on its clean
         confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
         can't strand the slot forever."""
+        # 01-11 FX-3 (R2-1/R2-3): leaving RECORD -> verify the record commit's OWN diff before
+        # accepting the ✅ — exactly one file (the block doc), exactly the Status field. Never a
+        # trunk range (another block's merge landing in between must not false-positive under
+        # worker_count > 1), never branch name / message / say-so. Non-conforming = an
+        # out-of-gate change wearing the record's clothes -> escalate, don't close.
+        if g.get("stage") == "record" and not g.get("record_checked"):
+            okc, detail = trunk.record_commit_ok(
+                self.paths["root"], self._block_relpath(block), self.dry)
+            if not okc:
+                self._gate_giveup(block, g, wid,
+                                  f"record commit non-conforming: {detail}",
+                                  "gate-record-bypass",
+                                  "audit the record commit (one file, Status field only)")
+                return
+            g["record_checked"] = True
         if g.get("stage") != "close":
             prev = g.get("stage")
             g["stage"] = "close"
@@ -1131,7 +1217,26 @@ class Engine:
             self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
 
     def _confirm_close(self, block, g):
-        """The worker confirmed a clean exit -> kill its process + free the slot (T7)."""
+        """The worker confirmed a clean exit -> verify, then free the slot (T7 + 01-11 FX-9).
+        The "clean" tag is a say-so — the engine checks the replica itself (plain git reads:
+        root clean, no leftover worktrees, the block branch gone) before releasing. Dirty ->
+        name the leftovers and re-hold; at the cap -> escalate, never a silent trust-release."""
+        clean, detail = trunk.replica_clean(self.paths["root"], self._block_branch(block),
+                                            self.paths.get("main_branch", "main"), self.dry)
+        wid = self._worker_id_for_block(block)
+        if not clean:
+            n = g.get("close_nudges", 0) + 1
+            g["close_nudges"] = n
+            if n >= int(self.knobs.get("gate_close_cap", 3)):
+                self._gate_giveup(block, g, wid,
+                                  f"close confirmed but the replica is not clean: {detail}",
+                                  "gate-close-dirty",
+                                  "clean up the leftover worktree/branch/changes, then confirm")
+                return
+            if wid:
+                self.emit("close.dirty", {"worker_id": wid, "detail": detail}, worker_id=wid)
+            self.log("flow", f"gate[{block}] close claim rejected: {detail}")
+            return
         for w in list(self.st.workers):
             if w.get("role") == "engineer" and w.get("block") == block:
                 self._release_worker(w, notify=False, reason="close-confirmed")  # CLOSE already sent
@@ -1391,6 +1496,11 @@ class Engine:
             # handler clears pending_assign, so a later report.sh "online" is a harmless no-op.
             if w.get("pending_assign") and (jobs.find(w.get("id"), idx) or {}).get("turns", 0) >= 1:
                 self._h_worker_online({"worker_id": w.get("id")})
+            # 01-11 FX-2 (tron-06 P2): the MANIFEST mirrors the runner's own state — an idle
+            # worker must never read `working`. Deterministic file read, reconciled every tick.
+            rstate = (jobs.find(w.get("id"), idx) or {}).get("state")
+            if w.get("status") in ("working", "idle") and rstate in ("working", "idle"):
+                w["status"] = rstate
             sig = jobs.activity_signals(w.get("id"), since_iso=last, idx=idx)
             if jobs.has_positive_activity(sig):
                 continue

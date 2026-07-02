@@ -37,6 +37,7 @@ tags:
   # worker-origin
   worker.online:            { trigger: "worker:online" }   # a spawned worker checked in -> emit its pending assignment (01-07 two-step)
   worker.done:              { trigger: "block:next:done" }
+  worker.recorded:          { trigger: "block:next:done" }  # the gate-ordered block-status ✅ commit landed (01-11 record step); same row — the gate reads trunk truth, never the say-so
   worker.wall:              { trigger: "wall:raised:<block>" }
   worker.review_done:       { trigger: "review:<type>:done" }
   worker.await_confirm:     { trigger: "worker:await:<block>" }   # pause mid-block for go-ahead; ALWAYS reaches the operator (D7/R-AWAIT)

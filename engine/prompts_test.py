@@ -55,13 +55,21 @@ def main():
 
     # 3) load() resolves an id and fills slots — PMT-ASSIGN is role-neutral: ONE body renders for
     #    both an engineer (block assignment) and a reviewer (since-last-review range). [AC-4]
-    eng_out = p.load("PMT-ASSIGN", {"worker_id": "ENG-01-02",
+    eng_out = p.load("PMT-ASSIGN", {"worker_id": "ENG-01-02", "report": "/x/report.sh",
+                                    "merge_path": "open a PR",
                                     "assignment": "You own block 01-02. Read its spec."})
     assert "ENG-01-02" in eng_out and "block 01-02" in eng_out, "engineer assignment not filled"
-    rev_out = p.load("PMT-ASSIGN", {"worker_id": "REV-code",
+    rev_out = p.load("PMT-ASSIGN", {"worker_id": "REV-code", "report": "/x/report.sh",
+                                    "merge_path": "open a PR",
                                     "assignment": "Run a code review over abc..def."})
     assert "REV-code" in rev_out and "abc..def" in rev_out, "reviewer assignment not filled"
     assert "{assignment}" not in eng_out and "{assignment}" not in rev_out, "slot left unfilled"
+    # 3b) the shared reply line (01-11 FX-1): appended by the loader to every reply-expecting
+    #     PMT, rendering the channel command; SPAWN carries its own bespoke line instead.
+    assert "/x/report.sh" in eng_out, "reply line not appended / report not filled"
+    spawn_out = p.load("PMT-SPAWN", {"worker_id": "ENG-9", "role": "engineer",
+                                     "persona": "/p.md", "report": "/x/report.sh"})
+    assert spawn_out.count("/x/report.sh") == 1, "SPAWN must carry only its bespoke line"
 
     # 4) fresh read: edit a temp PMT, load twice, second call sees the change.
     with tempfile.TemporaryDirectory() as td:
