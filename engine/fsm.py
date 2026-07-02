@@ -224,6 +224,8 @@ class Engine:
                     node="§5 tick drain", next_action="drop (re-read next tick at-least-once)")
         if rc != "pause":
             self._drive_gates()          # S-1: pacing is wall-clock inside the gate machinery
+            self._drive_cases()          # F-4/R-7: parked-case re-ping ladder -> safe-park
+            self._drive_landings()       # D1: architect paperwork FIFO, job-queue-independent
         self._drain_triggers()
         self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
@@ -261,7 +263,22 @@ class Engine:
                 self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
                 return
         try:
-            view = reader.load(self.paths["pipeline"], self.paths["blocks"])
+            ppath, bpath = self.paths["pipeline"], self.paths["blocks"]
+            if not self.dry and self._trunk_sha:
+                # W9 (tron-13): read the PINNED tree, never the working tree — a worker
+                # mid-commit in the root checkout (the record commit is one, by our own
+                # order) must be invisible until its commit lands. Snapshot failure is a
+                # read failure: reuse the last good view, never a dirty read.
+                pipe_rel = self.paths.get("pipeline_rel") or "meta/pipeline.md"
+                blocks_rel = (self.paths.get("blocks_rel") or "meta/blocks/").rstrip("/")
+                oks, errs = trunk.snapshot_tree(
+                    self.paths["root"], self._trunk_sha, [pipe_rel, blocks_rel],
+                    self.ctx.trunk_snapshot_dir)
+                if not oks:
+                    raise RuntimeError(f"trunk snapshot failed: {errs}")
+                ppath = os.path.join(self.ctx.trunk_snapshot_dir, pipe_rel)
+                bpath = os.path.join(self.ctx.trunk_snapshot_dir, blocks_rel)
+            view = reader.load(ppath, bpath)
             self.st.set_pipeline(view)
         except Exception as e:
             self.log("trunk", f"read failed (reusing snapshot): {e}")
@@ -813,7 +830,29 @@ class Engine:
             self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
             self._emit("pulse")
             return
-        self.st.gate.pop(gkey, None)                 # confirmation -> release + remediation
+        # Confirmation -> land declared paperwork BEFORE release (tron-13 D1 point 2):
+        # the findings log parked on the reviewer's named branch is landed by the ENGINE
+        # (content-checked, ff-only, branch deleted) — say-so provenance ends here. A
+        # branch that won't land holds the gate at `landing` (a stage that exists only
+        # when a branch was declared — paperwork-less reviews release exactly as before);
+        # the wall-clock driver (_drive_review_landing) paces it from here.
+        if rev and rev.get("pending_landings"):
+            code, detail = self._drain_landings(rev, "reviewer")
+            if code == "blocked":
+                g = self.st.gate[gkey]
+                prev = g.get("stage")
+                g["stage"] = "landing"
+                g["block"] = block
+                self.events.event("gate_advance", block=gkey,
+                                  **{"from": prev, "to": "landing", "detail": detail})
+                self.log("flow", f"{gkey} paperwork won't land ({detail}) -> hold at landing")
+                self._land_nudge(rev.get("id"), detail)
+                return
+        self._finish_review(typ, block)
+
+    def _finish_review(self, typ, block):
+        # Release + remediation — the single exit for a completed review cycle.
+        self.st.gate.pop(f"review:{typ}", None)
         for w in list(self.st.workers):
             if w.get("role") == "reviewer" and w.get("rtype") == typ:
                 self._release_worker(w, reason="review-complete")
@@ -1049,7 +1088,17 @@ class Engine:
 
     def _drive_gates(self):
         for block in list(self.st.gate.keys()):
-            self._drive_gate(block, self.st.gate[block])
+            g = self.st.gate.get(block)
+            if g is None:
+                continue
+            if str(block).startswith("review:"):
+                # tron-13 D1 rider (b): review gates are event-driven EXCEPT the landing
+                # stage — a reviewer silent after a failed paperwork landing would
+                # otherwise be a W6c-class stall no clock ever catches.
+                if g.get("stage") == "landing":
+                    self._drive_review_landing(block, g)
+                continue
+            self._drive_gate(block, g)
 
     def _drive_gate(self, block, g, reason=None, on_report=False):
         """Drive a worker through the DONE gate one stage-specific prompt at a time (T5), on
@@ -1077,26 +1126,42 @@ class Engine:
         renudge = False
         stage, msg = None, None
 
-        if g.get("stage") == "record":
-            # 01-11 FX-3: the record order is out — the worker lands the gate-authorized ✅
-            # status commit; the next refresh shows `done` (handled at the top of this
-            # function). Nothing here recomputes from PR state, and a record-PR NEVER parks
-            # on the operator (R2-3): identification is stage==record + the content check at
-            # close, never a branch/title convention. The idle machinery below keeps it
-            # un-hangable.
-            stage = "record"
-        elif on_report and g.get("stage") == "trunk":
+        if on_report and g.get("stage") == "trunk":
             # 01-11 FX-3: the worker's trunk-stage evidence report is ACCEPTED -> order the
             # ✅ record. The flip is ordered only after this acceptance — never before.
             stage, msg = "record", "gate.record"
-        elif g.get("stage") == "trunk":
-            # tron-07 W1: the DONE ladder is MONOTONIC. Trunk was reached through an
-            # authorized merge; the git predicates below go stale the moment the worker
-            # commits again on its branch (post-merge session docs), and recomputing from
-            # them regressed the gate trunk -> local — a duplicate DONE-LOCAL, then a
-            # second un-asked merge. Hold at trunk: only the worker's accepted report
-            # (on_report above) advances to record; the idle machinery re-nudges a stall.
-            stage = "trunk"
+        elif g.get("stage") in ("trunk", "record"):
+            # A-5 (tron-13, generalizes tron-07 W1 + R-3): the DONE ladder is MONOTONIC past
+            # the merge. The git predicates below go stale the moment the worker parks
+            # paperwork commits on its branch, and recomputing from them once regressed the
+            # gate trunk -> local — a duplicate DONE-LOCAL, then a second un-asked merge.
+            # Held rungs never recompute downward; instead the held stage's OWN predicate is
+            # re-verified each tick: the merged sha's ancestry (survives paperwork commits
+            # AND `git revert` — only history surgery breaks it) and, in remote mode, the
+            # merged PR staying closed. A contradicted predicate is a NAMED escalation —
+            # a trunk regression must never read as a worker stall. ACCEPTED RESIDUAL
+            # (delta review): a local-mode plain `git revert` keeps ancestry AND has no PR
+            # to reopen — the ratchet holds quietly and the regression surfaces at trunk
+            # re-validation, not here. A record-PR still never parks on the operator
+            # (R2-3): identification is stage==record + the content check at close, never
+            # a branch/title convention.
+            held = g["stage"]
+            contra = None
+            if pr:
+                contra = (f"PR #{pr.get('number')} is open again after the merge "
+                          f"(revert + reopen?)")
+            elif g.get("merged_sha") and not trunk.is_ancestor(
+                    self.paths["root"], g["merged_sha"],
+                    self.paths.get("main_branch", "main"), self.dry):
+                contra = (f"merged sha {str(g['merged_sha'])[:7]} no longer in trunk "
+                          f"history (force-push or reset?)")
+            if contra:
+                self._gate_giveup(block, g, wid,
+                                  f"gate-contradiction at '{held}': {contra}",
+                                  "gate-contradiction",
+                                  "audit trunk history; re-validate or reassign")
+                return
+            stage = held
         elif not pr:
             if not g.get("pr"):
                 # MG-01: trunk is the only done-truth. Before parking at local, check whether
@@ -1110,6 +1175,7 @@ class Engine:
                                           "gate-bypass", "audit the out-of-gate merge; re-validate on trunk")
                         return
                     stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
+                    g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)  # A-5 predicate anchor
                 else:
                     # No PR, not yet on trunk. REMOTE mode: the worker opens a PR and the merge
                     # lands via the pr path below. LOCAL mode (no remote): there is no PR to wait
@@ -1122,8 +1188,10 @@ class Engine:
                     # "a PR exists" in remote mode (never a blind guess).
                     have_branch = trunk.branch_exists(self.paths["root"], branch, self.dry)
                     if local_mode and have_branch and g.get("stage") == "local":
+                        g.pop("branch_gap", None)         # W12: the branch is visible again
                         if g.get("self_merge"):
                             stage, msg = "trunk", "gate.trunk"        # operator merged it themselves
+                            g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
                         elif on_report or g.get("approved_merge"):
                             # A-3: the grant binds the exact sha the operator saw at park. A tip
                             # that moved between park and execution voids the grant and re-parks
@@ -1142,6 +1210,10 @@ class Engine:
                                 self.paths["root"], branch,
                                 self.paths.get("main_branch", "main"), self.dry)
                             if ok:
+                                # A-5: anchor the held-stage predicate to the EXACT sha this
+                                # merge landed — paperwork commits after this never touch it.
+                                g["merged_sha"] = cur_tip or trunk.tip_sha(
+                                    self.paths["root"], branch, self.dry)
                                 # tron-07 W2: one approval = one EXECUTED merge. Consume the
                                 # grant here (not on the order) so a non-ff retry — the same
                                 # unexecuted merge — keeps it, but nothing after execution can
@@ -1155,6 +1227,22 @@ class Engine:
                             return                                    # tick while parked on operator -> hold quietly
                         else:
                             stage, msg = "local", "gate.local"        # tick while worker still validating locally
+                    elif local_mode and not have_branch and g.get("stage") == "local" and on_report:
+                        # W12 (tron-13 attempt 1): the worker says done but NO branch is
+                        # visible under the name the gate would merge (declared or the
+                        # convention placeholder) — re-ordering validation is the WRONG
+                        # remedy (it walked a worker through three re-validations into
+                        # the idle cap). Name the actual gap; the W10 hoist makes the
+                        # one-message remedy real (a done re-report can carry --branch).
+                        # The idle machinery keeps re-sending THIS line (branch_gap flag
+                        # flips the nudge template) and its cap stays the backstop.
+                        g["branch_gap"] = True
+                        if wid and not self.dry:
+                            self._to_worker(wid, self._branch_gap_line(wid, block),
+                                            "gate.branch-gap")
+                        self.log("flow", f"gate[{block}] done reported but no visible "
+                                         f"branch -> ask for the declaration")
+                        stage, msg = "local", None
                     else:
                         stage, msg = "local", "gate.local"   # remote: no PR yet -> validate locally first
             else:
@@ -1162,6 +1250,9 @@ class Engine:
                 # idle machinery below owns stalls from here (S-5: the per-tick trunk_nudges cap
                 # was unreachable once W1 made the trunk stage monotonic — removed).
                 stage, msg = "trunk", "gate.trunk"
+                # A-5: best-effort anchor — a remote-merged branch may be unresolvable locally;
+                # an empty sha just skips the ancestry predicate (quiet hold, R-3 detail at cap).
+                g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
         elif pr.get("checks") == "failing":
             stage, msg = "ci", "gate.merge"              # CI red -> re-nudge the merge step (get CI green)
             renudge = True
@@ -1205,11 +1296,17 @@ class Engine:
                         and not g.get("nudged_at") and wid):
                     # Re-send the pending stage prompt — a deliberate duplicate on a FRESH
                     # mailbox seq (_to_worker bumps it), so the runner's seq-keyed dedupe
-                    # delivers it (R1-4). One nudge per idle episode.
+                    # delivers it (R1-4). One nudge per idle episode. W12: while the gap
+                    # is a missing branch, the nudge names THAT — never "validate again".
                     nudge = self._stage_template(stage)
                     if nudge:
                         g["nudged_at"] = now
-                        self.emit(nudge, self._stage_slots(stage, wid, block), worker_id=wid)
+                        if g.get("branch_gap") and stage == "local":
+                            self._to_worker(wid, self._branch_gap_line(wid, block),
+                                            "gate.branch-gap")
+                        else:
+                            self.emit(nudge, self._stage_slots(stage, wid, block),
+                                      worker_id=wid)
                         self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
         else:
             g.pop("idle_since", None)
@@ -1321,14 +1418,190 @@ class Engine:
             g["close_nudged_at"] = now
             self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
 
+    # ── the unified paperwork lander (F-1/S-3+R-6, tron-13 D1) ──
+    def _paperwork_rules(self, role, block=None):
+        """Per-role paperwork rules -> (allow, deny, line_scoped). The project declares
+        the paperwork area (`paperwork_paths`, seeder-authored; default the meta dir).
+        Pipeline content is carved OUT for engineer/reviewer — the pipeline's shape is
+        the architect's product — with two mechanically-scoped exceptions for the
+        engineer's own close-out (co-signed ask-2 fix): its OWN block doc + archive path
+        (the archive move + Completed line), and pipeline edits whose every changed line
+        names its own block id. The architect gets the explicit UNION — a config where
+        blocks_dir isn't under a paperwork path must not silently exclude it."""
+        base = list(self.paths.get("paperwork") or [])
+        pipe = self.paths.get("pipeline_rel") or "meta/pipeline.md"
+        blocks = self.paths.get("blocks_rel") or "meta/blocks/"
+        if role == "architect":
+            return base + [blocks, pipe], None, None
+        deny = [blocks, pipe]
+        if role == "engineer" and block:
+            rel = self._block_relpath(block)
+            archive_rel = os.path.relpath(
+                os.path.join(self.paths["archive"], os.path.basename(rel)),
+                self.paths["root"])
+            return base + [rel, archive_rel], deny, {pipe: str(block)}
+        return base, deny, None
+
+    def _drain_landings(self, w, role):
+        """FS-1: land the worker's declared paperwork branches FIFO head-first — a second
+        declaration never orphans a parked first. Returns ("ok", detail) when the FIFO is
+        empty(ied), ("blocked", detail) when the head won't land — it STAYS queued; the
+        caller paces nudges and caps into a named escalation."""
+        fifo = w.setdefault("pending_landings", [])
+        while fifo:
+            branch = fifo[0]
+            allow, deny, scoped = self._paperwork_rules(role)
+            code, detail = trunk.land_docs(self.paths["root"], branch, allow,
+                                           self.paths.get("main_branch", "main"),
+                                           self.dry, denylist=deny, line_scoped=scoped)
+            if code in ("landed", "none"):
+                fifo.pop(0)
+                if code == "landed":
+                    self.events.event("docs_landed", actor=w.get("id"),
+                                      **{"role": role, "branch": branch,
+                                         "detail": detail})
+                    self.log("flow", f"paperwork[{w.get('id')}] landed {branch}: {detail}")
+                continue
+            return "blocked", f"{branch}: {code}: {detail}"
+        return "ok", "nothing pending"
+
+    def _fail_landing(self, w, role, detail):
+        """The bounded rung capped: move the head branch aside as NAMED residue (the
+        session-end sweep re-names it), record the failure, park a case on the operator."""
+        wid = w.get("id")
+        fifo = w.get("pending_landings") or []
+        branch = fifo.pop(0) if fifo else "?"
+        self.st.data.setdefault("failed_landings", []).append(
+            {"worker": wid, "role": role, "branch": branch, "detail": detail})
+        self.events.failure("gate-stuck", "paperwork-unlandable",
+                            f"land {role} paperwork branch", detail, actor=wid,
+                            node="paperwork lander", next_action="escalate")
+        cid = self._open_case(None, "paperwork", wid,
+                              f"{role} paperwork unlandable — {detail}")
+        self.emit("escalate.wall", {"worker_id": wid or "?", "block": "?",
+                                    "detail": f"{role} paperwork unlandable — {detail}",
+                                    "case": cid})
+
+    def _branch_gap_line(self, wid, block):
+        """W12: the missing-branch remedy names the actual gap and prescribes the
+        ONE-message recovery — the W10 hoist carries `--branch` on any verb, so the
+        re-reported done and the declaration ride together (peer rider 1)."""
+        return (f"[TRON]  {wid} — I can't see a branch for {block}: you've reported "
+                f"done, but nothing exists under the name I have (or you never named "
+                f"one). Report done again and carry your branch with it — add "
+                f"`--branch <your branch name>` to the report command.")
+
+    def _land_nudge(self, wid, detail):
+        # Engine-composed (gate.changes precedent): the PMT surface stays untouched.
+        self._to_worker(wid, f"[TRON]  {wid} — your paperwork branch won't land: "
+                             f"{detail}. Move anything that isn't paperwork off it, "
+                             f"rebase onto the trunk if it moved, and leave the branch "
+                             f"in place — I land it.", "land.nudge")
+
+    def _drive_landings(self):
+        """D1 landing point 3 (architect, each tick — independent of the job queue,
+        FS-1): a stuck landing nudges its owner on the close pacing law and caps into a
+        named escalation + residue, so the queue keeps draining and a stuck landing
+        never deadlocks the architect."""
+        arch = self._architect()
+        if not arch or not arch.get("pending_landings"):
+            return
+        code, detail = self._drain_landings(arch, "architect")
+        if code != "blocked":
+            arch.pop("land_since", None)
+            arch.pop("land_nudged_at", None)
+            return
+        now = self._now_s()
+        since = arch.setdefault("land_since", now)
+        if now - since >= self._pace("gate_close_cap", 3):
+            arch.pop("land_since", None)
+            arch.pop("land_nudged_at", None)
+            self._fail_landing(arch, "architect", detail)
+            return
+        last = arch.get("land_nudged_at")
+        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
+        if last is None or now - last >= ceiling:
+            arch["land_nudged_at"] = now
+            self._land_nudge(arch.get("id"), detail)
+
+    def _drive_review_landing(self, gkey, g):
+        """D1 rider (b): a review gate holds at `landing` ONLY when the reviewer declared
+        a paperwork branch that wouldn't land — same wall-clock idle law as close: retry
+        each tick (trunk may move back into ff reach), re-nudge once per ceiling while
+        idle, cap -> named escalation + release (the branch becomes named residue the
+        session-end sweep re-surfaces)."""
+        typ = gkey.split(":", 1)[1]
+        rev = next((w for w in self.st.workers
+                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+        if rev is None:
+            self.st.gate.pop(gkey, None)
+            return
+        code, detail = self._drain_landings(rev, "reviewer")
+        if code != "blocked":
+            self.log("flow", f"{gkey} paperwork landed -> release")
+            self._finish_review(typ, g.get("block"))
+            return
+        wid = rev.get("id")
+        if wid and not jobs.runner_idle(wid):
+            g.pop("landing_idle_since", None)
+            g.pop("landing_nudged_at", None)
+            return
+        now = self._now_s()
+        since = g.setdefault("landing_idle_since", now)
+        if now - since >= self._pace("gate_close_cap", 3):
+            self._fail_landing(rev, "reviewer", detail)
+            self._finish_review(typ, g.get("block"))
+            return
+        last = g.get("landing_nudged_at")
+        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
+        if wid and (last is None or now - last >= ceiling):
+            g["landing_nudged_at"] = now
+            self._land_nudge(wid, detail)
+
     def _confirm_close(self, block, g):
-        """The worker confirmed a clean exit -> verify, then free the slot (T7 + 01-11 FX-9).
-        The "clean" tag is a say-so — the engine checks the replica itself (plain git reads:
-        root clean, no leftover worktrees, the block branch gone) before releasing. Dirty ->
-        name the leftovers and re-hold; at the cap -> escalate, never a silent trust-release."""
-        clean, detail = trunk.replica_clean(self.paths["root"], self._block_branch(block),
-                                            self.paths.get("main_branch", "main"), self.dry)
+        """The worker confirmed a clean exit -> land its parked paperwork, verify, then
+        free the slot (T7 + 01-11 FX-9 + tron-13 D1). The close contract: the worker
+        parks paperwork commits on its OWN block branch, removes its worktree, syncs
+        local, confirms — the ENGINE lands (content-checked per role, ff-only, branch
+        deleted on success; serialized inside the tick lock, which is what kills the
+        multi-worker close race). The "clean" claim is a say-so — the engine checks the
+        replica itself before releasing. Unlandable/dirty -> name it and re-hold; at the
+        cap -> escalate, never a silent trust-release."""
         wid = self._worker_id_for_block(block)
+        branch = self._block_branch(block)
+        allow, deny, scoped = self._paperwork_rules("engineer", block)
+        code, ldetail = trunk.land_docs(self.paths["root"], branch, allow,
+                                        self.paths.get("main_branch", "main"), self.dry,
+                                        denylist=deny, line_scoped=scoped)
+        if code == "landed":
+            self.events.event("docs_landed", actor=wid, block=block,
+                              **{"role": "engineer", "branch": branch,
+                                 "detail": ldetail})
+            self.log("flow", f"paperwork[{block}] landed: {ldetail}")
+        elif code in ("violation", "non-ff", "error"):
+            reason = {
+                "violation": f"your branch carries non-paperwork: {ldetail} — unmerged "
+                             f"code at close is a wall to report, never a cleanup",
+                "non-ff": "trunk moved under your parked paperwork — rebase your branch "
+                          "onto the trunk, leave it in place, then confirm again",
+                "error": f"paperwork landing failed: {ldetail}",
+            }[code]
+            n = g.get("close_nudges", 0) + 1
+            g["close_nudges"] = n
+            if n >= int(self.knobs.get("gate_close_cap", 3)):
+                self._gate_giveup(block, g, wid,
+                                  f"close confirmed but paperwork won't land "
+                                  f"({code}): {ldetail}",
+                                  "gate-close-dirty",
+                                  "resolve the paperwork branch, then confirm")
+                return
+            if wid:
+                self.emit("close.dirty", {"worker_id": wid, "detail": reason},
+                          worker_id=wid)
+            self.log("flow", f"gate[{block}] paperwork landing {code}: {ldetail}")
+            return
+        clean, detail = trunk.replica_clean(self.paths["root"], branch,
+                                            self.paths.get("main_branch", "main"), self.dry)
         if not clean:
             n = g.get("close_nudges", 0) + 1
             g["close_nudges"] = n
@@ -1485,6 +1758,16 @@ class Engine:
             # the missing universal reply slots crashed this render, and this is the reviewer's
             # release path (the crash would strand every review loop at hand-back).
             self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
+        # D1 delta-review fix: a released worker leaves the roster, so any paperwork it
+        # declared but never landed would escape EVERY net (no cap fired, st.branches is
+        # engineer-only) — the exact lost-output defect D1 kills, back through a side door
+        # (stall-recover releases here too). Preserve the FIFO as durable named residue at
+        # this single chokepoint; the session-end sweep re-surfaces it.
+        for br in (w.get("pending_landings") or []):
+            self.st.data.setdefault("failed_landings", []).append(
+                {"worker": wid, "role": w.get("role"), "branch": br,
+                 "detail": f"released ({reason}) with the branch unlanded"})
+            self.log("flow", f"release[{wid}] preserves unlanded paperwork {br}")
         if not self.dry:
             jobs.release(wid)
         if w in self.st.workers:
@@ -1495,23 +1778,89 @@ class Engine:
                           **{"role": w.get("role"), "reason": reason})
 
     # ── inbound classification + side handlers ──
-    # Tags whose trigger opens/advances a block gate — the ones admission must pin to a
-    # REAL canon block before they fire (S-2-lite).
-    GATING_TAGS = ("worker.done", "worker.recorded", "worker.wall")
+    # S-2-full (tron-13 D2): the declarative tag x stage ADMISSION table — the DATA the
+    # single checkpoint interprets; no per-tag conditionals live in code anymore.
+    #   block:  the tag must resolve to a REAL canon block, sender-first (A-1/W3). This
+    #           means "resolves to a canon block", never "a gate is open" — a worker.wall
+    #           raised before any gate exists must still fire.
+    #   stages: admissible only while the block's gate is AT one of these stages; anywhere
+    #           else it is a receipt to note, never an action (W6a).
+    #   close_confirm_at: at this stage only a reply opening the registry clean-prefix —
+    #           or the structured `clean` verb (A-2 `clean_confirm` slot) — confirms.
+    # Lint L22 pins this table against routing.yaml's gate-facing tags and asserts _admit
+    # stays the only admission checkpoint (rider 4).
+    ADMISSION = {
+        "worker.done":     {"block": True, "stages": None, "close_confirm_at": "close"},
+        "worker.recorded": {"block": True, "stages": ("record",)},
+        "worker.wall":     {"block": True, "stages": None},
+    }
+    GATING_TAGS = tuple(ADMISSION)
+
+    # A-2 (tron-13 D2): the closed worker-facing verb map for STRUCTURED reports
+    # (report.sh --tag <verb>). A structured line resolves deterministically — zero LLM
+    # for the whole gate ladder; free text keeps the classify path (prefixes remain the
+    # fallback discriminator, W7a). `clean` is worker.done + a slot, never its own tag:
+    # the distinction is _admit's to enforce at one choke point, and a new tag would
+    # re-train the free-text classify vocabulary for nothing.
+    REPORT_VERBS = {
+        "done":        ("worker.done", {}),
+        "recorded":    ("worker.recorded", {}),
+        "wall":        ("worker.wall", {}),
+        "review-done": ("worker.review_done", {}),
+        "clean":       ("worker.done", {"clean_confirm": True}),
+    }
+
+    def _structured(self, msg):
+        """Resolve a structured report (A-2) without the model. Returns (tag, slots) or
+        (None, None) when the line carries no verb (-> classify). An unknown verb is
+        recorded (with its sender — forensics at scale) and DROPPED: never a trigger,
+        never a guess; the gate's own pacing re-prompts the worker.
+        W10 (tron-13 attempt 1): `branch` is NOT a terminal verb — a branch declaration
+        is a MODIFIER that rides other work (the architect's one-message
+        declare-and-complete deadlocked its own job queue when `branch` swallowed the
+        completion act). Record the declaration from the slot deterministically
+        (non-engineer FIFO; engineers keep the classify+_admit path so the assignment
+        backfills the block), then fall the TEXT through to classify: a dual-act reply
+        loses neither act, a pure declaration re-classifies to worker.branch
+        (idempotent), and a missing --branch never silently no-ops."""
+        verb = str(msg.get("tag") or "").strip().lower()
+        if not verb:
+            return None, None
+        sender = msg.get("sender") or {}
+        if verb == "branch":
+            # The declaration itself was hoisted to _classify (any verb records it);
+            # nothing terminal remains — the text classifies.
+            if not (msg.get("slots") or {}).get("branch"):
+                self.log("flow", f"--tag branch without --branch from "
+                                 f"{sender.get('id')} -> text classifies")
+            return None, None
+        hit = self.REPORT_VERBS.get(verb)
+        if not hit:
+            self.log("flow", f"unknown structured verb '{verb}' from "
+                             f"{sender.get('id')} -> dropped")
+            self.events.unclassified(msg.get("text", "")[:200],
+                                     f"unknown structured verb '{verb}'", sender=sender)
+            return "drop", None
+        tag, extra = hit
+        slots = {**(msg.get("slots") or {}), **extra}
+        if tag == "worker.review_done" and not slots.get("type"):
+            # Sender-first (A-1 spirit): the reviewer's own record knows its type.
+            w = next((x for x in self.st.workers
+                      if x.get("id") == sender.get("id")), None)
+            if w and w.get("rtype"):
+                slots["type"] = w["rtype"]
+        return tag, slots
 
     def _admit(self, tag, slots, sender):
-        """S-2-lite (tron-07 review cycle): the SINGLE admission checkpoint at the
-        classify->trigger boundary. Everything that decides whether a classified message may
-        act on a gate lives here — nowhere else:
-          A-1  the sender's ASSIGNED block is authoritative for its gate-facing reports; the
-               classify-extracted text ref is a cross-check (workers are single-block today —
+        """The SINGLE admission checkpoint at the classify->trigger boundary (S-2, rider 4).
+        Everything that decides whether a message may act on a gate lives here — nowhere
+        else. The RULES are the declarative ADMISSION table above; this method only
+        interprets it:
+          A-1  the sender's ASSIGNED block is authoritative for its gate-facing reports;
+               the extracted text ref is a cross-check (workers are single-block today —
                R-5: load-bearing; a multi-block worker design must revisit this);
-          W3   a text ref resolves exact-then-unique-prefix; an id the canon has no row for
-               never opens a gate;
-          W6a  the record receipt is admissible only while its gate is AT the record stage —
-               at close (or with no gate) it is a receipt to note, never a confirmation;
-          risk-2  at CLOSE, only a reply opening the prescribed `clean` prefix is the
-               clean-confirmation.
+          W3   a text ref resolves exact-then-unique-prefix; an id the canon has no row
+               for never opens a gate.
         Returns the (possibly adjusted) slots, or None to refuse the trigger (SENTRY-logged)."""
         w = next((x for x in self.st.workers if x.get("id") == (sender or {}).get("id")), None)
         assigned = (w or {}).get("block")
@@ -1529,27 +1878,33 @@ class Engine:
             block = assigned
         if block:
             slots = {**slots, "block": block}
-        if tag in self.GATING_TAGS:
-            if not block or self.st.row(block) is None:
+        rule = self.ADMISSION.get(tag)
+        if rule:
+            if rule.get("block") and (not block or self.st.row(block) is None):
                 self.log("flow", f"{tag} for unknown block '{ref}' -> refused (no canon row)")
                 self.events.unclassified(f"{tag} block ref: {ref}",
                                          "unknown block id (no canon row)", sender=sender)
                 return None
             g = self.st.gate.get(block)
-            if tag == "worker.recorded" and not (g and g.get("stage") == "record"):
-                self.log("flow", f"record receipt for {block} noted "
+            stages = rule.get("stages")
+            if stages is not None and not (g and g.get("stage") in stages):
+                self.log("flow", f"{tag} for {block} noted "
                                  f"(stage={(g or {}).get('stage')}) -> no action")
                 return None
-            if tag == "worker.done" and g and g.get("stage") == "close":
+            cca = rule.get("close_confirm_at")
+            if (cca and g and g.get("stage") == cca
+                    and not slots.get("clean_confirm")):
                 raw = (slots.get("_raw") or "").strip().lower()
                 pfx = (self.renderer.prompts.close_confirm_prefix() or "clean").lower()
                 if raw and not raw.startswith(pfx):
-                    self.log("flow", f"gate[{block}] close: reply doesn't open "
+                    self.log("flow", f"gate[{block}] {cca}: reply doesn't open "
                                      f"'{pfx}' -> not a confirmation")
                     return None
         return slots
 
     def _ingest(self, tag, slots, sender):
+        if tag == "drop":                                # A-2: invalid structured line, already recorded
+            return
         action = self.tags.get(tag)
         if not isinstance(action, dict):
             self.log("flow", f"unknown tag '{tag}'")
@@ -1619,8 +1974,39 @@ class Engine:
 
     def _record_branch(self, slots):
         """The worker reported the branch it NAMED for its block (T2). Record it so the DONE gate
-        resolves the block's PR/CI by the real name — TRON never guesses `feat/<block>`."""
+        resolves the block's PR/CI by the real name — TRON never guesses `feat/<block>`.
+        tron-13 D1/FS-1/FS-3: a blockless declaration from a non-engineer (reviewer /
+        architect) names a PAPERWORK branch — keyed purely on the sender's worker record
+        (never `st.branches`, which is block-gate territory and R-4-guarded), FIFO so a
+        second declaration never orphans a parked first."""
         block, branch = slots.get("block"), slots.get("branch")
+        if not branch:
+            return
+        wid = slots.get("worker_id")
+        w = next((x for x in self.st.workers if x.get("id") == wid), None)
+        # W11 (tron-13 attempt 1): st.branches is OWNER-ONLY — a block's branch is
+        # writable only by the ENGINEER ASSIGNED to it (A-1 sender-first, now for
+        # declarations too). The architect's reconcile report named a block in prose;
+        # classify handed that ref to this recorder and the architect's PAPERWORK branch
+        # became the block's registered branch — the gate then chased a deleted ref and
+        # walled the block's own engineer. A non-owner's block ref is DISCARDED here;
+        # its branch routes to the sender's paperwork FIFO, which is what a non-owner's
+        # branch always is.
+        owner = (w is not None and w.get("role") == "engineer"
+                 and block and w.get("block") == block)
+        if not owner:
+            if w is None or w.get("role") == "engineer":
+                # Unknown sender, or an engineer naming someone else's block: never record.
+                self.log("flow", f"branch declaration from {wid} for '{block}' refused "
+                                 f"(not the owner) -> dropped")
+                return
+            fifo = w.setdefault("pending_landings", [])
+            if branch not in fifo:
+                fifo.append(branch)
+            self.log("flow", f"paperwork branch[{wid}] += {branch}"
+                             + (f" (block ref '{block}' discarded — W11: non-owners "
+                                f"never claim a block)" if block else ""))
+            return
         if not block or not branch:
             return
         # R-4: one live gate per branch name. A second block declaring an already-claimed
@@ -1649,7 +2035,64 @@ class Engine:
     def _digest(self):
         running = [w["id"] for w in self._pool() if w.get("status") == "working"]
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
-        return f"{len(running)} running, {done} done on trunk"
+        base = f"{len(running)} running, {done} done on trunk"
+        # F-4/R-7: parked calls lead the digest — the clock is pull; the park notice sits
+        # where the operator's next pull lands, never behind a separate question.
+        parked = sorted(cid for cid, c in self.st.pending_cases.items()
+                        if c.get("decision") is None)
+        if parked:
+            safe = [cid for cid in parked
+                    if self.st.pending_cases[cid].get("parked") == "safe"]
+            note = f" (safe-parked: {', '.join(safe)})" if safe else ""
+            return f"your call first — parked on you: {', '.join(parked)}{note}. {base}"
+        return base
+
+    def _undecided_cases(self):
+        return {cid: c for cid, c in sorted(self.st.pending_cases.items())
+                if c.get("decision") is None}
+
+    def _drive_cases(self):
+        """F-4/R-7 (tron-13 D4): a parked operator case re-pings on a wall-clock ladder,
+        then caps into a NAMED, resumable safe-park — an AFK operator costs latency,
+        never a silently stalled session (P-1's class, closed at the engine, not the
+        monitor). One pacing law (S-1): re-ping every case_reping_after x wake_ceiling_sec
+        of wall-clock; after case_reping_max unanswered re-pings the next span posts the
+        safe-park notice and goes quiet. A safe-parked case stays in pending_cases
+        (MANIFEST) and settles through _h_apply_decision exactly like a fresh one —
+        resuming costs the operator one reply, nothing else.
+        Derived latencies at defaults (ceiling 30s, R-8): re-pings at 10/20/30 min,
+        safe-parked at 40 min."""
+        now = self._now_s()
+        for cid, case in self._undecided_cases().items():
+            if case.get("parked") == "safe":
+                continue
+            anchor = case.setdefault("ping_anchor_s", now)
+            if now - anchor < self._pace("case_reping_after", 20):
+                continue
+            case["ping_anchor_s"] = now
+            slots = {"worker_id": case.get("worker_id") or "?",
+                     "block": case.get("block") or "?", "case": cid}
+            n = case.get("repings", 0)
+            if n >= int(self.knobs.get("case_reping_max", 3)):
+                case["parked"] = "safe"
+                self.events.event("case_safe_parked", block=case.get("block"), cid=cid,
+                                  **{"repings": n, "detail": case.get("detail")})
+                self.emit("escalate.wall", {**slots, "detail":
+                          f"{case.get('detail')} — safe-parked after {n} unanswered "
+                          f"pings; the session runs on and this resumes the moment "
+                          f"you reply"})
+                self.log("flow", f"case {cid} safe-parked after {n} pings")
+                continue
+            case["repings"] = n + 1
+            self.events.event("case_reping", block=case.get("block"), cid=cid,
+                              **{"n": n + 1})
+            self.emit("escalate.wall", {**slots, "detail":
+                      f"{case.get('detail')} — still parked, {n + 1} unanswered "
+                      f"ping(s)"})
+            if self._tg_on():
+                self.emit("tg.escalate", {"worker_id": slots["worker_id"],
+                                          "detail": f"{cid} still parked: "
+                                                    f"{case.get('detail')}"})
 
     # ── liveness sweep (engine side-system, deterministic — no LLM) ──
     def _sweep(self):
@@ -1780,6 +2223,22 @@ class Engine:
         return {"text": text, "sender": {"kind": kind, "id": m.get("id")}}
 
     def _classify(self, msg):
+        # A-2 (tron-13 D2): a structured report resolves deterministically — the model is
+        # never consulted for a line that already carries its verb as data.
+        # W10 (co-signed shape): `--branch` is a MODIFIER honored on ANY report — the
+        # reply_line promises it, so it records HERE, verb or no verb (non-engineers ->
+        # the FIFO; an engineer's declaration keeps the classify+_admit path so its
+        # assignment pins the block). Structured slots then MERGE OVER the classify
+        # result (data over prose) so a terse declaration can never silently no-op.
+        data_slots = dict(msg.get("slots") or {})
+        if data_slots.get("branch"):
+            self._record_branch({"branch": data_slots["branch"],
+                                 "worker_id": (msg.get("sender") or {}).get("id")})
+        stag, sslots = self._structured(msg)
+        if stag == "drop":
+            return "drop", {}
+        if stag:
+            return stag, sslots
         payload = {"text": msg.get("text", ""), "sender": msg.get("sender", {})}
         sender = msg.get("sender", {})
         raw = msg.get("text", "")
@@ -1802,7 +2261,7 @@ class Engine:
         tag = out["tag"]
         if tag == "unclassified":                         # the model itself found no matching tag (T3)
             self.events.unclassified(raw, "model returned unclassified (no tag matched)", sender=sender)
-        return tag, out.get("slots", {})
+        return tag, {**out.get("slots", {}), **data_slots}   # W10: data over prose
 
     # ── lifecycle ──
     def _reset_session_runtime(self):
@@ -1974,9 +2433,36 @@ class Engine:
         self.st.save()
         return True, "stopped"
 
+    def _residue_sweep(self):
+        """D1 landing point 4: session-end residue — NAMED, never silent, and NEVER
+        auto-landed (nobody is left to rebase or answer a violation; the operator
+        decides). One failure record naming every leftover + one parked case that rides
+        the session-end park surfacing (F-4/R-7)."""
+        residue = []
+        for w in self.st.workers:
+            for br in (w.get("pending_landings") or []):
+                residue.append(f"{w.get('id')}: unlanded paperwork branch {br}")
+        for f in (self.st.data.get("failed_landings") or []):
+            residue.append(f"{f.get('worker')}: failed landing {f.get('branch')} "
+                           f"({f.get('detail')})")
+        for block, br in (self.st.branches or {}).items():
+            if trunk.branch_exists(self.paths["root"], br, self.dry):
+                residue.append(f"{block}: branch {br} still exists")
+        for path, br in trunk.list_worktrees(self.paths["root"], self.dry):
+            residue.append(f"leftover worktree {path} (on {br or '?'})")
+        if not residue:
+            return
+        detail = "; ".join(residue)
+        self.events.failure("session-residue", "unlanded-paperwork",
+                            "session-end residue sweep", detail,
+                            node="_end_session", next_action="escalate")
+        self._open_case(None, "residue", None, f"session-end residue: {detail}")
+        self.log("flow", f"session residue: {detail}")
+
     def _end_session(self):
         if self.ended:
             return
+        self._residue_sweep()                # D1: leftovers become a named parked case first
         for w in self.st.workers:
             wid = w.get("id")
             if not self.dry:
@@ -1987,7 +2473,17 @@ class Engine:
                 jobs.release(wid)
             w["status"] = "released"
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
-        self.events.event("session_end", done=done)
+        # F-4/R-7 rider: a call still parked at session end is surfaced HERE — the manifest
+        # archives on a clean end, so an unsurfaced case would vanish from view entirely.
+        parked = self._undecided_cases()
+        for cid, case in parked.items():
+            self.emit("escalate.wall",
+                      {"worker_id": case.get("worker_id") or "?",
+                       "block": case.get("block") or "?", "case": cid,
+                       "detail": f"{case.get('detail')} — session is ending with this "
+                                 f"still parked on you; it goes to the archive unresolved"})
+        self.events.event("session_end", done=done,
+                          **({"parked_cases": sorted(parked)} if parked else {}))
         self.emit("session.end", {"count": done})
         self.ended = True
         sess = self.st.data.setdefault("session", {})

@@ -23,6 +23,7 @@ is read FROM routing.yaml, so the rules check internal consistency rather than a
 hardcoded duplicate.
 """
 import os
+import re
 
 import util
 # Engine table + class — module-level, no Engine instance needed (fsm exposes TABLE).
@@ -369,6 +370,61 @@ def _emit_only_renders(ctx):
                    "bare renderer.render at: " + ", ".join(bad))]
 
 
+def _paperwork_sanity(project):
+    # L23 (tron-13 D1 rider) — paperwork_paths sanity: an entry covering the WHOLE repo
+    # makes everything landable paperwork (fails); entries outside the pipeline's meta
+    # dir are legal but NAMED, so the operator chose them with eyes open.
+    if not project:
+        return [Result("L23 paperwork paths sane", True, "(no project.yaml — skipped)")]
+    paths = project.get("paperwork_paths")
+    if not paths:
+        return [Result("L23 paperwork paths sane", True, "(default: the pipeline's meta dir)")]
+    whole = [p for p in paths if str(p).strip() in ("", ".", "./", "/")]
+    if whole:
+        return [Result("L23 paperwork paths sane", False,
+                       f"entry covers the whole repo: {whole} — code is never paperwork")]
+    meta = (os.path.dirname(project.get("pipeline_path") or "meta/pipeline.md")
+            or "meta") + "/"
+    outside = [str(p) for p in paths
+               if not (str(p) == meta or str(p).startswith(meta))]
+    note = (f"operator-declared paperwork outside {meta}: {', '.join(outside)}"
+            if outside else "")
+    return [Result("L23 paperwork paths sane", True, note)]
+
+
+def _admission_table(ctx, routing):
+    # L22 (S-2-full, tron-13) — the declarative ADMISSION table is TOTAL over routing.yaml's
+    # gate-facing tags (trigger opens/advances a block gate), and _admit stays the ONLY
+    # admission checkpoint (rider 4): exactly one call site outside its own definition.
+    src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fsm.py")
+    if not os.path.exists(src_path):
+        return [Result("L22 admission table total + single checkpoint", False,
+                       "fsm.py not found")]
+    with open(src_path, encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"ADMISSION\s*=\s*\{(.*?)\n\s*\}", src, re.S)
+    keys = set(re.findall(r'"([a-z_.]+)"\s*:\s*\{', m.group(1))) if m else set()
+    gate_facing = set()
+    for tag, action in (routing.get("tags") or {}).items():
+        trig = (action or {}).get("trigger") or ""
+        if trig.startswith("block:next:") or trig.startswith("wall:raised"):
+            gate_facing.add(tag)
+    missing = sorted(gate_facing - keys)
+    stray = sorted(keys - set((routing.get("tags") or {})))
+    calls = len(re.findall(r"self\._admit\(", src))
+    problems = []
+    if not m:
+        problems.append("no ADMISSION table in fsm.py")
+    if missing:
+        problems.append(f"gate-facing tags missing a row: {missing}")
+    if stray:
+        problems.append(f"ADMISSION rows for unknown tags: {stray}")
+    if calls != 1:
+        problems.append(f"_admit called {calls}x (must be exactly 1 — the _ingest checkpoint)")
+    return [Result("L22 admission table total + single checkpoint", not problems,
+                   "; ".join(problems))]
+
+
 # ── VERSION rule (M-06): the instance's stamped tron_version vs its own copied
 # canon VERSION — the two are written from the same source at every seed, so any
 # gap means the instance was patched or partially re-seeded, not fully. A canon
@@ -399,5 +455,6 @@ def run(ctx, project=None):
         project = ctx.load_project()
     results = (_canon(routing) + _composition(comp, project) + _prompts(ctx)
                + _version(ctx, project) + _reply_contract(ctx)
-               + _reply_prefixes(ctx) + _emit_only_renders(ctx))
+               + _reply_prefixes(ctx) + _emit_only_renders(ctx)
+               + _admission_table(ctx, routing) + _paperwork_sanity(project))
     return all(x.ok for x in results), results

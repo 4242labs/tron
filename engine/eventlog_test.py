@@ -169,6 +169,17 @@ def induce_dispatch_fail(ctx):
     return raised, [r for r in failures(ctx) if r.get("fclass") == "dispatch-fail"]
 
 
+def induce_session_residue(ctx):
+    # tron-13 D1: session end with an unlanded paperwork declaration -> ONE named
+    # session-residue failure + a parked case, never a silent archive.
+    eng = engine(ctx)
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+                           "session_id": "dry", "status": "working",
+                           "pending_landings": ["docs/review-260702"]})
+    eng._end_session()
+    return [r for r in failures(ctx) if r.get("fclass") == "session-residue"]
+
+
 def induce_crash(ctx):
     # A whole tick raising is recorded as `crash` by wake.locked_tick, then re-raised for the
     # supervised loop. Monkeypatch tick to blow up; assert the record is written.
@@ -192,6 +203,7 @@ def t_per_class():
     ctx, _ = build();  induced["ingest-drop"] = induce_ingest_drop(ctx)
     ctx, _ = build();  induced["gate-stuck"] = induce_gate_stuck(ctx)
     ctx, _ = build();  dispatch_raised, induced["dispatch-fail"] = induce_dispatch_fail(ctx)
+    ctx, _ = build();  induced["session-residue"] = induce_session_residue(ctx)
     ctx, _ = build();  crash_raised, induced["crash"] = induce_crash(ctx)
 
     # Reconstructable-with-no-re-run predicate per class: the record holds enough to pin the
@@ -202,6 +214,8 @@ def t_per_class():
         "ingest-drop": lambda r: "simulated classify explosion" in (r.get("cause") or ""),
         "gate-stuck": lambda r: "idle_since" in (r.get("inputs") or {}) and bool(r.get("cause")),
         "dispatch-fail": lambda r: "simulated spawn failure" in (r.get("cause") or ""),
+        "session-residue": lambda r: "unlanded paperwork branch docs/review-260702"
+                                     in (r.get("cause") or ""),
         "crash": lambda r: "simulated tick crash" in (r.get("cause") or ""),
     }
     for cls in eventlog.FAILURE_CLASSES:

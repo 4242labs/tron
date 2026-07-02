@@ -30,13 +30,17 @@ knobs:
   #   force-release a silent close   gate_close_cap  x 30s = 90s of idle.
   # A WORKING runner never accrues — its own turn deadline (TRON_TURN_TIMEOUT_S, runner-
   # declared) bounds long turns; past it the sweep escalates + hard-kills after a grace.
-  # NOTE (S-3 interim, rider 5): until the unified paperwork-lander block lands,
-  # worker_count > 1 close-outs may race on landing their parked docs — run multi-worker
-  # sessions only after that block.
   gate_idle_cap: 3         # x wake_ceiling_sec of continuous idle at one stage -> escalate
   gate_nudge_after: 2      # x wake_ceiling_sec of continuous idle -> re-send the stage prompt once
                            # (fresh mailbox seq); keep < gate_idle_cap
   gate_close_cap: 3        # x wake_ceiling_sec of idle at close -> force release
+  # ── operator-case pacing (F-4/R-7, tron-13): same wall-clock law. A parked case
+  # re-pings the operator every case_reping_after x wake_ceiling_sec; after
+  # case_reping_max unanswered re-pings it SAFE-PARKS (named, resumable — the session
+  # runs on and the case settles on the operator's reply at any later time). Derived
+  # latencies at the default ceiling 30s (R-8): re-pings at 10/20/30 min, parked at 40.
+  case_reping_after: 20    # x wake_ceiling_sec between operator re-pings of a parked case
+  case_reping_max: 3       # unanswered re-pings before the case safe-parks
   # WAKE pulse-timing bounds (the daemon reads these, 01-04). Fixed knobs: edit here,
   # never asked at start, never changed by a runtime command. cooldown <= ceiling.
   wake_cooldown_sec: 5     # min gap between ticks — floor (debounce a chatty fleet)

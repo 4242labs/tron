@@ -10,7 +10,9 @@ The repo root itself is the trunk checkout — agents build in worktrees off it
 """
 import os
 import json
+import shutil
 import subprocess
+import tarfile
 
 _TIMEOUT = 20
 
@@ -93,6 +95,52 @@ def branch_merged(repo_root, branch, main_branch="main", dry=False):
     return rc == 0
 
 
+def snapshot_tree(repo_root, sha, rel_paths, dest, dry=False):
+    """W9 (tron-13): materialize the PINNED tree's canon files — trunk truth is COMMITTED
+    truth, never the working tree a mid-commit worker is editing in the root checkout
+    (the record commit is exactly such an edit, ordered by the engine itself; reading
+    the live tree once fired block_done + the record content check 2s before the record
+    commit existed). `git archive <sha> -- <paths>` into a tar, extracted into `dest`
+    (wiped first). Returns (ok, err); the caller treats failure as the read-failure
+    path (reuse the last good snapshot, never block the loop)."""
+    if dry or not repo_root or not sha:
+        return False, "dry/none"
+    tmp = dest.rstrip("/") + ".tmp"
+    try:
+        # Atomic swap (W9 rider 1): build the new snapshot BESIDE the live one and
+        # rename over it only when complete — a failed archive must leave the last
+        # good snapshot in place, never an empty zero-block view (worse than stale).
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        tarpath = os.path.join(tmp, ".snap.tar")
+        rc, _, err = _run(["git", "-C", repo_root, "archive", "-o", tarpath,
+                           sha, "--", *rel_paths])
+        if rc != 0:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False, err.strip()
+        with tarfile.open(tarpath) as tf:
+            tf.extractall(tmp)
+        os.remove(tarpath)
+        shutil.rmtree(dest, ignore_errors=True)
+        os.replace(tmp, dest)
+        return True, ""
+    except Exception as e:  # tar/fs errors are read failures, never loop-breakers
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False, f"{type(e).__name__}: {e}"
+
+
+def is_ancestor(repo_root, sha, main_branch="main", dry=False):
+    """True iff `sha` is an ancestor of trunk HEAD. A-5: the held-stage predicate for
+    trunk+ rungs is the MERGED sha's ancestry — never the branch tip, which goes stale
+    the moment the worker parks paperwork commits on its branch (the W1 case). Ancestry
+    survives a `git revert` (history keeps the sha) and breaks only on history surgery
+    (force-push / reset) — exactly the contradiction class the ratchet must name."""
+    if dry or not repo_root or not sha:
+        return True
+    rc, _, _ = _run(["git", "-C", repo_root, "merge-base", "--is-ancestor", sha, main_branch])
+    return rc == 0
+
+
 def tip_sha(repo_root, branch, dry=False):
     """The branch's current tip sha, or '' (dry / unresolvable). A-3: the merge grant binds
     the exact sha the operator saw at park — this is how park and execution compare it."""
@@ -124,6 +172,100 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     _run(["git", "-C", repo_root, "checkout", main_branch])   # root stays on trunk; belt-and-suspenders
     rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
     return rc == 0, err
+
+
+def _path_allowed(path, allowlist):
+    """Path-component-aware allowlist match (tron-13 D1 rider): `meta/` covers meta/**
+    but never `metadata/…`; a file entry matches exactly (`README.md` never matches
+    `README.md.bak`). Entries are repo-relative; a trailing slash marks a dir."""
+    for entry in allowlist or []:
+        e = entry.strip()
+        if not e:
+            continue
+        if e.endswith("/"):
+            if path.startswith(e) or path + "/" == e:
+                return True
+        elif path == e:
+            return True
+    return False
+
+
+def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
+              denylist=None, line_scoped=None):
+    """The unified paperwork lander (F-1/S-3+R-6, tron-13 D1): the ENGINE lands every
+    role's parked paperwork branch on trunk — content-checked, ff-only, then deletes the
+    branch (the engine owns the merge, so it owns the cleanup). The engine NEVER rebases:
+    a non-ff is the branch owner's to fix (the R-6 rung; the caller nudges, bounded).
+    LOCAL-mode primitive: it ff-moves the local trunk. Remote-mode paperwork landing
+    (push / PR path) is out of scope — scoped with the 02-04 remote work.
+
+    allowlist / denylist: repo-relative path prefixes (dirs end with /) and exact files —
+    the caller builds them per role. Per-file precedence:
+      1. a line_scoped entry ({path: token}) decides by content: allowed ONLY if every
+         changed (+/-) line contains the token (the engineer's own-block pipeline edit);
+      2. an EXACT-file allow entry overrides a denied dir (the engineer's own block doc
+         inside the otherwise-denied blocks dir);
+      3. a deny match is a violation;
+      4. a dir allow match passes;  5. anything else is a violation.
+
+    Returns (code, detail): none | violation | non-ff | landed | error."""
+    if dry or not repo_root or not branch or branch == main_branch:
+        return "none", "dry/none"
+    if not branch_exists(repo_root, branch):
+        return "none", f"no branch {branch}"
+    rc, out, err = _run(["git", "-C", repo_root, "diff", "--name-only",
+                         f"{main_branch}...{branch}"])
+    if rc != 0:
+        return "error", f"diff unreadable: {err.strip()}"
+    files = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if not files:
+        # Nothing beyond trunk (or already landed): delete the empty branch and be done.
+        rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+        if rc != 0:
+            # W10 rider: a worktree still holding the branch blocks -d — the ref must
+            # not vanish from every net; name it (the residue sweep owns worktrees).
+            return "landed", f"no changes beyond trunk; ref survives: {derr.strip()}"
+        return "landed", "no changes beyond trunk"
+    exact_allows = [e for e in (allowlist or []) if not e.strip().endswith("/")]
+    offenders = []
+    for f in files:
+        token = (line_scoped or {}).get(f)
+        if token is not None:
+            if not _lines_scoped_ok(repo_root, branch, f, token, main_branch):
+                offenders.append(f)
+            continue
+        if _path_allowed(f, exact_allows):
+            continue
+        if _path_allowed(f, denylist):
+            offenders.append(f)
+            continue
+        if not _path_allowed(f, allowlist):
+            offenders.append(f)
+    if offenders:
+        return "violation", ", ".join(sorted(offenders))
+    okm, err = merge_ff_only(repo_root, branch, main_branch)
+    if not okm:
+        return "non-ff", err.strip()
+    sha = head_sha(repo_root)
+    rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+    note = f"; ref survives: {derr.strip()}" if rc != 0 else ""
+    return "landed", f"{len(files)} file(s) @ {sha[:7]}{note}"
+
+
+def _lines_scoped_ok(repo_root, branch, path, token, main_branch="main"):
+    """True iff every changed (+/-) line of `path` on the branch contains `token` —
+    the engineer touches only pipeline lines naming its OWN block; the pipeline's
+    shape stays the architect's."""
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--unified=0",
+                       f"{main_branch}...{branch}", "--", path])
+    if rc != 0:
+        return False
+    for ln in out.splitlines():
+        if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
+            continue
+        if ln.startswith(("+", "-")) and token not in ln:
+            return False
+    return True
 
 
 def record_commit_ok(repo_root, block_file, dry=False):
@@ -178,6 +320,30 @@ def replica_clean(repo_root, branch, main_branch="main", dry=False):
             elif ln.startswith("branch ") and ln.split(" ", 1)[1] == ref:
                 leftovers.append(f"leftover worktree on {branch}: {tree}")
     return (not leftovers), "; ".join(leftovers)
+
+
+def list_worktrees(repo_root, dry=False):
+    """All secondary worktrees: [(path, branch)] excluding the root checkout itself.
+    D1 residue sweep: at session end every worker is gone, so ANY remaining worktree
+    is residue to name (a worktree also blocks the lander's branch cleanup — `git
+    branch -d` refuses a checked-out branch, leaving an orphan ref)."""
+    if dry or not repo_root:
+        return []
+    rc, out, _ = _run(["git", "-C", repo_root, "worktree", "list", "--porcelain"])
+    if rc != 0:
+        return []
+    trees, cur = [], {}
+    for ln in out.splitlines() + [""]:
+        if ln.startswith("worktree "):
+            cur = {"path": ln.split(" ", 1)[1]}
+        elif ln.startswith("branch "):
+            cur["branch"] = ln.split(" ", 1)[1].replace("refs/heads/", "")
+        elif not ln and cur:
+            trees.append(cur)
+            cur = {}
+    root_real = os.path.realpath(repo_root)
+    return [(t.get("path"), t.get("branch")) for t in trees
+            if os.path.realpath(t.get("path", "")) != root_real]
 
 
 def _rollup(checks):

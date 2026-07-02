@@ -17,7 +17,10 @@
 # the flag set total. A worker reply that never reaches the channel does not exist to TRON.
 reply_line: >-
   Reply on the channel, always — `bash {report} {worker_id} "<your report>"` —
-  a reply that is not on the channel does not exist to me.
+  a reply that is not on the channel does not exist to me. A gate reply carries its
+  verb as data: put `--tag done|recorded|wall|branch|review-done|clean` (plus
+  `--block <your block id>` when you have one, `--branch <name>` when you name a
+  branch) before the message, and I read it with no judgment call.
 
 prompts:
   PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report] }   # bespoke check-in line inline (its reply is the literal "online")

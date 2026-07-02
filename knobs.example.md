@@ -57,6 +57,11 @@ value lands in the MANIFEST (`manifest.yaml`).
 | `git` | on | Whether the build commits via git (feature branch + review). |
 | `silence_ping_min` | 6 | Worker silent this many minutes → heartbeat ping. Multiple of the wake cadence. |
 | `silence_escalate_min` | 8 | Silent past this → engine emits `worker:stalled` (> ping). |
+| `gate_nudge_after` | 2 | × `wake_ceiling_sec` of continuous runner-idle at a gate stage → re-send the stage prompt once. Keep < `gate_idle_cap`. (Default ceiling 30s → nudge at 60s idle.) |
+| `gate_idle_cap` | 3 | × `wake_ceiling_sec` of continuous idle at one gate stage → escalate. (Default → 90s idle.) |
+| `gate_close_cap` | 3 | × `wake_ceiling_sec` of idle at close → force-release the slot. (Default → 90s idle.) |
+| `case_reping_after` | 20 | × `wake_ceiling_sec` between operator re-pings of a parked case. (Default → every 10 min.) |
+| `case_reping_max` | 3 | Unanswered re-pings before the case **safe-parks** — named, resumable; the session runs on and the case settles on your reply at any later time. (Defaults → parked at 40 min.) |
 | `wake_cooldown_sec` | 5 | WAKE min-gap floor (seconds): the shortest interval between ticks — debounces a chatty fleet so messages don't multiply fetches. |
 | `wake_ceiling_sec` | 30 | WAKE max-latency ceiling (seconds): a tick fires by now even with no message — the cadence timer that lived in the old METRONOME. Must be ≥ `wake_cooldown_sec`. |
 

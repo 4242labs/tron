@@ -58,6 +58,11 @@ class Console:
         q = st.architect_queue
         if q:
             print(f"  │  {DIM}architect queue: {len(q)} queued{RST}")
+        parked = {cid: c for cid, c in sorted(st.pending_cases.items())
+                  if c.get("decision") is None}
+        for cid, c in parked.items():                # F-4/R-7: parked calls in every status pull
+            flag = " [safe-parked]" if c.get("parked") == "safe" else ""
+            print(f"  │  {BOLD}YOUR CALL{RST}  [{cid}] {c.get('detail','')}{flag}")
         print(f"  {BOLD}└────────────────────────────────────────────────────{RST}")
 
     def show_pipeline(self):
@@ -134,8 +139,18 @@ class Console:
         self._start_daemon()                         # re-arm the heartbeat if it died while away
         for ev in self._events()[-8:]:
             print(f"{DIM}{ev.get('text','')}{RST}")
+        self._show_parked()                          # F-4/R-7: parked calls meet the returning operator
         print()
         self._banner()
+
+    def _show_parked(self):
+        # F-4/R-7 rider: park visibility never depends on the operator ASKING — every
+        # attach surface leads with the calls parked on them (safe-parked flagged).
+        cases = {cid: c for cid, c in sorted(self._state().pending_cases.items())
+                 if c.get("decision") is None}
+        for cid, c in cases.items():
+            flag = "  [safe-parked]" if c.get("parked") == "safe" else ""
+            print(f"  {BOLD}YOUR CALL{RST}  [{cid}] {c.get('detail','')}{flag}")
 
     def _banner(self):
         print(f"{DIM}  TRON is live (the WAKE daemon ticks it on its own). "
