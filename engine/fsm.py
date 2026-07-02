@@ -263,7 +263,22 @@ class Engine:
                 self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
                 return
         try:
-            view = reader.load(self.paths["pipeline"], self.paths["blocks"])
+            ppath, bpath = self.paths["pipeline"], self.paths["blocks"]
+            if not self.dry and self._trunk_sha:
+                # W9 (tron-13): read the PINNED tree, never the working tree — a worker
+                # mid-commit in the root checkout (the record commit is one, by our own
+                # order) must be invisible until its commit lands. Snapshot failure is a
+                # read failure: reuse the last good view, never a dirty read.
+                pipe_rel = self.paths.get("pipeline_rel") or "meta/pipeline.md"
+                blocks_rel = (self.paths.get("blocks_rel") or "meta/blocks/").rstrip("/")
+                oks, errs = trunk.snapshot_tree(
+                    self.paths["root"], self._trunk_sha, [pipe_rel, blocks_rel],
+                    self.ctx.trunk_snapshot_dir)
+                if not oks:
+                    raise RuntimeError(f"trunk snapshot failed: {errs}")
+                ppath = os.path.join(self.ctx.trunk_snapshot_dir, pipe_rel)
+                bpath = os.path.join(self.ctx.trunk_snapshot_dir, blocks_rel)
+            view = reader.load(ppath, bpath)
             self.st.set_pipeline(view)
         except Exception as e:
             self.log("trunk", f"read failed (reusing snapshot): {e}")

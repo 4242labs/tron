@@ -75,6 +75,11 @@ class Ctx:
     def dispatched_log(self):
         return self.p("dispatched.log")
 
+    # ── pinned trunk snapshot (W9): the canon files as of the tick's pinned sha ──
+    @property
+    def trunk_snapshot_dir(self):
+        return self.p(".trunk-snapshot")
+
     # ── inboxes (drained each tick) ──
     @property
     def worker_inbox(self):

@@ -646,6 +646,37 @@ def t_review_landing_cap_leaves_named_residue():
         jobs.runner_idle = orig_idle
 
 
+# ── W9: trunk truth is the PINNED COMMITTED tree, never the working tree ──
+def t_snapshot_reads_pinned_tree():
+    d = _mkrepo()
+    rc, sha = _git(d, "rev-parse", "HEAD")
+    # A worker mid-record-commit: the working tree says ✅, the committed tree says 📋.
+    with open(os.path.join(d, "meta", "blocks", "A-01.md"), "w") as fh:
+        fh.write("# A-01\n**Status:** 📋 To do — DIRTY WORKING TREE EDIT\n")
+    snap = os.path.join(d, ".trunk-snapshot")
+    okc, err = trunk.snapshot_tree(d, sha, ["meta/pipeline.md", "meta/blocks"], snap)
+    ok("W9 snapshot extracts the pinned tree", okc, err)
+    with open(os.path.join(snap, "meta", "blocks", "A-01.md")) as fh:
+        content = fh.read()
+    ok("W9 the snapshot is COMMITTED truth (dirty edit invisible)",
+       "DIRTY WORKING TREE EDIT" not in content, content[:80])
+    ok("W9 pipeline rides along", os.path.exists(os.path.join(snap, "meta", "pipeline.md")))
+    # The commit lands -> the NEXT pinned sha sees it. Same mechanism, no special case.
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "record: A-01 -> done")
+    rc, sha2 = _git(d, "rev-parse", "HEAD")
+    okc, err = trunk.snapshot_tree(d, sha2, ["meta/pipeline.md", "meta/blocks"], snap)
+    with open(os.path.join(snap, "meta", "blocks", "A-01.md")) as fh:
+        content = fh.read()
+    ok("W9 the landed commit is visible at the new pin",
+       okc and "DIRTY WORKING TREE EDIT" in content, f"{err} {content[:60]}")
+    # Rider 1: a failed archive (bad sha) leaves the last good snapshot untouched.
+    okc, err = trunk.snapshot_tree(d, "0000000", ["meta/pipeline.md", "meta/blocks"], snap)
+    ok("W9 a failed archive never wipes the live snapshot",
+       not okc and os.path.exists(os.path.join(snap, "meta", "pipeline.md")),
+       f"okc={okc}")
+
+
 def t_release_preserves_unlanded_paperwork():
     # Delta-review required fix: ANY release path (stall-recover included) preserves a
     # worker's unlanded declarations as durable residue — the roster is gone, the cap
@@ -724,6 +755,7 @@ TESTS = [
     t_review_landing_cap_leaves_named_residue,
     t_release_preserves_unlanded_paperwork,
     t_architect_fifo_never_deadlocks,
+    t_snapshot_reads_pinned_tree,
 ]
 
 

@@ -10,7 +10,9 @@ The repo root itself is the trunk checkout — agents build in worktrees off it
 """
 import os
 import json
+import shutil
 import subprocess
+import tarfile
 
 _TIMEOUT = 20
 
@@ -91,6 +93,40 @@ def branch_merged(repo_root, branch, main_branch="main", dry=False):
         return False
     rc, _, _ = _run(["git", "-C", repo_root, "merge-base", "--is-ancestor", branch, main_branch])
     return rc == 0
+
+
+def snapshot_tree(repo_root, sha, rel_paths, dest, dry=False):
+    """W9 (tron-13): materialize the PINNED tree's canon files — trunk truth is COMMITTED
+    truth, never the working tree a mid-commit worker is editing in the root checkout
+    (the record commit is exactly such an edit, ordered by the engine itself; reading
+    the live tree once fired block_done + the record content check 2s before the record
+    commit existed). `git archive <sha> -- <paths>` into a tar, extracted into `dest`
+    (wiped first). Returns (ok, err); the caller treats failure as the read-failure
+    path (reuse the last good snapshot, never block the loop)."""
+    if dry or not repo_root or not sha:
+        return False, "dry/none"
+    tmp = dest.rstrip("/") + ".tmp"
+    try:
+        # Atomic swap (W9 rider 1): build the new snapshot BESIDE the live one and
+        # rename over it only when complete — a failed archive must leave the last
+        # good snapshot in place, never an empty zero-block view (worse than stale).
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        tarpath = os.path.join(tmp, ".snap.tar")
+        rc, _, err = _run(["git", "-C", repo_root, "archive", "-o", tarpath,
+                           sha, "--", *rel_paths])
+        if rc != 0:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return False, err.strip()
+        with tarfile.open(tarpath) as tf:
+            tf.extractall(tmp)
+        os.remove(tarpath)
+        shutil.rmtree(dest, ignore_errors=True)
+        os.replace(tmp, dest)
+        return True, ""
+    except Exception as e:  # tar/fs errors are read failures, never loop-breakers
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False, f"{type(e).__name__}: {e}"
 
 
 def is_ancestor(repo_root, sha, main_branch="main", dry=False):
