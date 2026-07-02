@@ -646,6 +646,26 @@ def t_review_landing_cap_leaves_named_residue():
         jobs.runner_idle = orig_idle
 
 
+def t_release_preserves_unlanded_paperwork():
+    # Delta-review required fix: ANY release path (stall-recover included) preserves a
+    # worker's unlanded declarations as durable residue — the roster is gone, the cap
+    # never fired, and st.branches is engineer-only; without this the lost-output defect
+    # D1 kills returns through the release side door.
+    eng = _eng()
+    w = {"id": "REV-code", "role": "reviewer", "rtype": "code", "block": "review:code",
+         "session_id": "dry", "status": "working", "pending_landings": ["docs/orphan"]}
+    eng.st.workers.append(w)
+    eng._release_worker(w, notify=False, reason="stall-recover")
+    ok("D1 release preserves unlanded paperwork as residue",
+       any(f.get("branch") == "docs/orphan" and "stall-recover" in f.get("detail", "")
+           for f in eng.st.data.get("failed_landings", [])),
+       f"failed={eng.st.data.get('failed_landings')}")
+    eng._end_session()
+    ok("D1 released-worker residue reaches the session-end sweep",
+       any(e.get("fclass") == "session-residue" and "docs/orphan" in (e.get("cause") or "")
+           for e in _events(eng) if e.get("kind") == "failure"))
+
+
 def t_architect_fifo_never_deadlocks():
     # FS-1: a blocked head caps aside as residue; the queue keeps draining.
     eng = _eng()
@@ -702,6 +722,7 @@ TESTS = [
     t_reviewer_declaration_fifo,
     t_review_landing_holds_then_releases,
     t_review_landing_cap_leaves_named_residue,
+    t_release_preserves_unlanded_paperwork,
     t_architect_fifo_never_deadlocks,
 ]
 

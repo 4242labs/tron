@@ -1124,9 +1124,12 @@ class Engine:
             # re-verified each tick: the merged sha's ancestry (survives paperwork commits
             # AND `git revert` — only history surgery breaks it) and, in remote mode, the
             # merged PR staying closed. A contradicted predicate is a NAMED escalation —
-            # a trunk regression must never read as a worker stall. A record-PR still never
-            # parks on the operator (R2-3): identification is stage==record + the content
-            # check at close, never a branch/title convention.
+            # a trunk regression must never read as a worker stall. ACCEPTED RESIDUAL
+            # (delta review): a local-mode plain `git revert` keeps ancestry AND has no PR
+            # to reopen — the ratchet holds quietly and the regression surfaces at trunk
+            # re-validation, not here. A record-PR still never parks on the operator
+            # (R2-3): identification is stage==record + the content check at close, never
+            # a branch/title convention.
             held = g["stage"]
             contra = None
             if pr:
@@ -1708,6 +1711,16 @@ class Engine:
             # the missing universal reply slots crashed this render, and this is the reviewer's
             # release path (the crash would strand every review loop at hand-back).
             self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
+        # D1 delta-review fix: a released worker leaves the roster, so any paperwork it
+        # declared but never landed would escape EVERY net (no cap fired, st.branches is
+        # engineer-only) — the exact lost-output defect D1 kills, back through a side door
+        # (stall-recover releases here too). Preserve the FIFO as durable named residue at
+        # this single chokepoint; the session-end sweep re-surfaces it.
+        for br in (w.get("pending_landings") or []):
+            self.st.data.setdefault("failed_landings", []).append(
+                {"worker": wid, "role": w.get("role"), "branch": br,
+                 "detail": f"released ({reason}) with the branch unlanded"})
+            self.log("flow", f"release[{wid}] preserves unlanded paperwork {br}")
         if not self.dry:
             jobs.release(wid)
         if w in self.st.workers:
