@@ -231,8 +231,9 @@ def t_local_merge_ask_gated():
            "A-01" in eng.st.gate and g["stage"] == "local")
         cid = next(c for c in eng.st.pending_cases)
         eng._h_apply_decision({"case": cid, "decision": "approve", "block": "A-01"})
-        ok("local ASK: approve -> engine ff-merges -> trunk",
-           g.get("approved_merge") is True and g["stage"] == "trunk")
+        # tron-07 W2: the grant is single-use — consumed by the merge it authorized.
+        ok("local ASK: approve -> engine ff-merges -> trunk (grant consumed)",
+           "approved_merge" not in g and g["stage"] == "trunk")
     finally:
         _trunk.branch_exists, _trunk.merge_ff_only = orig
 

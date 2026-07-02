@@ -716,6 +716,15 @@ class Engine:
         if not block:
             return
         row = self.st.row(block)
+        if row is None:
+            # tron-07 W3: an id the canon has no row for must never open a gate — a misheard
+            # ref becomes a phantom gate that nudges a phantom worker id and escalates.
+            # Record it for the grammar-learning set (T3) and move on; the real block's gate
+            # advances on the real id.
+            self.log("flow", f"worker.done for unknown block '{block}' -> no gate (no canon row)")
+            self.events.unclassified(f"worker.done block ref: {block}",
+                                     "unknown block id (no canon row)")
+            return
         if row and row.get("status") == "done":
             # ✅ already landed -> this report is the CLOSE clean-confirmation (T7), or the
             # record receipt (01-11 FX-3: stage record + ✅ on trunk -> content-check + close).
@@ -1027,6 +1036,14 @@ class Engine:
             # ✅ record. The flip is ordered only after this acceptance — never before.
             stage, msg = "record", "gate.record"
             g.pop("trunk_nudges", None)
+        elif g.get("stage") == "trunk":
+            # tron-07 W1: the DONE ladder is MONOTONIC. Trunk was reached through an
+            # authorized merge; the git predicates below go stale the moment the worker
+            # commits again on its branch (post-merge session docs), and recomputing from
+            # them regressed the gate trunk -> local — a duplicate DONE-LOCAL, then a
+            # second un-asked merge. Hold at trunk: only the worker's accepted report
+            # (on_report above) advances to record; the idle machinery re-nudges a stall.
+            stage = "trunk"
         elif not pr:
             if not g.get("pr"):
                 # MG-01: trunk is the only done-truth. Before parking at local, check whether
@@ -1061,6 +1078,11 @@ class Engine:
                                 self.paths["root"], branch,
                                 self.paths.get("main_branch", "main"), self.dry)
                             if ok:
+                                # tron-07 W2: one approval = one EXECUTED merge. Consume the
+                                # grant here (not on the order) so a non-ff retry — the same
+                                # unexecuted merge — keeps it, but nothing after execution can
+                                # ride it into a second un-asked merge.
+                                g.pop("approved_merge", None)
                                 stage, msg = "trunk", "gate.trunk"    # merged -> re-validate on trunk
                             else:
                                 self.log("flow", f"gate[{block}] local ff-merge non-ff: {err.strip()}")
@@ -1371,8 +1393,10 @@ class Engine:
     def _release_worker(self, w, notify=True, reason="released"):
         wid = w.get("id")
         if notify and not self.dry:
-            self._to_worker(wid, self.renderer.render("close.worker", {"worker_id": wid}),
-                            "close.worker")
+            # tron-07 W4 (same class as _end_session): emit(), never a bare renderer.render —
+            # the missing universal reply slots crashed this render, and this is the reviewer's
+            # release path (the crash would strand every review loop at hand-back).
+            self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
         if not self.dry:
             jobs.release(wid)
         if w in self.st.workers:
@@ -1390,6 +1414,16 @@ class Engine:
             return
         if sender.get("id") and not slots.get("worker_id"):
             slots = {**slots, "worker_id": sender["id"]}
+        # tron-07 W3: canonicalize the classified block ref ONCE, at the single point where
+        # classify output becomes a trigger. Workers say "01-02" for "01-02-logic"; a raw
+        # shorthand ref must resolve to the canon id it names — never fan out into a second,
+        # phantom gate keyed by a string the pipeline doesn't contain.
+        ref = slots.get("block")
+        if ref:
+            canon = self._resolve_block_ref(str(ref))
+            if canon and canon != ref:
+                self.log("flow", f"block ref '{ref}' -> '{canon}' (canonicalized)")
+                slots = {**slots, "block": canon}
         if "trigger" in action:
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
@@ -1769,8 +1803,10 @@ class Engine:
         for w in self.st.workers:
             wid = w.get("id")
             if not self.dry:
-                self._to_worker(wid, self.renderer.render("close.worker", {"worker_id": wid}),
-                                "close.worker")
+                # tron-07 W4: through emit(), never a bare renderer.render — emit injects the
+                # universal reply slots ({report}, {worker_id}) every PMT body now renders;
+                # the direct render made `tron stop --force` crash on the missing slot.
+                self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
                 jobs.release(wid)
             w["status"] = "released"
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
@@ -1827,3 +1863,13 @@ class Engine:
         the name — T2), falling back to the convention only before the worker has reported (no PR
         can exist on trunk yet). TRON never guesses a name it then gates on."""
         return self.st.branches.get(block) or self._branch(block)
+
+    def _resolve_block_ref(self, ref):
+        """Canonicalize a worker-mentioned block ref against the pipeline (tron-07 W3):
+        the exact id, else the single id the ref prefixes (worker shorthand '01-02' for
+        '01-02-logic'), else None — TRON never gates on an id the canon doesn't know."""
+        ids = [r.get("id") for r in self.st.pipeline if r.get("id")]
+        if ref in ids:
+            return ref
+        hits = [i for i in ids if i.startswith(ref)]
+        return hits[0] if len(hits) == 1 else None

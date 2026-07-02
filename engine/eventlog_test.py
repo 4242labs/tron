@@ -140,10 +140,13 @@ def induce_ingest_drop(ctx):
 
 def induce_gate_stuck(ctx):
     eng = engine(ctx)
-    # A block whose PR merged (gone) but never re-validated on trunk, past the re-nudge cap ->
-    # escalate (no silent stuck). stage 'trunk' with trunk_nudges over the cap.
+    # A block whose PR merged (gone) but never re-validated on trunk -> escalate (no silent
+    # stuck). Stage 'trunk' HOLDS (tron-07 W1 monotonic ladder); the no-silent-stuck owner
+    # there is the idle machinery: the dry runner reads idle, so gate_idle_cap ticks accrue
+    # -> _gate_giveup emits the gate-stuck failure record.
     eng.st.gate["A-01"] = {"pr": 11, "trunk_nudges": 99, "stage": "trunk"}
-    eng._drive_gate("A-01", eng.st.gate["A-01"])
+    for _ in range(int(eng.knobs.get("gate_idle_cap", 3))):
+        eng._drive_gate("A-01", eng.st.gate["A-01"])
     return [r for r in failures(ctx) if r.get("fclass") == "gate-stuck"]
 
 
