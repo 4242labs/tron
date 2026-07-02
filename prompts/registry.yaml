@@ -17,13 +17,11 @@
 # the flag set total. A worker reply that never reaches the channel does not exist to TRON.
 reply_line: >-
   Reply on the channel, always — `bash {report} {worker_id} "<your report>"` —
-  a reply that is not on the channel does not exist to me. A gate reply carries its
-  verb as data: put `--tag done|recorded|wall|branch|review-done|clean` (plus
-  `--block <your block id>` when you have one, `--branch <name>` when you name a
-  branch) before the message, and I read it with no judgment call.
+  a reply that is not on the channel does not exist to me. Tag gate replies as the
+  worker contract prescribes (`--tag <verb>`, `--branch <name>`).
 
 prompts:
-  PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report] }   # bespoke check-in line inline (its reply is the literal "online")
+  PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report, contract] }   # bespoke check-in line inline (its reply is the literal "online")
   # reply_prefix (S-4, tron-07 review cycle): the prescribed opening of the PMT's expected
   # reply — the SINGLE source. Lint L20 asserts the PMT body and tron.md's classify context
   # carry it verbatim ({block} -> <block>/`<your block id>` prose forms allowed); the engine's

@@ -125,6 +125,7 @@ class Engine:
         if worker_id is not None:
             slots.setdefault("worker_id", worker_id)
         slots.setdefault("report", self.ctx.p("scripts", "report.sh"))
+        slots.setdefault("contract", self.ctx.worker_contract)
         line = self.renderer.render(template_id, slots)
         channel = self.renderer.channel(template_id)
         util.append_jsonl(self.ctx.home_log,

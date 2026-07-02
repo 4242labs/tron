@@ -21,6 +21,7 @@ slots:
   branch: <str>
   pr: <str>
   persona: <str>        # absolute path to the project's agent file for a spawned worker (SPAWN)
+  contract: <str>       # absolute path to the instance's worker-contract.md (SPAWN) — the worker/TRON interface
   report: <str>         # absolute path to the report channel script (SPAWN check-in command)
   detail: <str>         # free-text judgment payload (the one slot the LLM may fill with prose)
   reason: <str>
@@ -39,15 +40,15 @@ templates:
   # the work arrives next, on the worker's `online` report (assign.*).
   spawn.engineer:
     channel: worker
-    slots: [worker_id, role, persona, report]
+    slots: [worker_id, role, persona, report, contract]
     pmt: PMT-SPAWN
   spawn.architect:
     channel: worker
-    slots: [worker_id, role, persona, report]
+    slots: [worker_id, role, persona, report, contract]
     pmt: PMT-SPAWN
   spawn.reviewer:
     channel: worker
-    slots: [worker_id, role, persona, report]
+    slots: [worker_id, role, persona, report, contract]
     pmt: PMT-SPAWN
   # ASSIGN — the work, delivered after the worker reports online (01-07). Role-neutral:
   # the engine composes {assignment} per role at emit (engineer = its block; reviewer =
