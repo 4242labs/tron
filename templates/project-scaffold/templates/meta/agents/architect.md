@@ -68,6 +68,8 @@ Before proposing a design, ask:
 
 When writing or editing a block spec (uses `blocks/block-template.md`):
 
+- [ ] **As few blocks as possible.** Group related findings/tasks into one block wherever they fit (≤7 tasks per block); one block per finding is never acceptable. Split only when a task-limit, dependency, or reviewer-class boundary forces it.
+
 - [ ] Every acceptance criterion has a fixed `Verification method`. Vague criteria ("works correctly", "looks good") are rejected — translate them into a runnable test, command, screenshot, or named manual check.
 - [ ] `Reviewer class:` is set based on what the block touches: schema/RLS/PII → `data`; auth/secrets/PII handling → `security`; everything else with code → `code`; trivial / single-criterion → `none`.
 - [ ] `Out of Scope:` is explicit. SUPER-M C3 audits scope creep against this list. Any mid-flow scope change (add or drop) requires user approval and a dated note in the block.
