@@ -185,6 +185,10 @@ class Engine:
             # (released only after a clean save) and re-fire it every sweep — a poison pill.
             try:
                 tag, slots = self._classify(msg)
+                # Carry the raw text alongside the pulled slots — deterministic guards (the
+                # close-confirmation prefix check, tron-07 peer risk 2) read the message
+                # itself, never re-judge it.
+                slots = {**slots, "_raw": msg.get("text", "")}
                 self._ingest(tag, slots, msg.get("sender", {}))
             except Exception as e:
                 self.log("flow", f"ingest dropped a message: {e}")
@@ -712,7 +716,8 @@ class Engine:
         else:
             rng = "all changes since your last review"
         return (f"Run a {typ} review over {rng}. Cover every applicable change in that range — "
-                f"all of it, not a sample. Deliver your findings log when done.")
+                f"all of it, not a sample. Deliver your findings log when done, and open that "
+                f"hand-back reply `review done {typ}:` then the log path.")
 
     def _h_worker_done(self, m):
         # block:next:done — the worker SAYS it's done. Not truth: open/advance the DONE gate.
@@ -737,6 +742,14 @@ class Engine:
             # tron-07 W6a) and never lands here.
             g = self.st.gate.get(block)
             if g and g.get("stage") == "close":
+                # tron-07 peer risk 2: at CLOSE, only a reply that opens `clean` is the
+                # confirmation (PMT-CLOSE prescribes it; CLOSE-DIRTY restates it). A
+                # jitter-tagged receipt or progress line must not run the cleanliness scan
+                # early and burn a close nudge. No raw text (internal call) -> trust the tag.
+                raw = (m.get("_raw") or "").strip().lower()
+                if raw and not raw.startswith("clean"):
+                    self.log("flow", f"gate[{block}] close: reply doesn't open 'clean' -> not a confirmation")
+                    return
                 self._confirm_close(block, g)
             elif g and g.get("stage") == "record":
                 self._drive_close(block, g, self._worker_id("engineer", block))

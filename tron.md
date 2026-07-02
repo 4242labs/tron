@@ -76,9 +76,10 @@ Read the sender first, then the intent.
   Pull `block`.
 - `worker.wall` — stuck on something no worker can clear, needing the operator (R3). A hard problem
   is not a wall; an unconsulted architect is not a wall. Pull `block`, `worker_id`, `detail`.
-- `worker.review_done` — a reviewer handing back its findings log. Pull `type` (the review lens:
-  code / security / data / …); pull `block` only if the report names one (the engine tracks the
-  reviewed range otherwise).
+- `worker.review_done` — a reviewer handing back its findings log; these replies open
+  `review done <type>:` (the hand-back and the coverage confirmation both). Pull `type` (the review
+  lens: code / security / data / …); pull `block` only if the report names one (the engine tracks
+  the reviewed range otherwise).
 - `worker.question_peer` — a design/technical question aimed at a declared peer (the architect).
   The engine routes it to the architect, who answers-and-relays or escalates — it never dead-ends.
   Pull `worker_id`, `block` (if named), and the question text into `detail`.
