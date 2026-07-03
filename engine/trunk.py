@@ -341,9 +341,13 @@ def list_worktrees(repo_root, dry=False):
         elif not ln and cur:
             trees.append(cur)
             cur = {}
+    # 01-13 (tron-14 F11): git lists the MAIN worktree first, always — skip it by
+    # position as well as by path. Path aliasing (symlinks the realpath can't see
+    # through, bind mounts, a repo_root recorded differently than git reports it)
+    # once let the replica root itself read as "leftover worktree ... (on main)".
     root_real = os.path.realpath(repo_root)
-    return [(t.get("path"), t.get("branch")) for t in trees
-            if os.path.realpath(t.get("path", "")) != root_real]
+    return [(t.get("path"), t.get("branch")) for i, t in enumerate(trees)
+            if i > 0 and os.path.realpath(t.get("path", "")) != root_real]
 
 
 def _rollup(checks):

@@ -24,7 +24,8 @@ import util
 #   refresh-fail  — trunk fast-forward failed (best-effort retry, then loud halt at the death-cap)
 #   classify-fail — the one classify LLM exhausted its retry budget -> auto-ack to `unclassified`
 #   ingest-drop   — a single inbound message raised while being classified/ingested (poison-pill guard)
-#   gate-stuck    — a DONE gate exceeded its re-nudge cap and escalated (the no-silent-stuck wall)
+#   gate-stuck    — a supervised stage (DONE gate, review attest, architect job — 01-13)
+#                   exceeded its re-nudge cap and escalated (the no-silent-stuck wall)
 #   dispatch-fail — spawning a worker process failed
 #   session-residue — session end found unlanded/failed paperwork or leftover branches
 #                   (tron-13 D1 sweep: named + parked on the operator, never auto-landed)
