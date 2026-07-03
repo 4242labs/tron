@@ -545,23 +545,33 @@ def t_close_lands_first():
         trunk.replica_clean = orig_rc
 
 
-def t_close_violation_holds_then_caps():
+def t_close_violation_parks_as_a_wall():
+    # 01-15 T6: a close-time violation names REAL code the paperwork-only allowlist can
+    # never accept — re-nudging toward the same confirm was a dead end with no landing
+    # path at all (tron-16 CASE-003). It now parks as an ordinary wall (same case kind,
+    # same three settle verbs) instead of re-nudging to a gate-close-dirty cap.
     eng = _eng()
     g = eng.st.gate.setdefault("A-01", {"stage": "close"})
-    sent = _capture(eng)
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working"})
     restore = _mock_land("violation", "src/sneak.txt")
     try:
         eng._confirm_close("A-01", g)
-        ok("D1 unlandable close re-holds with the named files",
-           "A-01" in eng.st.gate
-           and any(t == "close.dirty" and "src/sneak.txt" in s.get("detail", "")
-                   for t, s in sent), f"sent={sent}")
+        eng._drain_triggers()             # process the queued wall:raised trigger
+        ok("D1/T6 violation parks the gate (never gate-gives-up outright)",
+           "A-01" in eng.st.gate and g.get("violation_pending") is True)
+        ok("D1/T6 violation names the offending files in the wall detail",
+           any(c.get("kind") == "wall" and "src/sneak.txt" in (c.get("detail") or "")
+               for c in eng.st.pending_cases.values()), f"cases={eng.st.pending_cases}")
+        ok("D1/T6 violation holds the engineer (never a silent release)",
+           any(w.get("id") == "ENG-A-01" and w.get("status") == "walled"
+               for w in eng.st.workers))
+        # A repeat confirm while parked is a no-op — never re-escalates, never re-nudges.
+        n_cases = len(eng.st.pending_cases)
         eng._confirm_close("A-01", g)
-        eng._confirm_close("A-01", g)                         # cap (gate_close_cap=3)
-        ok("D1 landing failures cap into a gate escalation",
-           "A-01" not in eng.st.gate
-           and any(e.get("code") == "gate-close-dirty"
-                   for e in _events(eng) if e.get("kind") == "failure"))
+        eng._drain_triggers()
+        ok("D1/T6 a repeat confirm while parked never re-escalates",
+           len(eng.st.pending_cases) == n_cases)
     finally:
         restore()
 
@@ -997,7 +1007,7 @@ TESTS = [
     t_lander_nonff,
     t_lander_architect_union,
     t_close_lands_first,
-    t_close_violation_holds_then_caps,
+    t_close_violation_parks_as_a_wall,
     t_reviewer_declaration_fifo,
     t_review_landing_holds_then_releases,
     t_review_landing_cap_leaves_named_residue,

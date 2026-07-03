@@ -195,12 +195,45 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     The engine owns the trunk merge (MG-01): with no remote there is no PR to land, so the
     engine advances trunk itself, but ONLY as a fast-forward — never a merge commit, never a
     force. A non-ff (trunk moved under the branch) returns ok=False so the caller re-nudges
-    the worker to rebase, rather than fabricating history. Returns (ok, err)."""
+    the worker to rebase, rather than fabricating history.
+
+    T5 (01-15, tron-16 boot-1 residue): verifies `main_branch` itself exists BEFORE acting —
+    a missing trunk branch (an env fault) used to fall through the checkout silently (git
+    swallowed as a belt-and-suspenders no-op) and merge the block branch onto whatever HEAD
+    happened to be, action and verification going out of sync. Now a missing trunk branch,
+    or a checkout that fails for any other reason, is an `error`-shaped (ok=False) return —
+    never a silent merge onto HEAD. Returns (ok, err)."""
     if dry or not repo_root or not branch:
         return (dry, "")
-    _run(["git", "-C", repo_root, "checkout", main_branch])   # root stays on trunk; belt-and-suspenders
+    if not branch_exists(repo_root, main_branch, dry):
+        return False, f"trunk branch '{main_branch}' does not exist"
+    rc, _, err = _run(["git", "-C", repo_root, "checkout", main_branch])
+    if rc != 0:
+        return False, f"checkout {main_branch} failed: {err.strip()[:200]}"
     rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
     return rc == 0, err
+
+
+def land_ordered_merge(repo_root, branch, main_branch="main", dry=False):
+    """T6 (01-15): the violation-wall `approve` settle's landing primitive — an EXPLICIT
+    operator-ordered merge of the WHOLE named branch (no paperwork allowlist: the operator
+    already saw and approved the range naming it a landable fix, tron-16 CASE-003's residue
+    — post-close code with no landing path otherwise). Same ff-only discipline as every
+    other merge here, then the SAME lander cleanup `land_docs` runs on success (worktree
+    gone first, D-15-4, then the branch ref) — one physical landing mechanism, reused, never
+    a second one. Returns (ok, detail)."""
+    if dry or not repo_root or not branch or branch == main_branch:
+        return False, "dry/none"
+    if not branch_exists(repo_root, branch, dry):
+        return False, f"no branch {branch}"
+    okm, err = merge_ff_only(repo_root, branch, main_branch, dry)
+    if not okm:
+        return False, err.strip()
+    sha = head_sha(repo_root)
+    remove_worktree_for_branch(repo_root, branch, dry)       # D-15-4: worktree gone first
+    rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+    note = f"; ref survives: {derr.strip()}" if rc != 0 else ""
+    return True, f"landed @ {sha[:7]}{note}"
 
 
 def _patch_id_one(repo_root, ref, main_branch):
@@ -319,6 +352,9 @@ def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
             offenders.append(f)
     if offenders:
         return "violation", ", ".join(sorted(offenders))
+    # T5 (01-15): a missing/unresolvable main_branch already surfaces as "error" above
+    # (the name-only diff against it fails the same way); merge_ff_only's own fix covers
+    # the remaining case (main_branch resolves but the checkout itself fails).
     okm, err = merge_ff_only(repo_root, branch, main_branch)
     if not okm:
         return "non-ff", err.strip()

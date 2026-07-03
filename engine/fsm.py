@@ -966,7 +966,11 @@ class Engine:
         if block:
             if block not in self.st.blocked:
                 self.st.blocked.append(block)
-            self.st.gate.pop(block, None)
+            # T2 (01-15 D-16-1 seam 2): raising a wall must never pop the block's gate —
+            # gate lifecycle is owned exclusively by _confirm_close (release) and
+            # _gate_giveup (escalation). Popping it here left a live CLOSE gate's
+            # clean-confirmation with nothing to advance against (g is None ->
+            # the done-handler's `if g and g.get("stage") == "close"` silently no-ops).
         detail = m.get("detail", "wall")
         case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
         self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
@@ -1044,11 +1048,34 @@ class Engine:
                                         if pending else " — nothing is parked")})
             self._close_case(m.get("case"), case)
             self._emit("pulse"); return
-        if decision == "resume" and block in self.st.blocked:
+        vg = self.st.gate.get(block)
+        if decision == "approve" and vg and vg.get("violation_pending"):
+            # T6 (01-15): `approve` on a close-time violation wall = land it — the ordered
+            # merge of the exact range the wall named. No new verb, no new case kind: this
+            # IS what `approve` means everywhere else (the merge-ask branch above).
+            if block in self.st.blocked:
+                self.st.blocked.remove(block)
+            self._land_violation_range(block, vg, self._worker_id_for_block(block))
+        elif decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
-            for w in self.st.workers:                      # T2: a wall-held worker un-holds on resume
+            for w in self.st.workers:                      # T4: a wall-held worker un-holds on resume
                 if w.get("block") == block and w.get("status") == "walled":
-                    w["status"] = w.pop("held_status", None) or "working"
+                    self._unhold_worker(w)
+                    # T1 (01-15 D-16-1 seam 1): replay whatever queued whole while held, in
+                    # arrival order — this is the exact `clean` confirmation the wall used
+                    # to swallow (tron-16 D-16-1: it arrived 15s after its own wall held it).
+                    queued = w.pop("held_verbs", None) or []
+                    for item in queued:
+                        self._ingest(item["tag"], item["slots"],
+                                    {"kind": "worker", "id": w.get("id")})
+            vg2 = self.st.gate.get(block)
+            if vg2 and vg2.get("violation_pending"):
+                # T6 (01-15): resume means the worker resolves its own branch — clear the
+                # park so a fresh confirm re-checks land_docs from scratch, never stays
+                # silently held at close forever (_drive_close's violation_pending guard).
+                vg2.pop("violation_pending", None)
+                vg2.pop("violation_branch", None)
+                vg2.pop("violation_tip", None)
         elif decision == "amend" and block in self.st.blocked:
             self.st.blocked.remove(block)
             self._forward_review(block)                   # architect re-scopes the block file
@@ -1057,7 +1084,9 @@ class Engine:
                 self._dropped().append(block)             # runtime skip; TRON never writes ❌
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
-            self.st.gate.pop(block, None)
+            # T2 (01-15 D-16-1 seam 2): settling a wall never pops the gate either — the
+            # DONE ladder's own dropped-block check (_drive_gate) clears it on its next
+            # pass, so a give-up-in-progress never reads the gate as vanished mid-decision.
             # T2 (D-15-2): abandon/release-shaped settles RELEASE as today — the wall now
             # holds its sender (status 'walled'), so the drop must free that held worker
             # here, not leave it parked with a live idle session until session end.
@@ -1449,6 +1478,8 @@ class Engine:
         (nothing unmerged, no loose worktree, local synced). The slot frees only on its clean
         confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
         can't strand the slot forever."""
+        if g.get("violation_pending"):
+            return           # T6 (01-15): parked on the operator's wall settle; hold quietly
         # 01-11 FX-3 (R2-1/R2-3): leaving RECORD -> verify the record commit's OWN diff before
         # accepting the ✅ — exactly one file (the block doc), exactly the Status field. Never a
         # trunk range (another block's merge landing in between must not false-positive under
@@ -1703,10 +1734,30 @@ class Engine:
                               **{"role": "engineer", "branch": branch,
                                  "detail": ldetail})
             self.log("flow", f"paperwork[{block}] landed: {ldetail}")
-        elif code in ("violation", "non-ff", "error"):
+        elif code == "violation":
+            # T6 (01-15, tron-16 CASE-003 residue): a close-time violation names REAL code
+            # left on the branch — land_docs's paperwork-only allowlist can never accept
+            # it, so re-nudging the worker toward the same confirm is a dead end (the old
+            # cap eventually gate-gave-up with no landing path at all). Park it as an
+            # ordinary wall instead — same case kind, same settle verbs, no new mechanism:
+            # `approve` lands the named range (ordered merge, same sha-pinned content check
+            # as a merge ASK, same lander cleanup after); `resume` means the worker resolves
+            # its own branch (a fresh confirm re-checks land_docs from scratch); `abandon`
+            # drops the block as always. Idempotent — branch/tip pin once, at park.
+            if not g.get("violation_pending"):
+                g["violation_pending"] = True
+                g["violation_branch"] = branch
+                tip = trunk.tip_sha(self.paths["root"], branch, self.dry)
+                if tip:
+                    g["violation_tip"] = tip
+                self._emit("wall:raised:" + block,
+                          {"block": block, "worker_id": wid,
+                           "detail": f"close-time violation on {branch}: {ldetail} — "
+                                     f"approve lands this range, resume if you'll fix "
+                                     f"the branch yourself, abandon to drop the block"})
+            return
+        elif code in ("non-ff", "error"):
             reason = {
-                "violation": f"your branch carries non-paperwork: {ldetail} — unmerged "
-                             f"code at close is a wall to report, never a cleanup",
                 "non-ff": "trunk moved under your parked paperwork — rebase your branch "
                           "onto the trunk, leave it in place, then confirm again",
                 "error": f"paperwork landing failed: {ldetail}",
@@ -1745,6 +1796,50 @@ class Engine:
                 self._release_worker(w, notify=False, reason="close-confirmed")  # CLOSE already sent
         self.st.gate.pop(block, None)
         self.log("flow", f"{block} close confirmed -> worker released")
+        self._emit("pulse")
+
+    def _land_violation_range(self, block, g, wid):
+        """T6 (01-15): the violation-wall `approve` settle IS 'land it' — an ordered merge
+        of the exact branch the wall named, content-pinned exactly like a merge ASK (A-3:
+        the grant binds the sha the operator saw at park; a moved tip voids it UNLESS the
+        move carries an IDENTICAL diff, T1's patch-id rider — never landed blind), then the
+        same lander cleanup `land_docs` runs on success (worktree gone, branch deleted). No
+        new verb, no new case kind: `approve` here means exactly what it means at the
+        ordinary merge gate."""
+        branch = g.get("violation_branch")
+        pinned = g.get("violation_tip")
+        cur = trunk.tip_sha(self.paths["root"], branch, self.dry) if branch else ""
+        if pinned and cur and cur != pinned and not trunk.patch_id_matches(
+                self.paths["root"], pinned, cur, self.paths.get("main_branch", "main"), self.dry):
+            g["violation_tip"] = cur          # A-3 rider 2: re-pin, never land a tip unseen
+            self.log("flow", f"gate[{block}] violation-approve re-pinned: {branch} moved "
+                             f"{str(pinned)[:7]} -> {cur[:7]} with a divergent diff")
+            if wid and not self.dry:
+                self._to_worker(wid, f"[TRON]  {wid} — {branch} moved since I was asked to "
+                                     f"land it; approve again to land the new tip.",
+                                "gate.changes")
+            return
+        okm, detail = trunk.land_ordered_merge(self.paths["root"], branch,
+                                               self.paths.get("main_branch", "main"), self.dry)
+        if not okm:
+            self.log("flow", f"gate[{block}] violation-approve failed: {detail}")
+            if wid and not self.dry:
+                self._to_worker(wid, f"[TRON]  {wid} — landing {branch} failed: {detail}. "
+                                     f"Resolve it; I retry on your next confirm.",
+                                "gate.changes")
+            return
+        self.events.event("docs_landed", actor=wid, block=block,
+                          **{"role": "engineer", "branch": branch, "detail": detail,
+                             "via": "violation-approved"})
+        self.log("flow", f"gate[{block}] violation range landed: {detail}")
+        g.pop("violation_pending", None)
+        g.pop("violation_branch", None)
+        g.pop("violation_tip", None)
+        for w in list(self.st.workers):
+            if w.get("role") == "engineer" and w.get("block") == block:
+                self._release_worker(w, notify=False, reason="close-confirmed")
+        self.st.gate.pop(block, None)
+        self.log("flow", f"{block} close confirmed (violation range landed) -> worker released")
         self._emit("pulse")
 
     def _force_release_block(self, block):
@@ -1940,6 +2035,17 @@ class Engine:
         case)."""
         w["held_status"] = w.get("status")
         w["status"] = "walled"
+
+    def _unhold_worker(self, w):
+        """T4 (01-15 D-16-2): the un-hold counterpart to _hold_worker — ONE primitive pair,
+        used by every wall settle that lifts a hold without releasing the worker outright
+        (abandon still goes through _release_worker/_force_release_block as before). Restores
+        the pre-hold status rather than a bare literal at each call site, so an engine-raised
+        gate-stuck hold (_gate_giveup -> wall:raised -> _hold_worker) un-holds exactly like a
+        worker-declared `--tag wall` hold does — tron-16's CASE-006 gap (resume cleared the
+        case but left the worker walled) was two un-hold call sites free to drift apart;
+        now there is one."""
+        w["status"] = w.pop("held_status", None) or "working"
 
     # ── worker release ──
     def _release_worker(self, w, notify=True, reason="released"):
@@ -2159,6 +2265,19 @@ class Engine:
             return
         tag, slots = self._resolve_by_sender(tag, slots, sender)   # 01-13: sender-truth first
         if tag is None:
+            return
+        # T1 (01-15 D-16-1 seam 1): a held (walled) sender's VERB is queued whole, never
+        # processed and never dropped — its modifiers (--branch, --block) already
+        # registered above in _classify, independent of hold state. Durable on the worker
+        # record (manifest state, survives a restart); replayed in arrival order the
+        # instant the worker un-holds (_h_apply_decision's resume); discarded whole on
+        # abandon (the worker record itself goes with it, _force_release_block).
+        sid = (sender or {}).get("id")
+        hw = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
+        if hw is not None and hw.get("status") == "walled":
+            hw.setdefault("held_verbs", []).append({"tag": tag, "slots": slots})
+            self.log("flow", f"{sid} is walled -> verb '{tag}' queued "
+                             f"({len(hw['held_verbs'])} pending)")
             return
         action = self.tags.get(tag)
         if not isinstance(action, dict):
@@ -2417,6 +2536,32 @@ class Engine:
                     w.pop("kill_at", None)
                 continue
             if jobs.has_positive_activity(sig):
+                # T3 (01-15 D-16-1 seam 3): the runner's own idle-poll keeps `updated_at`
+                # fresh even doing nothing — positive activity forever, so a merely-idle
+                # worker NEVER reaches the silent-stall check below. That is exactly how
+                # an idle-bound orphan "escapes every net" (tron-16, worker_count=1,
+                # deadlocked ~30 min with no escalation raised): an engineer idle, BOUND to
+                # a block, whose gate is orphaned — the block already shows done, or no
+                # gate object exists for it at all — is an INCONSISTENT state, never a
+                # silent wait. Named, never silent, after one full silence window (S-1
+                # wall-clock law). Naturally one-shot: _gate_giveup raises a wall, which
+                # HOLDS this worker (walled) — and this loop skips walled workers up top —
+                # so it never re-fires on the same orphan.
+                if (w.get("role") == "engineer" and rstate == "idle" and w.get("block")
+                        and delta is not None and delta > ping * 60):
+                    blk = w.get("block")
+                    row = self.st.row(blk)
+                    g = self.st.gate.get(blk)
+                    done = bool(row and row.get("status") == "done")
+                    if done or g is None:
+                        self._gate_giveup(
+                            blk, g or {}, w.get("id"),
+                            f"{w.get('id')} idle {int(delta)}s, bound to {blk}, but "
+                            + ("the block is already done" if done
+                               else "no gate exists for it"),
+                            "gate-orphaned",
+                            "check the worker/block binding; resume or reassign")
+                        continue
                 continue
             if delta is None:
                 continue
