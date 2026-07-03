@@ -30,7 +30,9 @@ A bare "done" moves nothing. Reply to the step you were ordered, in its prescrib
 Finishing a step and WAITING for the next order is not a pause — report `done` and stand
 by; signal a pause only when you cannot proceed without an answer. If TRON repeats an
 order, it has not SEEN what it needs — re-send your report in the prescribed opening;
-do not redo the work.
+do not redo the work. A repeat is the SAME step re-asked, nothing else: an order naming
+an act you have not yet answered (the record commit, the close-out) is always new work —
+do it, never re-send a previous report in its place.
 
 ## 4. Branch duty
 Name the branch you build on the moment you create it (`--branch <name>`), BEFORE any

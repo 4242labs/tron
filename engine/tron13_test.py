@@ -741,16 +741,19 @@ def t_branch_verb_without_slot_never_silent():
 
 
 def t_branch_verb_engineer_keeps_admit_path():
-    # The engineer's block comes from its ASSIGNMENT via _admit — the direct record
-    # must not bypass that (FS-3 guard); the classify path owns engineer declarations.
+    # 01-13 (tron-14 F6) REVERSES the old deferral: a structured report never reaches
+    # classify, so "the classify path owns engineer declarations" meant a structured
+    # `done --branch X` never registered at all (three declarations, branches: {}, gate
+    # walled). The hoist now carries the SENDER'S assigned block (A-1 sender-first) and
+    # the declaration registers directly — never to the paperwork FIFO.
     eng = _eng()
     calls, restore = _mock_classify("worker.branch")
     try:
         eng._classify({"text": "branch named", "tag": "branch",
                        "slots": {"branch": "fix/own-name"},
                        "sender": {"kind": "worker", "id": "ENG-A-01"}})
-        ok("W10 an engineer's structured declaration defers to the classify path",
-           "fix/own-name" not in (eng.st.branches or {}).values()
+        ok("F6 an engineer's structured declaration registers sender-first",
+           (eng.st.branches or {}).get("A-01") == "fix/own-name"
            and not any(w.get("pending_landings") for w in eng.st.workers),
            f"branches={eng.st.branches}")
     finally:

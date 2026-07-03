@@ -219,13 +219,63 @@ def send(worker_dir, seq, kind, text):
 
 
 # ── lifecycle: TRON owns the runner process (spawn / release), deterministically ──
+def retire_stale_dir(worker_dir, kill_wait_s=3.0):
+    """01-13 (tron-14 F7): a re-spawn must NEVER inherit a predecessor's worker dir —
+    the stale `.mbox-hwm` outruns the fresh engine seq counter (new messages land at
+    seq 1,2 under a high-water of 4: delivered, never read) and a lingering runner
+    shares runner.json with its replacement. If the dir holds prior runner state:
+    stop whatever still runs (SIGTERM, wait, SIGKILL), then move the WHOLE dir aside
+    under `<workers>/.archive/` as forensics. The spawn starts from an empty dir.
+    Returns the archive path, or None when there was nothing to retire."""
+    st = _read_state(worker_dir)
+    if st is None:
+        return None
+    pid = st.get("pid")
+    if pid and _pid_alive(pid):
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, ValueError, TypeError):
+            pass
+        deadline = time.time() + kill_wait_s
+        while time.time() < deadline and _pid_alive(pid):
+            time.sleep(0.2)
+        if _pid_alive(pid):
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, ValueError, TypeError):
+                pass
+    parent = os.path.dirname(worker_dir.rstrip(os.sep))
+    adir = os.path.join(parent, ".archive")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = os.path.join(adir, f"{os.path.basename(worker_dir.rstrip(os.sep))}-{stamp}")
+    if os.path.exists(dest):
+        dest = f"{dest}-{os.getpid()}"
+    try:
+        os.makedirs(adir, exist_ok=True)
+        os.rename(worker_dir, dest)
+        return dest
+    except OSError:
+        # Rename should not fail same-filesystem; fall back to wiping the channel files
+        # so the mailbox/high-water can at least never wedge the fresh runner.
+        for name in (MAILBOX, HWM, RUNNER_STATE, TIMELINE, STOP):
+            try:
+                os.remove(os.path.join(worker_dir, name))
+            except OSError:
+                pass
+        return None
+
+
 def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
                  runtime=None, adapter=None, settle_s=2.0):
     """Spawn the worker-runner fully detached from this TTY. The runner drives the agent
     turn-by-turn off the mailbox; TRON owns its lifecycle (spawn here, liveness via the
     store, release via the .stop sentinel). start_new_session=True + devnull I/O so a
     closed console can't SIGHUP-cascade the fleet. Returns {session_id, worker_id} once the
-    runner registers its state, or {} if it could not be confirmed within settle_s."""
+    runner registers its state, or {} if it could not be confirmed within settle_s.
+    NOTE (01-13/F7): this function deliberately RESUMES an existing dir (crash-restart:
+    same identity, high-water preserved, no replay). Identity freshness is the ENGINE'S
+    call — fsm._spawn retires a predecessor's dir (retire_stale_dir) before its first
+    mailbox write, so a NEW worker under a reused id never inherits a stale mailbox."""
     os.makedirs(worker_dir, exist_ok=True)
     stop = os.path.join(worker_dir, STOP)
     if os.path.exists(stop):        # a prior release sentinel must not kill a fresh runner

@@ -227,6 +227,7 @@ class Engine:
             self._drive_gates()          # S-1: pacing is wall-clock inside the gate machinery
             self._drive_cases()          # F-4/R-7: parked-case re-ping ladder -> safe-park
             self._drive_landings()       # D1: architect paperwork FIFO, job-queue-independent
+            self._drive_architect_liveness()   # 01-13: the job queue gets the same idle law
         self._drain_triggers()
         self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
@@ -664,6 +665,10 @@ class Engine:
             return "dry", "dry"
         session_id = str(uuid.uuid4())                 # engine-minted; stable identity, never re-minted
         try:
+            # 01-13 (tron-14 F7): retire a predecessor's dir BEFORE the first mailbox
+            # write — the persona message must land in the FRESH dir, not the one about
+            # to be archived (and never under a stale high-water seq).
+            jobs.retire_stale_dir(self.ctx.worker_dir(wid))
             # turn 1: the persona/onboarding, via the mailbox — through emit() (S-4/W4:
             # every worker send goes through the one slot-injecting sender).
             self.emit(template_id, slots, worker_id=wid)
@@ -831,6 +836,13 @@ class Engine:
             self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
             self._emit("pulse")
             return
+        # 01-13: the attest report arrived — clear any stall machinery it outran (a parked
+        # attest case settles itself the moment the report lands; the operator owes nothing).
+        g0 = self.st.gate[gkey]
+        if g0.get("attest_case"):
+            self._close_case(g0.pop("attest_case"), None)
+        g0.pop("attest_idle_since", None)
+        g0.pop("attest_nudged_at", None)
         # Confirmation -> land declared paperwork BEFORE release (tron-13 D1 point 2):
         # the findings log parked on the reviewer's named branch is landed by the ENGINE
         # (content-checked, ff-only, branch deleted) — say-so provenance ends here. A
@@ -1096,8 +1108,13 @@ class Engine:
                 # tron-13 D1 rider (b): review gates are event-driven EXCEPT the landing
                 # stage — a reviewer silent after a failed paperwork landing would
                 # otherwise be a W6c-class stall no clock ever catches.
+                # 01-13 (tron-14 F9): ...and except the ATTEST stage, for the same reason —
+                # a hand-back that never reached the channel left `review` as the one
+                # stage no clock watched (15 silent minutes until the operator re-delivered).
                 if g.get("stage") == "landing":
                     self._drive_review_landing(block, g)
+                elif g.get("stage") == "review":
+                    self._drive_review_attest(block, g)
                 continue
             self._drive_gate(block, g)
 
@@ -1559,6 +1576,50 @@ class Engine:
             g["landing_nudged_at"] = now
             self._land_nudge(wid, detail)
 
+    def _drive_review_attest(self, gkey, g):
+        """01-13 (tron-14 F9): the DONE-REVIEW gate at `review` (attest coverage) was the
+        one stage no clock watched — a hand-back that never reached the channel stalled it
+        silently until the operator re-delivered it by hand. Same wall-clock idle law as
+        the block gate: reviewer runner idle -> re-send gate.review once per episode; at
+        the cap -> a parked case. The reviewer stays alive and the gate holds — the
+        operator's usual remedy is re-delivering the report, exactly tron-14's manual
+        recovery, now with the engine asking for it instead of hiding it."""
+        typ = gkey.split(":", 1)[1]
+        rev = next((w for w in self.st.workers
+                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+        if rev is None:
+            self.st.gate.pop(gkey, None)
+            return
+        if g.get("attest_case"):
+            return                                   # parked on the operator; hold quietly
+        wid = rev.get("id")
+        if wid and not jobs.runner_idle(wid):
+            g.pop("attest_idle_since", None)
+            g.pop("attest_nudged_at", None)
+            return
+        now = self._now_s()
+        since = g.setdefault("attest_idle_since", now)
+        idle_s = now - since
+        if idle_s >= self._pace("gate_idle_cap", 3):
+            cid = self._open_case(gkey, "review", wid,
+                                  f"review:{typ} stalled at attest — reviewer idle "
+                                  f"{int(idle_s)}s; its hand-back may never have reached "
+                                  f"the channel")
+            g["attest_case"] = cid
+            self.events.failure("gate-stuck", "review-attest-idle",
+                                f"attest {typ} review coverage", f"idle {int(idle_s)}s",
+                                actor=wid, node="DONE-REVIEW gate", next_action="escalate")
+            self.emit("escalate.wall", {"worker_id": wid or "?", "block": gkey,
+                                        "detail": f"review:{typ} stalled at attest "
+                                                  f"(reviewer idle, report likely "
+                                                  f"off-channel)", "case": cid})
+            return
+        if idle_s >= self._pace("gate_nudge_after", 2) and not g.get("attest_nudged_at"):
+            g["attest_nudged_at"] = now
+            if wid:
+                self.emit("gate.review", {"worker_id": wid}, worker_id=wid)
+            self.log("flow", f"{gkey} idle at attest -> re-send the coverage order")
+
     def _confirm_close(self, block, g):
         """The worker confirmed a clean exit -> land its parked paperwork, verify, then
         free the slot (T7 + 01-11 FX-9 + tron-13 D1). The close contract: the worker
@@ -1719,7 +1780,12 @@ class Engine:
             return
         job = self.st.architect_queue.pop(0)
         arch["status"], arch["current_job"] = "busy", job
-        awid = arch.get("id")
+        self._emit_arch_job(job, arch.get("id"))
+        self.log("architect", f"dispatch {job}")
+
+    def _emit_arch_job(self, job, awid):
+        """Deliver (or 01-13: re-deliver, on the idle nudge) an architect job order —
+        the one place a job kind maps to its PMT."""
         if job["kind"] == "forward":                      # author a missing block file (PMT-SCOPE)
             self.emit("arch.forward", {"block": job["block"]}, worker_id=awid)
         elif job["kind"] == "reconcile":                  # re-check an existing block vs a landed one
@@ -1732,7 +1798,48 @@ class Engine:
                       worker_id=awid)
         else:                                             # log-review -> remediation blocks
             self.emit("arch.remediation", {"type": job.get("type", "code")}, worker_id=awid)
-        self.log("architect", f"dispatch {job}")
+
+    def _drive_architect_liveness(self):
+        """01-13 (tron-14 F2/F4): the architect's job queue gets the SAME wall-clock idle
+        law as every gate — `busy` on a job while its runner sits idle is a stall, not
+        patience (two of tron-14's stalls held the queue 34 and 48 minutes with zero
+        pings). Nudge = re-deliver the job order on a fresh seq; cap = a parked case.
+        Backstop only: sender-truth resolution (_resolve_by_sender) completes jobs off
+        the architect's own report — this catches the report that never arrived."""
+        arch = self._architect()
+        if not arch or arch.get("status") != "busy" or not arch.get("current_job"):
+            return
+        if not jobs.runner_idle(arch.get("id")):
+            arch.pop("job_idle_since", None)
+            arch.pop("job_nudged_at", None)
+            return
+        if arch.get("job_case"):
+            return                                   # parked on the operator; hold quietly
+        now = self._now_s()
+        since = arch.setdefault("job_idle_since", now)
+        idle_s = now - since
+        job = arch.get("current_job") or {}
+        if idle_s >= self._pace("gate_idle_cap", 3):
+            cid = self._open_case(job.get("block"), "architect", arch.get("id"),
+                                  f"architect stalled on job '{job.get('kind')}' "
+                                  f"({job.get('block') or job.get('type') or '?'}) — "
+                                  f"idle {int(idle_s)}s with no completion report")
+            arch["job_case"] = cid
+            self.events.failure("gate-stuck", "architect-idle-cap",
+                                f"complete architect job '{job.get('kind')}'",
+                                f"idle {int(idle_s)}s", actor=arch.get("id"),
+                                block=job.get("block"),
+                                node="architect queue", next_action="escalate")
+            self.emit("escalate.wall", {"worker_id": arch.get("id") or "?",
+                                        "block": job.get("block") or "?",
+                                        "detail": f"architect job '{job.get('kind')}' "
+                                                  f"stalled (idle, no completion report)",
+                                        "case": cid})
+            return
+        if idle_s >= self._pace("gate_nudge_after", 2) and not arch.get("job_nudged_at"):
+            arch["job_nudged_at"] = now
+            self._emit_arch_job(job, arch.get("id"))
+            self.log("flow", f"architect idle on '{job.get('kind')}' -> re-deliver the order")
 
     def _triage_detail(self, job):
         """Build the TRIAGE {detail} (T4). Prepend `"{sender}, on block {block}: "` ONLY when
@@ -1749,6 +1856,12 @@ class Engine:
         arch = self._architect()
         if arch:
             arch["status"], arch["current_job"] = "idle", None
+            # 01-13: a completed job settles its own stall machinery — a parked
+            # architect case closes itself the moment the completion lands.
+            if arch.get("job_case"):
+                self._close_case(arch.pop("job_case"), None)
+            arch.pop("job_idle_since", None)
+            arch.pop("job_nudged_at", None)
         self._pump_architect()
 
     # ── worker release ──
@@ -1841,6 +1954,7 @@ class Engine:
                              f"{sender.get('id')} -> dropped")
             self.events.unclassified(msg.get("text", "")[:200],
                                      f"unknown structured verb '{verb}'", sender=sender)
+            self._bounce(sender, f"'{verb}' is not a verb I know")
             return "drop", None
         tag, extra = hit
         slots = {**(msg.get("slots") or {}), **extra}
@@ -1885,6 +1999,8 @@ class Engine:
                 self.log("flow", f"{tag} for unknown block '{ref}' -> refused (no canon row)")
                 self.events.unclassified(f"{tag} block ref: {ref}",
                                          "unknown block id (no canon row)", sender=sender)
+                self._bounce(sender, f"'{tag}' names no block the canon knows"
+                                     + (f" (ref '{ref}')" if ref else " (no --block)"))
                 return None
             g = self.st.gate.get(block)
             stages = rule.get("stages")
@@ -1903,8 +2019,69 @@ class Engine:
                     return None
         return slots
 
+    def _resolve_by_sender(self, tag, slots, sender):
+        """Sender-truth resolution (01-13): completes A-1/W11's sender-first rule for the
+        two roles the block-shaped vocabulary never fit. tron-14 F1/F4/F8/F10: architect
+        and reviewer protocol acts rode the classify path hoping for their exact tag; a
+        `worker.done` misfire hit the block-admission wall ('unknown block id') and the
+        job/gate stalled until the operator hand-cranked the report back in. The sender's
+        own engine-side state names the only thing its 'done' CAN mean — resolve there,
+        deterministically, never from prose. Returns (tag, slots), or (None, None) to
+        note-and-drop (an architect residue line after its job already advanced)."""
+        sid = (sender or {}).get("id")
+        w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
+        if w is None:
+            return tag, slots
+        if w.get("role") == "architect" and tag in ("worker.done", "worker.recorded"):
+            job = w.get("current_job") or {}
+            kind = job.get("kind")
+            if w.get("status") != "busy" or not kind:
+                # Post-completion residue (the job already advanced) — a receipt to
+                # note, never a refusal and never a bounce (tron-14 F3's class).
+                self.log("flow", "architect report with no live job -> noted")
+                return None, None
+            if kind in ("forward", "reconcile"):
+                return "architect.reconciled", {**slots, "block": job.get("block")}
+            if kind == "log":
+                return "architect.logged", {**slots, "block": "adhoc"}
+            # triage: its 'done' IS the answer -> relay to the original asker (T10).
+            return "architect.relay", {**slots,
+                                       "detail": slots.get("detail")
+                                       or slots.get("_raw", "")}
+        if w.get("role") == "reviewer" and tag == "worker.done":
+            return "worker.review_done", {**slots,
+                                          "type": w.get("rtype") or slots.get("type")}
+        return tag, slots
+
+    def _bounce(self, sender, why):
+        """01-13: a refused or unreadable report is NEVER a silent discard — the sender
+        gets one line naming why and the exact re-send shape (the mechanized form of
+        tron-14's six manual operator re-deliveries). Live roster only; rate-limited to
+        one bounce per wake-ceiling span per worker so a confused worker is corrected,
+        not flooded."""
+        sid = (sender or {}).get("id")
+        w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
+        if w is None:
+            return
+        now = self._now_s()
+        last = w.get("bounced_at")
+        if last is not None and now - last < float(self.knobs.get("wake_ceiling_sec", 30)):
+            return
+        w["bounced_at"] = now
+        self._to_worker(sid,
+                        f"[TRON]  {sid} — I could not act on your last report ({why}). "
+                        f"Re-send it through the report command with its verb as data: "
+                        f"add `--tag <verb>` (done | recorded | wall | review-done | "
+                        f"clean) and `--block <your block id>` when the act concerns "
+                        f"your block. Say the same thing; carry the tags.",
+                        "report.bounce")
+        self.log("flow", f"bounced {sid}: {why}")
+
     def _ingest(self, tag, slots, sender):
         if tag == "drop":                                # A-2: invalid structured line, already recorded
+            return
+        tag, slots = self._resolve_by_sender(tag, slots, sender)   # 01-13: sender-truth first
+        if tag is None:
             return
         action = self.tags.get(tag)
         if not isinstance(action, dict):
@@ -2233,8 +2410,17 @@ class Engine:
         # result (data over prose) so a terse declaration can never silently no-op.
         data_slots = dict(msg.get("slots") or {})
         if data_slots.get("branch"):
+            # 01-13 (tron-14 F6): the hoist must carry the SENDER'S assigned block for an
+            # engineer — hoisted declarations arrived blockless, _record_branch's owner
+            # check (W11) refused them, and a structured `done --branch X` (which never
+            # reaches classify, the path the W10 comment assumed would backfill the
+            # block) left `branches: {}` through three declarations and walled the gate.
+            snd_id = (msg.get("sender") or {}).get("id")
+            sw = next((x for x in self.st.workers if x.get("id") == snd_id), None)
+            blk = (sw or {}).get("block") if (sw or {}).get("role") == "engineer" else None
             self._record_branch({"branch": data_slots["branch"],
-                                 "worker_id": (msg.get("sender") or {}).get("id")})
+                                 "worker_id": snd_id,
+                                 "block": blk or data_slots.get("block")})
         stag, sslots = self._structured(msg)
         if stag == "drop":
             return "drop", {}
@@ -2258,10 +2444,12 @@ class Engine:
                 inputs={"text": raw[:200], "attempts": len(attempts)},
                 node="§4 classify", attempt=len(attempts), next_action="auto-ack -> unclassified")
             self.events.unclassified(raw, "classify exhausted (invalid-output budget)", sender=sender)  # T3
+            self._bounce(sender, "I could not read it")           # 01-13: never a silent discard
             return "unclassified", {"detail": raw[:120]}
         tag = out["tag"]
         if tag == "unclassified":                         # the model itself found no matching tag (T3)
             self.events.unclassified(raw, "model returned unclassified (no tag matched)", sender=sender)
+            self._bounce(sender, "it fits no tag I know")         # 01-13: correct the sender too
         return tag, {**out.get("slots", {}), **data_slots}   # W10: data over prose
 
     # ── lifecycle ──
