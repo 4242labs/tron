@@ -1058,6 +1058,10 @@ class Engine:
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
             self.st.gate.pop(block, None)
+            # T2 (D-15-2): abandon/release-shaped settles RELEASE as today — the wall now
+            # holds its sender (status 'walled'), so the drop must free that held worker
+            # here, not leave it parked with a live idle session until session end.
+            self._force_release_block(block)
         self._close_case(m.get("case"), case)
         self.log("flow", f"operator:decision:{block} -> {decision}")
         self._emit("pulse")

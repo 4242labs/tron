@@ -189,6 +189,26 @@ def t_wall_holds_not_releases():
     ok("T2 resume clears the blocked block", "A-01" not in eng.st.blocked)
 
 
+def t_wall_then_abandon_releases():
+    # Block doc T2: "abandon/release-shaped settles release as today" — an abandoned
+    # wall must FREE the held worker (never leave it parked 'walled' with a live idle
+    # session until session end), and drop the block.
+    eng = _eng()
+    eng._h_escalate({"block": "A-01", "worker_id": "ENG-A-01", "detail": "stuck"})
+    cid = next(cid for cid, c in eng.st.pending_cases.items() if c.get("kind") == "wall")
+    ok("T2 setup: worker held at the wall",
+       any(x.get("id") == "ENG-A-01" and x.get("status") == "walled"
+           for x in eng.st.workers))
+    eng._h_apply_decision({"case": cid, "decision": "abandon"})
+    ok("T2 abandon releases the held worker (off the roster, never left 'walled')",
+       not any(x.get("id") == "ENG-A-01" for x in eng.st.workers))
+    ok("T2 abandon drops the block",
+       "A-01" in eng._dropped() and "A-01" not in eng.st.blocked)
+    ok("T2 abandon records the release (forensic chokepoint fired)",
+       any(e.get("type") == "release" and e.get("actor") == "ENG-A-01"
+           for e in _events(eng)))
+
+
 def t_wall_never_releases_the_jobs_slot():
     # The held worker's session is left running (T2: never jobs.release on a wall) —
     # distinguished from the OLD behavior (_release_worker) by staying on the roster
