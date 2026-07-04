@@ -2,8 +2,13 @@
 
 Canon is truth; TRON reads, agents write (realign §5). Each tick TRON refreshes a
 local read-only view of the trunk and lists in-flight PRs, then reads the canon
-pipeline/blocks from the on-trunk checkout. It NEVER writes to git and NEVER
-blocks the loop on the network: a failed fetch reuses the last good snapshot.
+pipeline/blocks from the on-trunk checkout. Rider (01-18): this predates local-mode
+landing and is no longer literally true — in LOCAL mode (no remote) this module also
+performs the gate's own landing acts (`merge_ff_only`, `land_docs`,
+`land_ordered_merge`): ff-only trunk merges and paperwork lands, the engine executing
+what a worker's PR-merge would do in remote mode. Even there it never writes canon
+CONTENT — no pipeline/block authoring, no commit body it composed itself — and it
+NEVER blocks the loop on the network: a failed fetch reuses the last good snapshot.
 
 The repo root itself is the trunk checkout — agents build in worktrees off it
 (`<workspace>/worktrees/<repo>--<branch>/`), so the root stays on the trunk branch.
