@@ -972,6 +972,7 @@ class Engine:
         worker_id = m.get("worker_id")
         if block and block in self.st.blocked:
             return                                      # already escalated — idempotent
+        detail = m.get("detail", "wall")
         freed = worker_id
         for w in list(self.st.workers):
             if w.get("role") not in ("engineer", "reviewer"):
@@ -979,6 +980,10 @@ class Engine:
             if (block and w.get("block") == block) or (worker_id and w.get("id") == worker_id):
                 freed = w.get("id")
                 self._hold_worker(w)
+                # T3 (01-17, tron-23): stash the detail ON the worker, not just the case —
+                # the sweep's invariant (b) repair (walled, no pending case) reuses this if
+                # the case is the thing that went missing.
+                w["wall_detail"] = detail
         if block:
             if block not in self.st.blocked:
                 self.st.blocked.append(block)
@@ -987,7 +992,6 @@ class Engine:
             # _gate_giveup (escalation). Popping it here left a live CLOSE gate's
             # clean-confirmation with nothing to advance against (g is None ->
             # the done-handler's `if g and g.get("stage") == "close"` silently no-ops).
-        detail = m.get("detail", "wall")
         case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
         self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
                           tag="worker.wall", detail=detail)
@@ -1065,13 +1069,24 @@ class Engine:
             self._close_case(m.get("case"), case)
             self._emit("pulse"); return
         vg = self.st.gate.get(block)
+        violation_reopen = False
         if decision == "approve" and vg and vg.get("violation_pending"):
             # T6 (01-15): `approve` on a close-time violation wall = land it — the ordered
             # merge of the exact range the wall named. No new verb, no new case kind: this
             # IS what `approve` means everywhere else (the merge-ask branch above).
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
-            self._land_violation_range(block, vg, self._worker_id_for_block(block))
+            landed = self._land_violation_range(block, vg, self._worker_id_for_block(block))
+            if not landed:
+                # T2 (01-17, D-22-1): the land didn't complete (git-layer failure, or a
+                # moved tip re-pinned for a fresh approve) — never spend the case that is
+                # this parked gate's ONLY reachable handle. Put the block back on the wall
+                # (violation_pending's own invariant: a live wall keeps its block blocked)
+                # and reopen the SAME case (decision back to None, same correlation id)
+                # instead of closing it into an operator-unreachable violation_pending gate.
+                violation_reopen = True
+                if block not in self.st.blocked:
+                    self.st.blocked.append(block)
         elif decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
             unheld = False
@@ -1133,7 +1148,10 @@ class Engine:
             # holds its sender (status 'walled'), so the drop must free that held worker
             # here, not leave it parked with a live idle session until session end.
             self._force_release_block(block)
-        self._close_case(m.get("case"), case)
+        if violation_reopen and case is not None:
+            case["decision"] = None            # T2: reachable again, never a spent case
+        else:
+            self._close_case(m.get("case"), case)
         self.log("flow", f"operator:decision:{block} -> {decision}")
         self._emit("pulse")
 
@@ -1864,7 +1882,15 @@ class Engine:
         move carries an IDENTICAL diff, T1's patch-id rider — never landed blind), then the
         same lander cleanup `land_docs` runs on success (worktree gone, branch deleted). No
         new verb, no new case kind: `approve` here means exactly what it means at the
-        ordinary merge gate."""
+        ordinary merge gate.
+
+        T2 (01-17, D-22-1): returns True iff the range actually landed (release + gate-pop
+        happened). EVERY other outcome — the re-pin (tip moved, divergent diff) and the
+        git-layer land failure alike — returns False, and the caller (_h_apply_decision)
+        must never spend the case that got it here on a False: a parked `violation_pending`
+        gate with a closed case was unreachable by any settle (re-settling a spent case is
+        a no-op; the sweep skips violation-parked gates outright). Never silent, never a
+        dead end."""
         branch = g.get("violation_branch")
         pinned = g.get("violation_tip")
         cur = trunk.tip_sha(self.paths["root"], branch, self.dry) if branch else ""
@@ -1877,7 +1903,7 @@ class Engine:
                 self._to_worker(wid, f"[TRON]  {wid} — {branch} moved since I was asked to "
                                      f"land it; approve again to land the new tip.",
                                 "gate.changes")
-            return
+            return False
         okm, detail = trunk.land_ordered_merge(self.paths["root"], branch,
                                                self.paths.get("main_branch", "main"), self.dry)
         if not okm:
@@ -1886,7 +1912,7 @@ class Engine:
                 self._to_worker(wid, f"[TRON]  {wid} — landing {branch} failed: {detail}. "
                                      f"Resolve it; I retry on your next confirm.",
                                 "gate.changes")
-            return
+            return False
         self.events.event("docs_landed", actor=wid, block=block,
                           **{"role": "engineer", "branch": branch, "detail": detail,
                              "via": "violation-approved"})
@@ -1900,6 +1926,7 @@ class Engine:
         self.st.gate.pop(block, None)
         self.log("flow", f"{block} close confirmed (violation range landed) -> worker released")
         self._emit("pulse")
+        return True
 
     def _force_release_block(self, block):
         for w in list(self.st.workers):
@@ -2122,7 +2149,14 @@ class Engine:
         `resume` un-holds it via _h_apply_decision and it continues; a still-walled worker
         is released same as every other worker at session end (_end_session, no special
         case)."""
-        w["held_status"] = w.get("status")
+        # T3 (01-17, tron-23 root cause): a SECOND hold on an already-walled worker (a
+        # repeated-stall wall, a second gate-giveup racing the first) must never overwrite
+        # the TRUE pre-hold status with 'walled' itself — that corrupts held_status so
+        # _unhold_worker's restore is a no-op (status stays 'walled' forever, the exact
+        # tron-23 signature: settled case, worker still walled). Idempotent: only the FIRST
+        # hold ever stamps held_status.
+        if w.get("status") != "walled":
+            w["held_status"] = w.get("status")
         w["status"] = "walled"
 
     def _unhold_worker(self, w):
@@ -2135,6 +2169,7 @@ class Engine:
         case but left the worker walled) was two un-hold call sites free to drift apart;
         now there is one."""
         w["status"] = w.pop("held_status", None) or "working"
+        w.pop("wall_detail", None)         # T3 (01-17): stale detail never survives an un-hold
 
     def _post_unhold_nudge(self, w, block):
         """01-16 addendum (tron-19/20 mutual wait): the state-appropriate next message after
@@ -2590,6 +2625,68 @@ class Engine:
                                           "detail": f"{cid} still parked: "
                                                     f"{case.get('detail')}"})
 
+    # ── wall/hold invariants (T3, 01-17, tron-23) ──
+    def _sweep_wall_invariant(self, w, ping_min):
+        """A `walled` worker is only ever consistent while it is parked ON a live wall
+        case (D-15-2's whole model). Either half of that pairing missing is an
+        inconsistency, named after one silence window (the same wall-clock law, and the
+        same `since` idiom, as the gate-orphaned net just below) — never silent, never
+        indefinite:
+          (a) settled case -> un-held worker: the case for this worker/block already
+              carries a decision (settled) but the worker is still walled — un-hold it via
+              the ordinary _unhold_worker + the 01-16 post-unhold nudge, exactly as an
+              operator `resume` would;
+          (b) walled worker -> pending case: no case at all exists for this worker/block —
+              re-raise one (the wall_detail recorded at hold time if it's still there, else
+              name the inconsistency itself) so the operator can always reach it.
+        A live, still-undecided case is the ordinary wall state — never touched."""
+        block = w.get("block")
+        wid = w.get("id")
+        case = next((c for c in self.st.pending_cases.values()
+                    if c.get("kind") == "wall"
+                    and (c.get("worker_id") == wid or (block and c.get("block") == block))),
+                   None)
+        if case is not None and case.get("decision") is None:
+            w.pop("wall_bad_since", None)      # a live pending case is the normal wall state
+            return
+        since = w.setdefault("wall_bad_since", self._now_s())
+        if self._now_s() - since < ping_min * 60:
+            return
+        w.pop("wall_bad_since", None)
+        if case is not None:
+            # (a): the case settled but nothing un-held this worker. Close the case too
+            # (parity with an ordinary `resume` settle, which always closes what it acts
+            # on) — a decided case has nothing left for any settle to do with it.
+            self._unhold_worker(w)
+            self._close_case(None, case)
+            self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
+            self._post_unhold_nudge(w, block)
+            self._emit("pulse")
+        else:
+            # (b): no case at all — this worker is unreachable. Re-raise one.
+            detail = w.pop("wall_detail", None) or (
+                f"{wid} is walled with no pending case"
+                + (f" for {block}" if block else "") + " — invariant repair")
+            self._reraise_wall(block, wid, detail)
+
+    def _reraise_wall(self, block, wid, detail):
+        """T3(b): repair a caseless wall the same way every OTHER wall parks — a fresh
+        case, the ordinary escalate.wall notice. Never routed through _h_escalate: its
+        `block in st.blocked` idempotency guard exists to stop a LIVE wall being
+        double-parked, which would wrongly swallow this repair (there is no live case
+        here); the worker is already held (never re-hold it — that's the T3 root-cause fix
+        in _hold_worker) and the block never left st.blocked."""
+        if block and block not in self.st.blocked:
+            self.st.blocked.append(block)
+        case_id = self._open_case(block, "wall", wid, detail)
+        self.events.event("escalate", actor=wid or "?", block=block, cid=case_id,
+                          tag="worker.wall", detail=detail)
+        self.emit("escalate.wall", {"worker_id": wid or "?", "block": block or "?",
+                                    "detail": detail, "case": case_id})
+        if self._tg_on():
+            self.emit("tg.escalate", {"worker_id": wid or "?", "detail": detail})
+        self.log("flow", f"sweep: {wid} walled with no case -> reopened ({block or '?'})")
+
     # ── liveness sweep (engine side-system, deterministic — no LLM) ──
     def _sweep(self):
         if self.dry:
@@ -2599,11 +2696,16 @@ class Engine:
         ping = int(self.knobs.get("silence_ping_min", 6))
         esc = int(self.knobs.get("silence_escalate_min", 8))
         for w in list(self.st.workers):
+            if w.get("status") == "released":
+                continue
             # T2 (D-15-2): a walled worker is deliberately idle (parked on the operator) —
             # the silence/stall machinery must never treat that as a hang and force a
-            # second, unintended release out from under the hold; same exemption as
-            # "released".
-            if w.get("status") in ("released", "walled"):
+            # second, unintended release out from under the hold.
+            if w.get("status") == "walled":
+                # T3 (01-17, tron-23): the hold ITSELF must stay a valid pairing — a walled
+                # worker is only ever consistent while a wall case owns it. Checked here,
+                # not skipped like "released".
+                self._sweep_wall_invariant(w, ping)
                 continue
             sess = w.get("session_id")
             alive = bool(sess) and sess != "dry" and jobs.is_alive(w.get("id"), idx)

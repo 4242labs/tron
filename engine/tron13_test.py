@@ -477,7 +477,11 @@ def t_lander_foreign_pipeline_line():
        code == "violation" and "pipeline" in detail, f"{code}: {detail}")
 
 
-def t_lander_nonff():
+def t_lander_nonff_rebases_and_lands():
+    # SUPERSEDES the pre-01-17 "D1 a moved trunk is non-ff (the engine never rebases)":
+    # T1 (01-17, tron-22/23/24) makes this exact race — a lander branch cut before another
+    # lander moved trunk — the engine's job to resolve, not a wall. A non-conflicting trunk
+    # move (different file) now rebase-retries ONCE, inside merge_ff_only, and lands.
     d = _mkrepo()
 
     def w():
@@ -489,10 +493,35 @@ def t_lander_nonff():
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "trunk moved")
     code, detail = trunk.land_docs(d, "docs/behind", ALLOW, "main", False, denylist=DENY)
-    ok("D1 a moved trunk is non-ff (the engine never rebases)",
+    ok("T1 (01-17) a moved-but-compatible trunk auto-rebases once and lands — the "
+       "dominant wall class is resolved deterministically, never a wall",
+       code == "landed", f"{code}: {detail}")
+    ok("T1 the branch is cleaned up on the retry-landed merge",
+       not trunk.branch_exists(d, "docs/behind"))
+
+
+def t_lander_nonff_conflict_still_walls():
+    # T1 (01-17): a rebase that genuinely CONFLICTS is still the branch owner's problem —
+    # the engine aborts cleanly (no mid-rebase residue) and walls non-ff with today's
+    # detail, exactly as an unconditional non-ff always has.
+    d = _mkrepo()
+
+    def w():
+        with open(os.path.join(d, "README.md"), "w") as fh:
+            fh.write("readme - branch change\n")
+    _on_branch(d, "docs/conflict", w)
+    with open(os.path.join(d, "README.md"), "w") as fh:
+        fh.write("readme - trunk change\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "trunk moved (conflicting)")
+    code, detail = trunk.land_docs(d, "docs/conflict", ALLOW, "main", False, denylist=DENY)
+    ok("T1 a CONFLICTED rebase still walls non-ff",
        code == "non-ff", f"{code}: {detail}")
-    ok("D1 non-ff branch survives for its owner to rebase",
-       trunk.branch_exists(d, "docs/behind"))
+    ok("T1 conflicted-rebase branch survives for its owner to resolve",
+       trunk.branch_exists(d, "docs/conflict"))
+    ok("T1 the abort leaves no mid-rebase residue",
+       not os.path.exists(os.path.join(d, ".git", "rebase-merge"))
+       and not os.path.exists(os.path.join(d, ".git", "rebase-apply")))
 
 
 def t_lander_architect_union():
@@ -1004,7 +1033,8 @@ TESTS = [
     t_lander_code_violation,
     t_lander_own_block_exceptions,
     t_lander_foreign_pipeline_line,
-    t_lander_nonff,
+    t_lander_nonff_rebases_and_lands,
+    t_lander_nonff_conflict_still_walls,
     t_lander_architect_union,
     t_close_lands_first,
     t_close_violation_parks_as_a_wall,
