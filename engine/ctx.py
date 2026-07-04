@@ -110,6 +110,18 @@ class Ctx:
     def event_log(self):
         return self.p("events.jsonl")
 
+    # ── durable inbound-message archive (T8, 01-18 addendum 2) ──
+    @property
+    def message_log(self):
+        """Beside `event_log`, not inside it: `events.jsonl` records what TRON DECIDED;
+        this preserves what was actually SAID. Engine->worker is fully durable (mailbox +
+        home log) but worker/operator/tg->engine raw text used to live only in the inbox
+        sidecar — claimed each tick and DELETED after a clean save, leaving only derived
+        events and truncated snippets. E2 adjudication and any post-hoc dispute needs
+        exactly what the agent said, so `_claim_inboxes` archives every claimed line here
+        verbatim, parsed or not, before/regardless of processing."""
+        return self.p("messages.jsonl")
+
     @property
     def logs_dir(self):
         return self.p("logs")

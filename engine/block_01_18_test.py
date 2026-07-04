@@ -42,12 +42,25 @@ Addendum (operator decision 2026-07-04, fix ALL known issues in this block):
       `__main__` runs the real rule set standalone (mirroring `engine.py cmd_validate`)
       or names `./lint.sh` and exits non-zero.
 
+Addendum 2 (operator, 2026-07-04):
+  T8  a durable inbound-message archive (`messages.jsonl`, beside `events.jsonl`):
+      `_claim_inboxes` archives every claimed inbox line VERBATIM — worker, operator,
+      and tg all land, with `source` distinguishing the tg inbox from the console/API
+      operator inbox even though both normalize to sender kind `operator`. A JSON-
+      undecodable line archives too, flagged `unparsed`, raw, and today's skip-and-
+      continue behavior is unchanged. A crash-replayed `.proc` sidecar re-archives —
+      accepted, honest at-least-once duplicate forensics, same rule as every other
+      at-least-once surface here.
+
 T1/T3/T4/T5 are dry FSM-level cases (TRON_DRY, sentry_test's fixture builders — same
 convention as mg_01_test.py/tron07_test.py). T2/T6's sweep arms need `eng.dry = False`
 (_sweep no-ops entirely under dry) — same convention as block_01_17_test.py's T3 cases.
+T8 cases call `_claim_inboxes()` directly (no classify/dispatch machinery needed) and
+read `messages.jsonl` back via `util.read_jsonl`.
 
 Run: python3 engine/block_01_18_test.py   (exit 0 = pass). No tokens, no network.
 """
+import json
 import os
 import subprocess
 import sys
@@ -564,6 +577,107 @@ def t_lint_py_entrypoint_really_lints_or_exits_nonzero():
     ok("T7 in this repo, lint.py's __main__ reproduces ./lint.sh's own OK result",
        ran_real_rules and proc.returncode == 0 and "OK" in proc.stdout,
        f"rc={proc.returncode} stdout={proc.stdout!r}")
+
+
+# ── T8 (Addendum 2, AC-T8): durable inbound-message archive ──
+def _messages(eng):
+    return util.read_jsonl(eng.ctx.message_log)
+
+
+def t_claimed_messages_archived_verbatim_worker_operator_tg():
+    eng = _eng_bare()
+    eng.st.data.setdefault("last_sweep", {})["sweeps_this_session"] = 7
+    util.append_jsonl(eng.ctx.worker_inbox,
+                      {"text": "worker report", "sender": {"kind": "worker", "id": "ENG-A-01"}})
+    util.append_jsonl(eng.ctx.operator_inbox,
+                      {"text": "resume CASE-001", "sender": {"kind": "operator", "id": "op1"}})
+    util.append_jsonl(eng.ctx.tg_inbox,
+                      {"text": "approve CASE-002", "sender": {"kind": "operator", "id": "tg-1"}})
+    claimed, msgs = eng._claim_inboxes()
+    ok("setup: all three inboxes parsed", len(msgs) == 3, f"msgs={msgs}")
+    recs = _messages(eng)
+    ok("T8 every claimed message (worker + operator + tg) lands in messages.jsonl",
+       len(recs) == 3, f"recs={recs}")
+    ok("T8 archived BEFORE the sidecar is released (still .proc on disk when read back)",
+       all(os.path.exists(p) for p in claimed), f"claimed={claimed}")
+    by_source = {r["source"]: r for r in recs}
+    ok("T8 source distinguishes worker/operator/tg even though tg normalizes to sender "
+       "kind 'operator' like the console/API inbox",
+       set(by_source) == {"worker", "operator", "tg"}, f"recs={recs}")
+    ok("T8 the tg record's sender kind is normalized 'operator' (kind unchanged; source "
+       "is the new, finer key)",
+       by_source["tg"]["sender"].get("kind") == "operator", f"recs={recs}")
+    ok("T8 every record carries the in-progress tick number (_log_env's own idiom)",
+       all(r.get("tick") == 7 for r in recs), f"recs={recs}")
+    ok("T8 text is preserved verbatim per source",
+       by_source["worker"]["text"] == "worker report"
+       and by_source["operator"]["text"] == "resume CASE-001"
+       and by_source["tg"]["text"] == "approve CASE-002",
+       f"recs={recs}")
+
+
+def t_malformed_line_archived_flagged_unparsed_processing_unharmed():
+    eng = _eng_bare()
+    eng.st.data.setdefault("last_sweep", {})["sweeps_this_session"] = 3
+    with open(eng.ctx.worker_inbox, "w") as fh:
+        fh.write("not json at all\n")
+        fh.write(json.dumps({"text": "a good one",
+                             "sender": {"kind": "worker", "id": "ENG-A-01"}}) + "\n")
+    claimed, msgs = eng._claim_inboxes()
+    ok("T8 setup: the malformed line is still skipped from processing (unchanged behavior)",
+       len(msgs) == 1 and msgs[0]["text"] == "a good one", f"msgs={msgs}")
+    recs = _messages(eng)
+    ok("T8 both lines are archived despite one being JSON-undecodable", len(recs) == 2,
+       f"recs={recs}")
+    ok("T8 the malformed line archives flagged unparsed, with the raw text preserved",
+       any(r.get("unparsed") is True and r.get("raw") == "not json at all"
+           and r.get("tick") == 3 for r in recs),
+       f"recs={recs}")
+    ok("T8 the well-formed line on the same inbox still archives normally",
+       any(r.get("text") == "a good one" and not r.get("unparsed") for r in recs),
+       f"recs={recs}")
+
+
+def t_crash_replay_leftover_proc_sidecar_rearchives_without_breaking_tick():
+    eng = _eng_bare()
+    eng.st.data.setdefault("last_sweep", {})["sweeps_this_session"] = 5
+    proc = eng.ctx.worker_inbox + ".proc"
+    with open(proc, "w") as fh:
+        fh.write(json.dumps({"text": "crash replay text",
+                             "sender": {"kind": "worker", "id": "ENG-A-01"}}) + "\n")
+    claimed, msgs = eng._claim_inboxes()
+    ok("T8 a leftover .proc (crash residue) is claimed again, never a fresh live-inbox read",
+       claimed == [proc], f"claimed={claimed}")
+    ok("T8 the replayed message still reaches processing (at-least-once, unbroken tick)",
+       len(msgs) == 1 and msgs[0]["text"] == "crash replay text", f"msgs={msgs}")
+    recs = _messages(eng)
+    ok("T8 the crash-replayed sidecar re-archives its line", len(recs) == 1
+       and recs[0]["text"] == "crash replay text", f"recs={recs}")
+    # A second crash before release replays the SAME sidecar again -> accepted duplicate
+    # forensics (at-least-once law), never a raised error, never a broken tick.
+    claimed2, msgs2 = eng._claim_inboxes()
+    ok("T8 re-claiming the same leftover sidecar a second time still does not break the tick",
+       len(msgs2) == 1, f"msgs2={msgs2}")
+    ok("T8 the duplicate re-archive is accepted (2 honest duplicate records, not deduped)",
+       len(_messages(eng)) == 2, f"recs={_messages(eng)}")
+
+
+def t_full_text_never_truncated():
+    eng = _eng_bare()
+    eng.st.data.setdefault("last_sweep", {})["sweeps_this_session"] = 9
+    long_text = ("the operator's full inbound reasoning, well past the 200-char "
+                 "snippet the unclassified/failure records keep — this line exists "
+                 "to prove the archive never truncates it, unlike those forensic "
+                 "shortcuts elsewhere in the engine. end-marker-follows.")
+    ok("setup: fixture text is actually over 200 chars", len(long_text) > 200,
+       f"len={len(long_text)}")
+    util.append_jsonl(eng.ctx.operator_inbox,
+                      {"text": long_text, "sender": {"kind": "operator", "id": "op1"}})
+    eng._claim_inboxes()
+    recs = _messages(eng)
+    ok("T8 the full text is archived verbatim, never truncated",
+       any(r.get("text") == long_text for r in recs),
+       f"lens={[len(r.get('text') or '') for r in recs]}")
 
 
 def main():
