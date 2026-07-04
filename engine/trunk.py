@@ -229,11 +229,18 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     if rc == 0:
         return True, err
     non_ff_detail = err          # T1: today's detail — preserved through the retry either way
-    rrc, _, _ = _run(["git", "-C", repo_root, "rebase", main_branch, branch])
+    rrc, _, rebase_err = _run(["git", "-C", repo_root, "rebase", main_branch, branch])
     if rrc != 0:
         _run(["git", "-C", repo_root, "rebase", "--abort"])
         _run(["git", "-C", repo_root, "checkout", main_branch])
-        return False, non_ff_detail
+        # R1b (01-19, peer review): the RETURNED detail is still non_ff_detail (today's wall
+        # text, unchanged — every caller/test that reads it keeps reading the same thing).
+        # This only ADDS the rebase-retry's own failure reason, log-only (the caller's flow
+        # line is the sole reader, fsm.py ~1444) — without it a worktree-refused rebase (git
+        # refuses to rebase a branch another worktree holds) is indistinguishable in the logs
+        # from a genuine conflict; both fell through to the identical original ff error.
+        return False, (f"{non_ff_detail} (rebase-retry: {rebase_err.strip()[:200]})"
+                       if rebase_err.strip() else non_ff_detail)
     rc2, _, err2 = _run(["git", "-C", repo_root, "checkout", main_branch])
     if rc2 != 0:
         return False, non_ff_detail
