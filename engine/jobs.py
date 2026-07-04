@@ -201,6 +201,21 @@ def runner_idle(worker_id, idx=None):
     return rec is None or rec.get("state") == "idle"
 
 
+def read_hwm(worker_dir):
+    """T2 (01-19, F5): the engine-internal reader for the runner's own high-water seq (the
+    CONSUMED half of the order-dedupe invariant: undelivered = send-seq > consumed-seq). The
+    engine never wrote this file before (worker_runner.py owns `_write_hwm`, after each
+    fully-finished turn) and never reads it anywhere else — this is that one small reader,
+    not a knob. Missing/corrupt reads as 0 (nothing consumed yet), the same fail-open
+    Runner._read_hwm itself uses, so an at-least-once re-emit recomputes the same seq and
+    the dedupe stays coherent across a crash on either side."""
+    try:
+        with open(os.path.join(worker_dir, HWM)) as fh:
+            return int(fh.read().strip() or "0")
+    except (OSError, ValueError):
+        return 0
+
+
 # ── engine -> worker: append one line to the mailbox (the ONLY delivery path) ──
 def send(worker_dir, seq, kind, text):
     """Append one message to the worker's mailbox. Pure file append — no session is ever
