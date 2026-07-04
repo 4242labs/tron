@@ -194,8 +194,18 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     """Fast-forward trunk to an already-validated block branch — the local/no-remote merge.
     The engine owns the trunk merge (MG-01): with no remote there is no PR to land, so the
     engine advances trunk itself, but ONLY as a fast-forward — never a merge commit, never a
-    force. A non-ff (trunk moved under the branch) returns ok=False so the caller re-nudges
-    the worker to rebase, rather than fabricating history.
+    force.
+
+    T1 (01-17, tron-22/23/24): the dominant wall class across the campaign — a lander branch
+    cut before another lander moved trunk fails this ff-only, every time, on pure timing.
+    Every caller (`land_docs`, `land_ordered_merge`, the DONE-gate's own direct call) shares
+    this one primitive, so the fix lives here ONCE: on a first ff-refusal, rebase `branch`
+    onto the CURRENT trunk tip ONE time and retry the ff-only merge. `git rebase <upstream>
+    <branch>` leaves `branch` itself checked out (an implicit `switch`) — re-checkout
+    `main_branch` before the retry, exactly like the top of this function. A conflicted
+    rebase aborts cleanly (never leaves the repo mid-rebase) and a second refusal after a
+    clean rebase both fall through to the ORIGINAL non-ff error text — today's wall detail,
+    unchanged; only the deterministic, bounded, no-knob retry is new.
 
     T5 (01-15, tron-16 boot-1 residue): verifies `main_branch` itself exists BEFORE acting —
     a missing trunk branch (an env fault) used to fall through the checkout silently (git
@@ -211,7 +221,21 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     if rc != 0:
         return False, f"checkout {main_branch} failed: {err.strip()[:200]}"
     rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
-    return rc == 0, err
+    if rc == 0:
+        return True, err
+    non_ff_detail = err          # T1: today's detail — preserved through the retry either way
+    rrc, _, _ = _run(["git", "-C", repo_root, "rebase", main_branch, branch])
+    if rrc != 0:
+        _run(["git", "-C", repo_root, "rebase", "--abort"])
+        _run(["git", "-C", repo_root, "checkout", main_branch])
+        return False, non_ff_detail
+    rc2, _, err2 = _run(["git", "-C", repo_root, "checkout", main_branch])
+    if rc2 != 0:
+        return False, non_ff_detail
+    rc3, _, _ = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
+    if rc3 != 0:
+        return False, non_ff_detail
+    return True, ""
 
 
 def land_ordered_merge(repo_root, branch, main_branch="main", dry=False):
