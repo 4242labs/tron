@@ -109,6 +109,7 @@ class Engine:
         self.paths = ctx.repo_paths(self.project)
         self._trunk_sha = ""                          # last-known trunk HEAD (forensic state context)
         self._snapshot_hash = ""                      # hash of the rebuilt trunk-read snapshot (per-tick provenance)
+        self._trunk_fault = False                     # T3 (01-16): this tick's trunk read came back blank
         self.events = eventlog.EventLog(ctx, self._log_env)
         jobs.configure(ctx.workers_dir)               # point the worker store at this instance (01-10)
 
@@ -271,6 +272,21 @@ class Engine:
             if halting:
                 self._halt_loud(f"trunk refresh failed: {detail}", bootup=not count)
                 return
+        # T3 (01-16, D-17-1 supporting defect): a trunk sha that comes back blank — whether
+        # `ok` or not — is never a valid view to read or reconcile against. The old fallthrough
+        # (skip the snapshot pin, fall back to reading the live working-tree paths directly)
+        # is exactly what regressed a done block's gate close -> local and re-created phantom
+        # gate state on a transient `trunk: ""` tick (observed twice in tron-17, self-healed by
+        # luck). Treat it as a FAULT for this tick alone: reuse the last good pipeline/gate
+        # view untouched, skip the read/reconcile, and let the caller (tick -> _drive_gates)
+        # skip gate re-evaluation too. The A-2 dead-trunk halt above already owns the
+        # PERSISTENT case; this is the transient one. A genuinely-first load (no prior
+        # snapshot to reuse) still attempts the live read below — there is nothing to reuse.
+        self._trunk_fault = bool(not self._trunk_sha and self.st.pipeline)
+        if self._trunk_fault:
+            self.log("trunk", "empty trunk read this tick (blank sha) -> fault, "
+                              "reusing the last snapshot untouched")
+            return
         try:
             ppath, bpath = self.paths["pipeline"], self.paths["blocks"]
             if not self.dry and self._trunk_sha:
@@ -1058,8 +1074,10 @@ class Engine:
             self._land_violation_range(block, vg, self._worker_id_for_block(block))
         elif decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
-            for w in self.st.workers:                      # T4: a wall-held worker un-holds on resume
+            unheld = False
+            for w in list(self.st.workers):                # T4: a wall-held worker un-holds on resume
                 if w.get("block") == block and w.get("status") == "walled":
+                    unheld = True
                     self._unhold_worker(w)
                     # T1 (01-15 D-16-1 seam 1): replay whatever queued whole while held, in
                     # arrival order — this is the exact `clean` confirmation the wall used
@@ -1068,6 +1086,15 @@ class Engine:
                     for item in queued:
                         self._ingest(item["tag"], item["slots"],
                                     {"kind": "worker", "id": w.get("id")})
+                    if not queued:
+                        # 01-16 addendum (tron-19/20): un-holding with an EMPTY replay
+                        # queue used to leave a MUTUAL WAIT — the live runner idles
+                        # awaiting a mailbox message while the engine waits for the worker
+                        # to speak, and the restored idle entry consumes its slot forever
+                        # (dispatch starves with no gate for any net to key on). Every
+                        # un-hold now ends with the worker's state-appropriate next
+                        # message — never two parties waiting on each other.
+                        self._post_unhold_nudge(w, block)
             vg2 = self.st.gate.get(block)
             if vg2 and vg2.get("violation_pending"):
                 # T6 (01-15): resume means the worker resolves its own branch — clear the
@@ -1076,6 +1103,21 @@ class Engine:
                 vg2.pop("violation_pending", None)
                 vg2.pop("violation_branch", None)
                 vg2.pop("violation_tip", None)
+            elif not unheld and vg2 is not None:
+                # T2 (01-16, D-17-1): resume expects to find the walled worker it un-holds —
+                # tron-17's CASE-006 gap was exactly this: the worker died and was purged out
+                # from under its own wall, so this loop matched nothing and resume silently
+                # no-op'd, leaving the block's DONE gate stranded with nobody left to confirm
+                # it. A worker gone by the time resume settles routes to the same
+                # workerless-gate resolution as every other "gate outlived its worker" path —
+                # never a silent no-op.
+                self._resolve_workerless_gate(block, vg2)
+            elif not unheld:
+                # 01-16 addendum: no worker to un-hold AND no gate — the block would sit
+                # unowned until something re-armed it. Re-arm via the ordinary recovery
+                # dispatch (its own guards skip done/parked/gated/in-flight blocks); a 📋
+                # row also redispatches via the closing pulse's switchboard as always.
+                self._redispatch(block)
         elif decision == "amend" and block in self.st.blocked:
             self.st.blocked.remove(block)
             self._forward_review(block)                   # architect re-scopes the block file
@@ -1162,6 +1204,12 @@ class Engine:
         return float(self.knobs.get(mult_knob, default)) * ceiling
 
     def _drive_gates(self):
+        if self._trunk_fault:
+            # T3 (01-16): this tick's trunk read came back blank — never re-evaluate gate
+            # state against it (that's exactly what regressed a done block's gate
+            # close -> local on tron-17's transient `trunk: ""` ticks). Hold everything
+            # untouched; the next good read resumes driving normally.
+            return
         for block in list(self.st.gate.keys()):
             g = self.st.gate.get(block)
             if g is None:
@@ -1503,6 +1551,17 @@ class Engine:
             self.events.event("gate_advance", block=block,
                               **{"from": prev, "to": "close", "detail": "✅ on trunk"})
             self.log("flow", f"gate[{block}] -> close (slot held)")
+            return
+        # T2 (01-16, D-17-1): a workerless gate never waits on stale runner liveness. The
+        # pacing below reads jobs.runner_idle(wid) off the ON-DISK runner record — a runner
+        # that died mid-turn leaves that record reading `working` forever (nobody's left to
+        # ever update it), which is exactly what stranded tron-17's CASE-006 gate at `close`
+        # for ~28 silent minutes: no bound worker on the roster, yet the disk record never
+        # aged into "idle" so close_idle_since never even started. The ROSTER (not the disk
+        # record) is the authority on whether anyone is left to wait on — no bound worker ->
+        # attempt the evidence-gated close right now instead of pacing against a ghost.
+        if self._worker_id_for_block(block) is None:
+            self._confirm_close(block, g)
             return
         # tron-07 W6b + S-1: close pacing is the same wall-clock law as the gate's — a worker
         # mid-close-out (runner `working`) never accrues (per-tick accrual once capped a working
@@ -1862,6 +1921,36 @@ class Engine:
                   if w.get("role") == "engineer" and w.get("block") == block), None)
         return w.get("id") if w else None
 
+    def _resolve_workerless_gate(self, block, g):
+        """T2 (01-16, D-17-1): a workerless gate is never a wait state. Every path that
+        finds a block's gate outliving its bound worker converges here — a dead-runner
+        purge (recover), a `resume` that finds nobody left to un-hold, the sweep's
+        silence backstop. Reuses the DONE ladder, never a new mechanism: block ✅ on
+        trunk gets the ladder's own evidence-gated close a chance to confirm on trunk
+        evidence alone (paperwork landed + a clean replica — never the dead worker's
+        say-so, exactly what the ladder always required, never trusting the report or
+        the commit); anything short of that (not done yet, or the evidence genuinely
+        isn't there and nobody's left to fix it) never waits on a worker that's gone —
+        give up NAMED, the existing `gate-orphaned` code (worker id may be gone; name
+        the block)."""
+        row = self.st.row(block)
+        if row and row.get("status") == "done":
+            if (block in self.st.gate and not g.get("violation_pending")
+                    and g.get("stage") != "close"):
+                self._drive_close(block, g, None)      # record-check + stage-flip to close
+            if block in self.st.gate and not g.get("violation_pending"):
+                self._drive_close(block, g, None)       # at close now -> attempt the confirm
+            if block not in self.st.gate or g.get("violation_pending"):
+                return       # closed on trunk evidence, or parked as an ordinary wall (already escalated)
+        self._gate_giveup(block, g, None,
+                          f"{block}'s gate has no live bound worker to resolve it (released/"
+                          f"purged/gone)"
+                          + (" — the close-confirm evidence (paperwork landed, clean replica) "
+                             "wasn't there" if row and row.get("status") == "done"
+                             else " — the block is not done on trunk"),
+                          "gate-orphaned",
+                          "check the worker/block binding; resume or reassign")
+
     def _block_merge_approval(self, block):
         """The block's own `Merge approval:` header (MG-01) — 'auto' or 'needs-user'."""
         row = next((r for r in self.st.pipeline if r.get("id") == block), None)
@@ -2046,6 +2135,39 @@ class Engine:
         case but left the worker walled) was two un-hold call sites free to drift apart;
         now there is one."""
         w["status"] = w.pop("held_status", None) or "working"
+
+    def _post_unhold_nudge(self, w, block):
+        """01-16 addendum (tron-19/20 mutual wait): the state-appropriate next message after
+        an un-hold whose replay queue was empty — restoring `held_status` (often `idle`) with
+        nothing queued re-created two parties waiting on each other: the live runner idling
+        on its mailbox, the engine waiting for the worker to speak, the idle roster entry
+        starving every slot. Deterministic, existing vocabulary only:
+          gate open            -> re-send the gate's own pending stage prompt (the same
+                                  message the stage's idle re-nudge would eventually send);
+          block done, gateless -> nothing remains for this worker — release it through the
+                                  ordinary event-logged chokepoint, free the slot;
+          block open, gateless -> heartbeat ping (the sweep's own vocabulary) — the worker
+                                  re-reports and the flow resumes."""
+        wid = w.get("id")
+        g = self.st.gate.get(block)
+        row = self.st.row(block)
+        if g is not None:
+            stage = g.get("stage")
+            nudge = self._stage_template(stage)
+            if nudge:
+                self.emit(nudge, self._stage_slots(stage, wid, block), worker_id=wid)
+            else:
+                self.emit("heartbeat.ping", {"worker_id": wid}, worker_id=wid)
+            self.log("flow", f"resume[{block}] -> re-nudge {wid} at '{stage}' "
+                             f"(empty replay queue)")
+        elif row and row.get("status") == "done":
+            self._release_worker(w, notify=False, reason="force-release")
+            self.log("flow", f"resume[{block}] -> {wid} released (block done, nothing gated)")
+            self._emit("pulse")
+        else:
+            self.emit("heartbeat.ping", {"worker_id": wid}, worker_id=wid)
+            self.log("flow", f"resume[{block}] -> heartbeat ping {wid} "
+                             f"(no gate; the worker re-reports)")
 
     # ── worker release ──
     def _release_worker(self, w, notify=True, reason="released"):
@@ -2526,6 +2648,7 @@ class Engine:
                 if within:
                     w.pop("pinged_at", None)  # a working turn ends the silence episode
                     w.pop("kill_at", None)
+                    w.pop("orphan_since", None)  # a working turn ends any orphan suspicion too
                     continue
                 # past the runner's own deadline: presumed suspended
                 if not w.get("kill_at"):
@@ -2547,21 +2670,48 @@ class Engine:
                 # wall-clock law). Naturally one-shot: _gate_giveup raises a wall, which
                 # HOLDS this worker (walled) — and this loop skips walled workers up top —
                 # so it never re-fires on the same orphan.
-                if (w.get("role") == "engineer" and rstate == "idle" and w.get("block")
-                        and delta is not None and delta > ping * 60):
+                if w.get("role") == "engineer" and rstate == "idle" and w.get("block"):
                     blk = w.get("block")
                     row = self.st.row(blk)
                     g = self.st.gate.get(blk)
                     done = bool(row and row.get("status") == "done")
-                    if done or g is None:
-                        self._gate_giveup(
-                            blk, g or {}, w.get("id"),
-                            f"{w.get('id')} idle {int(delta)}s, bound to {blk}, but "
-                            + ("the block is already done" if done
-                               else "no gate exists for it"),
-                            "gate-orphaned",
-                            "check the worker/block binding; resume or reassign")
+                    if g is None:
+                        # 01-16 addendum (tron-19/20): the 01-15 clock (`delta > ping*60`)
+                        # keys on the runner record's own freshness — which the idle-poll
+                        # REFRESHES on every poll, so for a LIVE idle runner the predicate
+                        # could never fire (the exact trap the comment above names, one
+                        # layer down; observed 20+ silent minutes on both tron-19 and
+                        # tron-20). Fire on EITHER clock: a stale record (the dead/frozen
+                        # runner arm, unchanged), or one full silence window of
+                        # continuously OBSERVED inconsistency (idle + bound + gateless) on
+                        # the engine's own wall clock — which no idle-poll can refresh.
+                        since = w.setdefault("orphan_since", self._now_s())
+                        due = ((delta is not None and delta > ping * 60)
+                               or self._now_s() - since >= ping * 60)
+                        if due and done:
+                            # arm (a), tron-20: the block is ✅ with nothing left to gate —
+                            # nothing remains for this worker at all. Release it (the
+                            # ordinary event-logged chokepoint) and free the slot; an
+                            # operator case here is pure noise — there is no decision to
+                            # make (supersedes the 01-15 escalate-on-done arm, whose wall
+                            # needed a manual `tron recover` anyway).
+                            self._release_worker(w, notify=False, reason="force-release")
+                            self.log("flow", f"sweep: {w.get('id')} idle on done+gateless "
+                                             f"{blk} -> released (slot freed)")
+                            self._emit("pulse")
+                        elif due:
+                            # arm (b), tron-19: idle + bound + open block + no gate is a
+                            # MUTUAL WAIT (the runner awaits a mailbox message; the engine
+                            # awaits the worker's report) — never a silent wait state.
+                            self._gate_giveup(
+                                blk, {}, w.get("id"),
+                                f"{w.get('id')} idle, bound to {blk}, but no gate exists "
+                                f"for it (mutual wait — the runner idles awaiting a "
+                                f"message)",
+                                "gate-orphaned",
+                                "check the worker/block binding; resume or reassign")
                         continue
+                    w.pop("orphan_since", None)   # a live gate owns this worker's pacing
                 continue
             if delta is None:
                 continue
@@ -2570,6 +2720,24 @@ class Engine:
             elif delta > ping * 60 and not w.get("pinged_at"):
                 w["pinged_at"] = util.now_iso()
                 self.emit("heartbeat.ping", {"worker_id": w.get("id")}, worker_id=w.get("id"))
+        # T2 (01-16, D-17-1): the gate-orphaned predicate above requires an idle WORKER to
+        # exist to fire — a gate whose block has NO live bound worker AT ALL (purged,
+        # force-released, or any other path that outlives the roster entry) escapes it
+        # entirely, exactly tron-17's live-lock: every net here keys on a worker, and there
+        # was no worker. This extends the same one-silence-window law to that case, using
+        # the gate's own clock (there's no runner left to read activity from). Never fires
+        # under a blank trunk read (T3) — a fault tick touches no gate state at all.
+        if not self._trunk_fault:
+            now = self._now_s()
+            for block, g in list(self.st.gate.items()):
+                if str(block).startswith("review:") or g.get("violation_pending"):
+                    continue
+                if self._worker_id_for_block(block) is not None:
+                    g.pop("orphan_since", None)
+                    continue
+                since = g.setdefault("orphan_since", now)
+                if now - since >= ping * 60:
+                    self._resolve_workerless_gate(block, g)
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):
@@ -2931,11 +3099,19 @@ class Engine:
 
     def recover(self):
         """Reattach: rebuild live workers from the TRON worker store (runner.json per worker),
-        re-arm lost work, and re-read the canon trunk. No status writes (TRON owns none)."""
+        re-arm lost work, and re-read the canon trunk. No status writes (TRON owns none).
+        T1 (01-16, D-17-1): a dead-runner purge is a RELEASE like every other worker exit —
+        never a silent pool removal. tron-17's CASE-006 died mid-hold with its block already
+        ✅ on trunk: the old purge just dropped it from the roster with no release event and
+        no gate handling (`_redispatch` no-ops on a done block), so the DONE gate stranded at
+        `close` with nobody visibly accountable for it and the operator's later `resume` found
+        nothing to un-hold. Every purge now emits `release` (reason `stall-recover`, the same
+        vocabulary `_h_recover` already uses for a live-detected stall) and hands any gate the
+        worker held to T2's workerless-gate resolution."""
         self._refresh_from_trunk()
         idx = jobs.index()
         alive, purged, rebuilt = 0, 0, []
-        for w in self.st.workers:
+        for w in list(self.st.workers):           # a copy: _release_worker mutates the roster
             if jobs.is_alive(w.get("id"), idx):
                 rec = jobs.find(w.get("id"), idx) or {}
                 w["session_id"] = rec.get("session_id", w.get("session_id"))
@@ -2943,9 +3119,14 @@ class Engine:
                 alive += 1
             else:
                 purged += 1
-                blk = w.get("block")
-                if blk and not str(blk).startswith("review:") and w.get("role") != "architect":
-                    self._redispatch(blk)              # re-arm the lost block (recovery override)
+                blk, role = w.get("block"), w.get("role")
+                self._release_worker(w, notify=False, reason="stall-recover")
+                if blk and not str(blk).startswith("review:") and role != "architect":
+                    g = self.st.gate.get(blk)
+                    if g is not None:
+                        self._resolve_workerless_gate(blk, g)   # T2: hand the orphaned gate off
+                    else:
+                        self._redispatch(blk)          # no gate yet -> the ordinary lost-work re-arm
         self.st.data["active_workers"] = [w for w in self.st.workers
                                           if w in rebuilt or w.get("status") == "spawning"]
         if (self.comp.get("session", {}).get("persistent_architect")

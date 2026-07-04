@@ -196,7 +196,8 @@ def t_idle_bound_orphan_escalates_gate_orphaned_block_done():
     w = eng.st.workers[0]
     w["status"] = "idle"
     w["session_id"] = "s1"                 # a live (non-"dry") session for the sweep
-    rec = {"state": "idle", "turns": 1}
+    # `dir` mirrors jobs.index's real record shape — 01-16's release path reads it.
+    rec = {"state": "idle", "turns": 1, "dir": "/nonexistent/tron-test-worker"}
     orig = (jobs.index, jobs.is_alive, jobs.find,
             jobs.activity_signals, jobs.has_positive_activity)
     jobs.index = lambda: {}
@@ -208,8 +209,17 @@ def t_idle_bound_orphan_escalates_gate_orphaned_block_done():
     try:
         eng._tq = []
         eng._sweep()
-        ok("T3 block already done + no gate -> orphan escalates too",
-           any(t == "wall:raised:A-01" for t, _ in eng._tq), f"tq={eng._tq}")
+        # 01-16 supersedes this arm's ACTION (block done + gateless): the worker is
+        # RELEASED (ordinary event-logged chokepoint, slot freed) instead of walled —
+        # tron-20 showed the wall this arm used to raise parked an operator case with no
+        # decision left to make, and needed a manual `tron recover` anyway. The predicate
+        # itself (never silent, fires within one window) is unchanged.
+        ok("T3 block already done + no gate -> resolved (worker released, slot freed)",
+           not any(x.get("id") == "ENG-A-01" for x in eng.st.workers),
+           f"workers={eng.st.workers}")
+        rel = [e for e in _events(eng) if e.get("type") == "release"
+               and e.get("actor") == "ENG-A-01"]
+        ok("T3 the release is event-logged (never a silent removal)", bool(rel))
     finally:
         (jobs.index, jobs.is_alive, jobs.find,
          jobs.activity_signals, jobs.has_positive_activity) = orig
