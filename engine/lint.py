@@ -501,3 +501,36 @@ def run(ctx, project=None):
                + _admission_table(ctx, routing) + _paperwork_sanity(project)
                + _worker_contract(ctx))
     return all(x.ok for x in results), results
+
+
+# ── T7 (01-18 addendum): `python3 engine/lint.py` must never be a silent no-op ──
+# This module has no __main__ of its own — `run()` is a library function the CLI
+# (engine.py validate) drives with a resolved ctx/project. Called bare, the interpreter
+# just imported the module and exited 0 having checked NOTHING: a fail-open trap for any
+# tooling told to "run lint.py" directly. Fail loud instead: build the SAME ctx/project
+# `engine.py cmd_validate` builds (mirrored here — a few lines, cheap) and run the real
+# rule set for real when that's reproducible standalone; if construction itself fails
+# (no instance here to lint), name `./lint.sh` as the real entrypoint and exit non-zero.
+# Never exit 0 without having checked something.
+if __name__ == "__main__":
+    import sys as _sys
+
+    def _main():
+        tron_dir = os.environ.get("TRON_DIR") or os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))
+        try:
+            from ctx import Ctx
+            ctx = Ctx(tron_dir)
+            project = ctx.load_project() or None
+            ok, results = run(ctx, project)
+        except Exception as e:
+            print(f"lint.py: can't run the rule set standalone here "
+                  f"({type(e).__name__}: {e}) — use ./lint.sh, the real entrypoint.")
+            return 1
+        print("blueprint-lint:")
+        for r in results:
+            print(r)
+        print("OK" if ok else "FAILED")
+        return 0 if ok else 1
+
+    _sys.exit(_main())

@@ -26,13 +26,30 @@ pacing-exemption set (holistic review round 2, post-01-17, canon 27d551c).
       block-less case (kind paperwork/residue, `block` is None by design) — key it on
       `case is None` instead.
 
-T1/T3/T4 are dry FSM-level cases (TRON_DRY, sentry_test's fixture builders — same
-convention as mg_01_test.py/tron07_test.py). T2's sweep arms need `eng.dry = False`
+Addendum (operator decision 2026-07-04, fix ALL known issues in this block):
+  T5  `await` resume notifies the paused worker (N1): resume/approve settling a
+      kind-`await` case matched no arm in `_h_apply_decision` (await never blocks the
+      block or holds the worker) — the case closed and the worker stayed paused until
+      the orphan-idle sweep raised a SECOND wall minutes later. Fix sends the paused
+      worker the exact proceed line rung (c) already owns, worded for a settled
+      checkpoint. `abandon` on an await case is untouched (today's drop-the-block path).
+  T6  the blocked list gets its own invariant arm (N2): a block in `st.blocked` with NO
+      undecided case, NO walled worker, and NO gate is unreachable by every other net —
+      the wall-pairing law's third key (01-17 repaired the worker-keyed and gate-keyed
+      halves; never the blocked-list half). Same one-silence-window law, same repair
+      vocabulary (`_reraise_wall`) as the other two sweep arms.
+  T7  `python3 engine/lint.py` no longer silently exits 0 having checked nothing — a
+      `__main__` runs the real rule set standalone (mirroring `engine.py cmd_validate`)
+      or names `./lint.sh` and exits non-zero.
+
+T1/T3/T4/T5 are dry FSM-level cases (TRON_DRY, sentry_test's fixture builders — same
+convention as mg_01_test.py/tron07_test.py). T2/T6's sweep arms need `eng.dry = False`
 (_sweep no-ops entirely under dry) — same convention as block_01_17_test.py's T3 cases.
 
 Run: python3 engine/block_01_18_test.py   (exit 0 = pass). No tokens, no network.
 """
 import os
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +83,14 @@ def _capture(eng):
     orig = eng.emit
     eng.emit = (lambda tid, slots=None, worker_id=None:
                 sent.append((tid, dict(slots or {}))) or orig(tid, slots, worker_id))
+    return sent
+
+
+def _capture_to_worker(eng):
+    """Spy on eng._to_worker (block_01_13_test's convention) — replaces it outright, since
+    T5's proceed line is engine-composed via `_to_worker` directly, never through emit()."""
+    sent = []
+    eng._to_worker = lambda wid, text, kind: sent.append((wid, text, kind))
     return sent
 
 
@@ -372,6 +397,173 @@ def t_unresolved_settle_still_reports_no_match_regression():
     eng._h_apply_decision({"case": "CASE-999", "decision": "resume"})
     ok("T4 regression: a genuinely unresolved settle still reports 'no match'",
        any(tid == "escalate.unclassified" for tid, _ in sent), f"sent={sent}")
+
+
+# ── T5 (AC-1 bullet 5): await-resume notifies the paused worker (N1) ──
+def t_await_resume_delivers_the_proceed_line():
+    eng = _eng()
+    wid = "ENG-A-01"
+    cid = eng._open_case("A-01", "await", wid, "ship it?")
+    tw = _capture_to_worker(eng)
+    eng.dry = False
+    try:
+        eng._h_apply_decision({"case": cid, "decision": "resume"})
+    finally:
+        eng.dry = True
+    ok("T5 await-resume sends the paused worker the proceed line",
+       any(w == wid and k == "await.proceed" for w, _, k in tw), f"sent={tw}")
+    ok("T5 await-resume closes the settled case", cid not in eng.st.pending_cases)
+
+
+def t_await_approve_is_treated_the_same_as_resume():
+    # T5: "treat approve the same — both mean proceed."
+    eng = _eng()
+    wid = "ENG-A-01"
+    cid = eng._open_case("A-01", "await", wid, "ship it?")
+    tw = _capture_to_worker(eng)
+    eng.dry = False
+    try:
+        eng._h_apply_decision({"case": cid, "decision": "approve"})
+    finally:
+        eng.dry = True
+    ok("T5 approve on an await case also delivers the proceed line",
+       any(w == wid and k == "await.proceed" for w, _, k in tw), f"sent={tw}")
+
+
+def t_await_abandon_keeps_todays_drop_path_no_proceed_line():
+    # abandon on an await case must NOT notify the worker — it keeps the existing
+    # unconditional drop-the-block path (the abandon arm never checked `block in
+    # st.blocked`, so it already fired for await cases before this fix; T5 must not
+    # change that).
+    eng = _eng()
+    wid = "ENG-A-01"
+    cid = eng._open_case("A-01", "await", wid, "ship it?")
+    tw = _capture_to_worker(eng)
+    eng.dry = False
+    try:
+        eng._h_apply_decision({"case": cid, "decision": "abandon"})
+    finally:
+        eng.dry = True
+    ok("T5 abandon on an await case never sends the proceed line",
+       not any(k == "await.proceed" for _, _, k in tw), f"sent={tw}")
+    ok("T5 abandon on an await case still drops the block (today's behavior, unchanged)",
+       "A-01" in eng._dropped())
+    ok("T5 abandon on an await case still releases the worker",
+       not any(w["id"] == wid for w in eng.st.workers))
+
+
+# ── T6 (AC-1 bullet 6): the blocked-list gets its own invariant arm (N2) ──
+def t_blocked_list_arm_reraises_an_uncovered_block_after_one_window():
+    eng = _eng_bare()
+    eng.st.blocked.append("A-01")             # blocked, NO case, NO walled worker, NO gate
+    clock = {"t": 1000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._sweep()
+    ok("T6 the arm never fires inside one silence window",
+       not any(c.get("kind") == "wall" and c.get("worker_id") is None
+               for c in eng.st.pending_cases.values()))
+    clock["t"] += PING_WINDOW_S
+    eng._sweep()
+    ok("T6 an uncovered blocked block re-raises a fresh wall case (wid None) after one window",
+       any(c.get("kind") == "wall" and c.get("block") == "A-01" and c.get("worker_id") is None
+           for c in eng.st.pending_cases.values()),
+       f"cases={eng.st.pending_cases}")
+    ok("T6 the reraise emits the ordinary escalate event",
+       any(e.get("type") == "escalate" and e.get("block") == "A-01"
+           for e in _events(eng)),
+       f"events={_events(eng)}")
+
+
+def t_blocked_list_arm_never_touches_a_case_covered_block():
+    eng = _eng_bare()
+    eng.st.blocked.append("A-01")
+    eng._open_case("A-01", "wall", None, "already parked")   # coverage: a live undecided case
+    clock = {"t": 1000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._sweep()
+    clock["t"] += PING_WINDOW_S
+    before = len(eng.st.pending_cases)
+    eng._sweep()
+    ok("T6 a block covered by a live undecided case is never re-raised",
+       len(eng.st.pending_cases) == before, f"cases={eng.st.pending_cases}")
+
+
+def t_blocked_list_arm_never_touches_a_walled_worker_covered_block():
+    eng = _eng_bare()
+    eng.st.blocked.append("A-01")
+    wid = "ENG-A-01"
+    eng.st.workers.append({"id": wid, "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "walled"})
+    eng._open_case("A-01", "wall", wid, "a genuine, still-live wall")   # keeps arm (a)/(b) quiet
+    clock = {"t": 1000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._sweep()
+    clock["t"] += PING_WINDOW_S
+    eng._sweep()
+    ok("T6 a block covered by a walled worker is never re-raised by this arm",
+       not any(c.get("kind") == "wall" and c.get("block") == "A-01"
+               and c.get("worker_id") is None
+               for c in eng.st.pending_cases.values()),
+       f"cases={eng.st.pending_cases}")
+
+
+def t_blocked_list_arm_never_touches_a_gated_block():
+    eng = _eng_bare()
+    eng.st.blocked.append("A-01")
+    eng.st.gate["A-01"] = {"stage": "local", "pr": None}
+    # A bound (non-walled) worker keeps the PRE-EXISTING workerless-gate sweep arm
+    # (01-16, T2) from popping this gate at the same one-window mark this test advances
+    # past — this test isolates T6's OWN "gate exists" coverage rule, not that other net.
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working"})
+    clock = {"t": 1000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._sweep()
+    clock["t"] += PING_WINDOW_S
+    before = len(eng.st.pending_cases)
+    eng._sweep()
+    ok("T6 a block covered by a live gate is never re-raised",
+       len(eng.st.pending_cases) == before and "A-01" in eng.st.gate,
+       f"cases={eng.st.pending_cases} gate={eng.st.gate}")
+
+
+def t_blocked_list_arm_clock_clears_when_coverage_returns():
+    eng = _eng_bare()
+    eng.st.blocked.append("A-01")
+    clock = {"t": 1000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._sweep()                       # anchors blocked_bad_since["A-01"]
+    ok("setup: the clock anchored on the uncovered block",
+       "A-01" in (eng.st.data.get("blocked_bad_since") or {}))
+    eng._open_case("A-01", "wall", None, "operator parked it in the meantime")
+    eng._sweep()                       # coverage returned -> clock clears immediately
+    ok("T6 the clock clears the instant coverage returns",
+       "A-01" not in (eng.st.data.get("blocked_bad_since") or {}))
+    clock["t"] += PING_WINDOW_S
+    before = len(eng.st.pending_cases)
+    eng._sweep()
+    ok("T6 no reraise fires later since coverage had already returned",
+       len(eng.st.pending_cases) == before, f"cases={eng.st.pending_cases}")
+
+
+# ── T7: `python3 engine/lint.py` is never a silent no-op ──
+def t_lint_py_entrypoint_really_lints_or_exits_nonzero():
+    proc = subprocess.run([sys.executable, os.path.join(HERE, "lint.py")],
+                          capture_output=True, text=True, cwd=HERE)
+    ran_real_rules = "blueprint-lint:" in proc.stdout and ("OK" in proc.stdout
+                                                           or "FAILED" in proc.stdout)
+    named_entrypoint_and_failed = ("lint.sh" in proc.stdout and proc.returncode != 0)
+    ok("T7 lint.py either runs the real rule set standalone or names ./lint.sh and fails",
+       ran_real_rules or named_entrypoint_and_failed,
+       f"rc={proc.returncode} stdout={proc.stdout!r}")
+    ok("T7 lint.py never exits 0 without having checked something",
+       proc.returncode == 0 and ran_real_rules or proc.returncode != 0,
+       f"rc={proc.returncode} stdout={proc.stdout!r}")
+    # This repo IS the canon self-lint context (no project.yaml) — the real rule set is
+    # cheaply reproducible here, so it should actually run and pass, exactly like ./lint.sh.
+    ok("T7 in this repo, lint.py's __main__ reproduces ./lint.sh's own OK result",
+       ran_real_rules and proc.returncode == 0 and "OK" in proc.stdout,
+       f"rc={proc.returncode} stdout={proc.stdout!r}")
 
 
 def main():
