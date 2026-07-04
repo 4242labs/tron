@@ -11,10 +11,15 @@ The engine that drives the canon flow. Two layers, both deterministic code
 
 Truth is the project's canon trunk, not TRON (realign §A): each wake rebuilds the
 pipeline view from `git` trunk (pipeline.md + blocks/*.md) plus in-flight PRs plus
-alive workers. TRON reads; agents write. TRON writes nothing to git — its only
-durable state is the gitignored runtime cache. A worker's "done" is a trigger, not
-truth: it launches the canon DONE gate (§F), and a block is done only when it shows
-`✅` on trunk (merged, re-validated, deployed-clean — agents land all of it via PR).
+alive workers. TRON reads; agents write. Rider (01-18): "TRON writes nothing to git"
+predates local-mode landing — in LOCAL mode (no remote) the engine lands paperwork
+and merges ff-only itself (trunk.merge_ff_only / land_docs, called from the DONE
+gate) as the gate's own act, standing in for the PR-merge a worker performs in remote
+mode. It still never writes canon CONTENT — no pipeline/block text is ever the
+engine's own authorship — and its only durable STATE is the gitignored runtime
+cache. A worker's "done" is a trigger, not truth: it launches the canon DONE gate
+(§F), and a block is done only when it shows `✅` on trunk (merged, re-validated,
+deployed-clean — agents land all of it via PR, or the engine ff-merges it locally).
 
 The reactive layer is the event TABLE (`trigger -> handler`). The engine emits
 trigger strings and routes them most-specific-wins; inbound worker/operator
@@ -1059,7 +1064,14 @@ class Engine:
             # this is the `resume CASE-007` no-op's exact shape (classify mangled the case
             # id/block, nothing was ever touched). Name the pending set back to the
             # operator so a mis-resolved settle is visibly wrong, not silently nothing.
-            if m.get("case") or decision:
+            # T4 (01-18, N6): `block` is falsy here for TWO different shapes — a genuinely
+            # unresolved settle (case is None, the D-15-3 case above) AND a correctly
+            # RESOLVED block-less case (kind paperwork/residue, _open_case'd with block=None
+            # by design, e.g. ~1668/~3164) that just settled fine via `case["decision"] =
+            # decision` above. Key the false-match notice on `case is None`, never on `not
+            # block` — a resolved paperwork/residue settle must never report "matches no
+            # pending case".
+            if case is None and (m.get("case") or decision):
                 pending = sorted(self._undecided_cases())
                 self.emit("escalate.unclassified",
                           {"detail": f"settle '{m.get('case') or '?'}: {decision or '?'}' "
@@ -1093,11 +1105,12 @@ class Engine:
             for w in list(self.st.workers):                # T4: a wall-held worker un-holds on resume
                 if w.get("block") == block and w.get("status") == "walled":
                     unheld = True
-                    self._unhold_worker(w)
+                    # T2 (01-18): _unhold_worker now owns the held_verbs pop and returns the
+                    # queue — this seam only replays it.
                     # T1 (01-15 D-16-1 seam 1): replay whatever queued whole while held, in
                     # arrival order — this is the exact `clean` confirmation the wall used
                     # to swallow (tron-16 D-16-1: it arrived 15s after its own wall held it).
-                    queued = w.pop("held_verbs", None) or []
+                    queued = self._unhold_worker(w)
                     for item in queued:
                         self._ingest(item["tag"], item["slots"],
                                     {"kind": "worker", "id": w.get("id")})
@@ -1386,7 +1399,19 @@ class Engine:
                             if ok:
                                 # A-5: anchor the held-stage predicate to the EXACT sha this
                                 # merge landed — paperwork commits after this never touch it.
-                                g["merged_sha"] = cur_tip or trunk.tip_sha(
+                                # T1 (01-18, the F1 false-contradiction wall): `cur_tip` above was
+                                # read BEFORE this merge — merge_ff_only (trunk.py T1, 01-17) may
+                                # have internally rebased `branch` onto trunk and retried on a
+                                # first ff-refusal, rewriting branch's tip out from under that
+                                # pre-image read. Anchoring to the stale `cur_tip` here dangled the
+                                # A-5 predicate: the next tick's is_ancestor check (~1299) read the
+                                # rebased-away pre-image as "force-push or reset?" and gate-gave-up
+                                # a clean landing. Always re-read the tip AFTER merge_ff_only
+                                # returns ok — post-ff, branch tip == rebased tip == trunk HEAD,
+                                # the same invariant the post-hoc anchors at ~1331/~1430 already
+                                # rely on. `cur_tip` keeps its own job above (the pre-merge
+                                # patch-id/re-pin check) and is never reused for this anchor.
+                                g["merged_sha"] = trunk.tip_sha(
                                     self.paths["root"], branch, self.dry)
                                 # tron-07 W2: one approval = one EXECUTED merge. Consume the
                                 # grant here (not on the order) so a non-ff retry — the same
@@ -1449,7 +1474,15 @@ class Engine:
         # excluded — the PR machinery owns that wait. Nudge once per idle episode at
         # gate_nudge_after x ceiling; give up at gate_idle_cap x ceiling.
         if stage == g.get("stage") and not renudge and stage != "ci-wait":
-            if not jobs.runner_idle(wid):
+            # T3 (01-18, N3): a wall raised mid-gate HOLDS its worker (D-15-2) and its runner
+            # idles by design (parked awaiting the operator, never a stall to accrue against)
+            # — the same exemption class the liveness sweep already applies to a walled worker
+            # (~2704, self._sweep). Without it the gate's own idle cap fired ~3x the ceiling
+            # later and popped the gate 01-15 deliberately preserved for the wall, plus a
+            # duplicate wall the blocked-guard only mostly swallows. Roster status is the
+            # authority (not the runner's on-disk idle record, which is honestly idle here).
+            bw = next((x for x in self.st.workers if x.get("id") == wid), None)
+            if not jobs.runner_idle(wid) or (bw and bw.get("status") == "walled"):
                 g.pop("idle_since", None)
                 g.pop("nudged_at", None)
             else:
@@ -1586,7 +1619,15 @@ class Engine:
         # engineer out of its own paperwork in 74s and force-released with no cleanliness check).
         # An idle close re-nudges once per ceiling span; at gate_close_cap x ceiling of
         # continuous idle it force-releases.
-        if wid and not jobs.runner_idle(wid):
+        # T3 (01-18, N3, the AC close-site scenario): a plain wall raised during close-out
+        # HOLDS this same bound worker (D-15-2) — its runner idles by design, parked on the
+        # operator, never a stall to accrue. Before this fix a walled worker still passed
+        # `not jobs.runner_idle(wid)` (True, it IS idle) and accrued past this guard, then at
+        # cap `_force_release_block` + `gate.pop` force-released a HELD worker out from under
+        # its own live wall case — no cleanliness check, a pending case left with no worker,
+        # no gate, and the block still parked. Exempt it exactly like the gate site above.
+        bw = next((x for x in self.st.workers if x.get("id") == wid), None) if wid else None
+        if wid and (not jobs.runner_idle(wid) or (bw and bw.get("status") == "walled")):
             g.pop("close_idle_since", None)
             g.pop("close_nudged_at", None)
             return
@@ -2167,9 +2208,20 @@ class Engine:
         gate-stuck hold (_gate_giveup -> wall:raised -> _hold_worker) un-holds exactly like a
         worker-declared `--tag wall` hold does — tron-16's CASE-006 gap (resume cleared the
         case but left the worker walled) was two un-hold call sites free to drift apart;
-        now there is one."""
+        now there is one.
+
+        T2 (01-18, F2+N7): this primitive now owns the `held_verbs` pop too — UNCONDITIONALLY,
+        for every caller, and RETURNS the queue (possibly empty). 01-17's sweep repair
+        (settled-case -> un-hold, arm (a) below) used to un-hold without ever popping the
+        queue: the verbs stayed stranded on the worker record, so a LATER re-wall replayed them
+        a second time, out of the context they arrived in — the D-16-1 swallow class back
+        through the newest door. The replay itself can't live here: it needs `_ingest`, which
+        this module owns but this primitive shouldn't reach for (an abandon path un-holds and
+        discards the queue outright via release, never replaying it) — so every caller pops via
+        this return and replays (or discards) itself."""
         w["status"] = w.pop("held_status", None) or "working"
         w.pop("wall_detail", None)         # T3 (01-17): stale detail never survives an un-hold
+        return w.pop("held_verbs", None) or []
 
     def _post_unhold_nudge(self, w, block):
         """01-16 addendum (tron-19/20 mutual wait): the state-appropriate next message after
@@ -2639,13 +2691,21 @@ class Engine:
           (b) walled worker -> pending case: no case at all exists for this worker/block —
               re-raise one (the wall_detail recorded at hold time if it's still there, else
               name the inconsistency itself) so the operator can always reach it.
-        A live, still-undecided case is the ordinary wall state — never touched."""
+        A live, still-undecided case is the ordinary wall state — never touched.
+
+        N9 (01-18): when a settled case and a live undecided case BOTH match this worker/
+        block (a settled-but-unclosed case coexisting with a live one), the UNDECIDED case
+        must win the match — else arm (a) below would un-hold this worker out from under
+        its own still-open wall just because a stale settled case happened to be found
+        first in iteration order."""
         block = w.get("block")
         wid = w.get("id")
-        case = next((c for c in self.st.pending_cases.values()
-                    if c.get("kind") == "wall"
-                    and (c.get("worker_id") == wid or (block and c.get("block") == block))),
-                   None)
+        matches = [c for c in self.st.pending_cases.values()
+                  if c.get("kind") == "wall"
+                  and (c.get("worker_id") == wid or (block and c.get("block") == block))]
+        case = next((c for c in matches if c.get("decision") is None), None)
+        if case is None and matches:
+            case = matches[0]                  # no live match — fall back to a settled one
         if case is not None and case.get("decision") is None:
             w.pop("wall_bad_since", None)      # a live pending case is the normal wall state
             return
@@ -2657,10 +2717,18 @@ class Engine:
             # (a): the case settled but nothing un-held this worker. Close the case too
             # (parity with an ordinary `resume` settle, which always closes what it acts
             # on) — a decided case has nothing left for any settle to do with it.
-            self._unhold_worker(w)
+            # T2 (01-18, F2+N7): mirror an operator `resume`'s semantics exactly —
+            # _unhold_worker returns the held-verb queue; replay it here (via `_ingest`,
+            # in arrival order) instead of dropping it on the floor, and send the
+            # post-unhold nudge ONLY when the queue came back empty (same mutual-wait
+            # guard resume already applies, 01-16 addendum).
+            queued = self._unhold_worker(w)
             self._close_case(None, case)
             self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
-            self._post_unhold_nudge(w, block)
+            for item in queued:
+                self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
+            if not queued:
+                self._post_unhold_nudge(w, block)
             self._emit("pulse")
         else:
             # (b): no case at all — this worker is unreachable. Re-raise one.
