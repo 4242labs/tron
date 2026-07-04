@@ -2970,9 +2970,13 @@ class Engine:
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):
-        return ((self.ctx.worker_inbox, "worker"),
-                (self.ctx.operator_inbox, "operator"),
-                (self.ctx.tg_inbox, "operator"))
+        # `kind` normalizes tg into the same "operator" sender kind the rest of the engine
+        # reasons about (they share an operator-authority surface); `source` is the T8
+        # archive's own finer key — the one place that still needs to tell a tg line from
+        # a console/API operator line apart, since kind alone collapses them.
+        return ((self.ctx.worker_inbox, "worker", "worker"),
+                (self.ctx.operator_inbox, "operator", "operator"),
+                (self.ctx.tg_inbox, "operator", "tg"))
 
     def _raw_lines(self, path):
         if not os.path.exists(path):
@@ -2980,15 +2984,51 @@ class Engine:
         with open(path) as fh:
             return fh.readlines()
 
+    def _archive_message(self, tick, source, *, sender=None, text=None, raw=None,
+                          unparsed=False):
+        """T8 (01-18 addendum 2): append one verbatim record to the durable inbound-message
+        archive (`ctx.message_log`, beside `events.jsonl`) — the one forensic gap the
+        addendum names. Engine->worker delivery is fully durable (per-worker mailbox + home
+        log); worker/operator/tg->engine raw text used to live only in the inbox sidecar,
+        claimed each tick and DELETED after a clean save — what survived was derived events
+        plus 200-char truncated snippets on unclassified/failure records. E2 adjudication and
+        any post-hoc dispute needs exactly what the agent said, not what the engine decided.
+
+        At-least-once, same discipline as the sidecar it mirrors: a crash-replayed `.proc`
+        re-archives the same lines. That is accepted, not a bug — duplicates are honest
+        forensics here, the same rule as every other at-least-once surface in this engine.
+        A reader that cares should dedupe by (tick, text).
+
+        Best-effort: this is a forensic sink, never a gate. An OSError here must NEVER
+        break the tick — the inbox line is still processed/released exactly as before;
+        only this archived copy is lost, and that loss is itself logged once."""
+        rec = {"at": util.now_iso(), "tick": tick, "source": source}
+        if unparsed:
+            rec["unparsed"] = True
+            rec["raw"] = raw
+        else:
+            rec["sender"] = sender
+            rec["text"] = text
+        try:
+            util.append_jsonl(self.ctx.message_log, rec)
+        except OSError as e:
+            self.log("flow", f"T8 message archive append failed ({source}): {e}")
+
     def _claim_inboxes(self):
         """Rotate each inbox to a `.proc` sidecar (an atomic rename), then read the sidecar.
         Workers append via `report.sh >>` (open-write-close per line, O_CREAT): an append that
         lands after the rename creates/extends a fresh inbox and is read next tick — never lost
         to a full-file rewrite (the old #6 race, whose window spanned the classify LLM call).
         A `.proc` left by a crashed tick is read again (at-least-once; idempotency guards make
-        replay safe). Returns (claimed_sidecars, msgs)."""
+        replay safe). Returns (claimed_sidecars, msgs).
+
+        T8 (01-18 addendum 2): every claimed line is archived to `ctx.message_log` VERBATIM
+        as it is read, before/regardless of whether it decodes as JSON — a malformed line is
+        archived flagged `unparsed` and still skipped from `msgs` exactly as before (today's
+        skip behavior is unchanged; only the forensic copy is new)."""
         claimed, msgs = [], []
-        for path, kind in self._inbox_paths():
+        tick = self._log_env().get("tick")   # the in-progress tick number _log_env stamps everywhere else
+        for path, kind, source in self._inbox_paths():
             proc = path + ".proc"
             if not os.path.exists(proc):           # no crash residue -> claim the live inbox
                 if not os.path.exists(path):
@@ -3003,9 +3043,14 @@ class Engine:
                 if not line:
                     continue
                 try:
-                    msgs.append(self._normalize(json.loads(line), kind))
+                    parsed = json.loads(line)
                 except json.JSONDecodeError:
+                    self._archive_message(tick, source, raw=line, unparsed=True)
                     continue
+                normalized = self._normalize(parsed, kind)
+                self._archive_message(tick, source, sender=normalized.get("sender"),
+                                      text=normalized.get("text"))
+                msgs.append(normalized)
         return claimed, msgs
 
     def _release_claimed(self, claimed):
