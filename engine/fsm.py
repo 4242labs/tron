@@ -2410,7 +2410,18 @@ class Engine:
             the gate the wall meant to stop), the NEWEST text. Its raise LEGITIMATELY
             re-walls the worker mid-batch and re-queues the verbs behind it — a genuine new
             wall owning the conversation; the re-queued verbs fold/replay at ITS settle.
-          A wall for a different block still raises (its own rule-2 group of one).
+            MECHANISM NOTE (deviation from the spec's cited seam, same outcome): the spec
+            names the _ingest walled-check as the re-queue mechanism, but _ingest -> _emit
+            only QUEUES the wall:raised trigger — _h_escalate holds the worker at
+            _drain_triggers, strictly AFTER this whole batch would have been ingested, so
+            the walled-check can never fire mid-batch. Left to the trigger timing, a
+            done-report behind the fresh wall would drain AFTER the hold and drive the gate
+            the wall meant to stop — the exact hazard the arrival-order rule names. So THIS
+            seam performs the identical re-queue itself, deterministically: once a rule-2
+            wall verb is ingested, the remaining verbs go back onto held_verbs whole (the
+            precise state the walled-check would have produced) and the loop stops.
+          A wall for a different block still raises (its own rule-2 group of one; a second
+          different-block wall behind the first is re-queued whole and raises at ITS turn).
           Non-wall verbs replay exactly as today, in arrival order.
 
         ACCEPTED RESIDUAL (F7, named in the spec): a genuinely NOVEL blocker walled while
@@ -2445,8 +2456,17 @@ class Engine:
                     continue
                 kept[iblock] = len(replay)
             replay.append(item)
-        for item in replay:
+        for i, item in enumerate(replay):
             self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
+            if item.get("tag") == "worker.wall" and i + 1 < len(replay):
+                # rule 2's fresh raise owns the conversation from here (see the mechanism
+                # note above): re-queue the remainder whole, exactly as the _ingest
+                # walled-check does for a live wall — they fold/replay at ITS settle.
+                rest = replay[i + 1:]
+                w.setdefault("held_verbs", []).extend(rest)
+                self.log("flow", f"unhold[{wid}] re-queued {len(rest)} verb(s) behind "
+                                 f"the fresh wall raise")
+                break
         if not replay:
             self._post_unhold_nudge(w, block)
         return replay
