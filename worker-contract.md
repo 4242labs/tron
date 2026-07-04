@@ -21,7 +21,9 @@ the normal way to declare-and-report in one line.
 ## 3. The DONE ladder
 You never decide when work is finished — you report, TRON orders each step, one at a time:
 - `done <block> — local:` + per-criterion evidence (commands + results, never "it passes")
-- TRON owns the trunk merge; you never merge code
+- TRON owns the trunk merge; you never merge code. Besides the record commit, the one
+  trunk-adjacent act a gate order can authorize is a REBASE of your own branch in your own
+  worktree — a rebase on order is not a merge; do it and report, never wall on it
 - `done <block> — trunk:` + re-validated evidence on trunk
 - `recorded <block>` after you land the gate-ordered ✅ status commit (one file, one field)
 - `clean <block>:` + what you verified at close
@@ -32,13 +34,16 @@ by; signal a pause only when you cannot proceed without an answer. If TRON repea
 order, it has not SEEN what it needs — re-send your report in the prescribed opening;
 do not redo the work. A repeat is the SAME step re-asked, nothing else: an order naming
 an act you have not yet answered (the record commit, the close-out) is always new work —
-do it, never re-send a previous report in its place.
+do it, never re-send a previous report in its place. Re-send that step's report ONCE;
+if the repeat continues, stand by — do not answer every copy.
 
 ## 4. Branch duty
 Name the branch you build on the moment you create it (`--branch <name>`), BEFORE any
 done-report. TRON gates on the branch it knows about; an undeclared branch is invisible and
 will stall your own gate. While your merge waits on approval, do not commit to that branch —
-a moved tip voids the approval and re-parks it.
+a moved tip voids the approval and re-parks it. The one exception is a rebase TRON itself
+orders (§3): that rebase is gate-authorized and is not a merge — TRON verifies the rebased
+tip carries the same content, so it never voids the approval.
 
 ## 5. Paperwork
 Whatever paperwork your project's method produces (session logs, doc sync, archival, …) —

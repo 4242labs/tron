@@ -98,6 +98,12 @@ templates:
     channel: worker
     slots: [worker_id, block, report]
     pmt: PMT-DONE-LOCAL
+  # gate.merge is REMOTE-ONLY (01-19 T1): its PMT body ("Merge it. / Merge your PR, get CI
+  # green") orders the worker's own PR merge, which only exists in remote mode. In LOCAL
+  # mode the ENGINE owns the trunk merge (MG-01, contract §3) and never emits this — a
+  # local non-ff sends the engine-composed rebase order instead (fsm._rebase_line, the
+  # gate.changes precedent). This note lives HERE, never in the PMT body, which renders
+  # verbatim into every remote merge order.
   gate.merge:
     channel: worker
     slots: [worker_id, block, report]

@@ -118,6 +118,13 @@ Read the sender first, then the intent.
 - `operator.knob_change` — change a rule or a knob.
 - `operator.directive` — a general instruction that isn't any of the above.
 
+> **Operator, hear this once (01-19):** you talk to TRON, not to workers. Free text —
+> a `directive`, a `knob_change` — is side-logged and answered with a not-relayed notice;
+> it never reaches a worker's mailbox. The levers that DO reach a worker are gate orders
+> and settle-driven notices: settle a case (CASE-id + verb), or act on the repo directly.
+> And when TRON orders the record step, what it verifies is the block doc's Status flip
+> landing on trunk — one file, one field, nothing else.
+
 When the message won't sit cleanly in the vocabulary, return **`unclassified`**. Do not force-fit,
 do not invent a tag. The engine has a safe path for `unclassified` (the `*` SENTRY catch-all); a
 misfire doesn't. Fill `slots` from what's actually in the text and let `confidence` tell the truth.

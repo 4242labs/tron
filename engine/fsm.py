@@ -93,6 +93,14 @@ TURN_CEILING_S = float(os.environ.get("TRON_TURN_TIMEOUT_S", "1800"))
 # actual format) since the operator types it by hand.
 CASE_ID_RE = re.compile(r"case-0*(\d+)", re.IGNORECASE)
 SETTLE_VERB_RE = re.compile(r"\b(approve|resume|abandon)\b", re.IGNORECASE)
+# T4 (01-19, F1/F11/R2-5/R2-7): the ONE not-relayed wording, shared by every surface that
+# tells the operator their free text never reached a worker (the best_effort/edit_self side
+# arm, and the no-settle-match notice) — a single string so the two never drift apart.
+# "not relayed" appears exactly once (R2-7); it names what DOES reach a worker (gate orders,
+# settle-driven notices) rather than the false "gate orders only" (F11 — a `changes` settle,
+# an architect relay, and await.proceed all reach a worker outside the gate ladder too).
+NOT_RELAYED_NOTE = ("not relayed — workers hear gate orders and settle-driven notices only; "
+                    "use a settle (CASE-id + verb) or act directly")
 
 
 class Engine:
@@ -1093,11 +1101,15 @@ class Engine:
             # pending case".
             if case is None and (m.get("case") or decision):
                 pending = sorted(self._undecided_cases())
+                # T4 (01-19, R2-2/F1 secondary path): the same not-relayed clause the
+                # best_effort/edit_self side arm carries — a mis-resolved settle is exactly
+                # another shape of "the operator said something and nothing heard it".
                 self.emit("escalate.unclassified",
                           {"detail": f"settle '{m.get('case') or '?'}: {decision or '?'}' "
                                      f"matches no pending case"
                                      + (f" — still parked: {', '.join(pending)}"
-                                        if pending else " — nothing is parked")})
+                                        if pending else " — nothing is parked")
+                                     + f" — {NOT_RELAYED_NOTE}"})
             self._close_case(m.get("case"), case)
             self._emit("pulse"); return
         vg = self.st.gate.get(block)
@@ -1126,23 +1138,14 @@ class Engine:
                 if w.get("block") == block and w.get("status") == "walled":
                     unheld = True
                     # T2 (01-18): _unhold_worker now owns the held_verbs pop and returns the
-                    # queue — this seam only replays it.
-                    # T1 (01-15 D-16-1 seam 1): replay whatever queued whole while held, in
-                    # arrival order — this is the exact `clean` confirmation the wall used
-                    # to swallow (tron-16 D-16-1: it arrived 15s after its own wall held it).
-                    queued = self._unhold_worker(w)
-                    for item in queued:
-                        self._ingest(item["tag"], item["slots"],
-                                    {"kind": "worker", "id": w.get("id")})
-                    if not queued:
-                        # 01-16 addendum (tron-19/20): un-holding with an EMPTY replay
-                        # queue used to leave a MUTUAL WAIT — the live runner idles
-                        # awaiting a mailbox message while the engine waits for the worker
-                        # to speak, and the restored idle entry consumes its slot forever
-                        # (dispatch starves with no gate for any net to key on). Every
-                        # un-hold now ends with the worker's state-appropriate next
-                        # message — never two parties waiting on each other.
-                        self._post_unhold_nudge(w, block)
+                    # queue. T3 (01-19, F2): the replay itself now lives in the ONE shared
+                    # helper both replay seams call (this resume arm AND the sweep's
+                    # invariant arm (a)) — _unhold_and_replay pre-scans the queue against
+                    # the settled case this un-hold acted on (`case` here; None is fine —
+                    # rule 1 goes inert, rule 2 still collapses) before any serial _ingest,
+                    # folding the stale wall echoes that used to raise one fresh case per
+                    # re-send (the tron-26 CASE-004→012 treadmill).
+                    self._unhold_and_replay(w, block, case)
             vg2 = self.st.gate.get(block)
             if vg2 and vg2.get("violation_pending"):
                 # T6 (01-15): resume means the worker resolves its own branch — clear the
@@ -1363,6 +1366,7 @@ class Engine:
                     stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
                     g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)  # A-5 predicate anchor
                     g.pop("merge_in_flight", None)       # T1: landed -> in-flight window closed
+                    g.pop("rebase_pending", None)        # T1 (01-19): on trunk -> nothing left to rebase
                 else:
                     # No PR, not yet on trunk. REMOTE mode: the worker opens a PR and the merge
                     # lands via the pr path below. LOCAL mode (no remote): there is no PR to wait
@@ -1379,6 +1383,7 @@ class Engine:
                         if g.get("self_merge"):
                             stage, msg = "trunk", "gate.trunk"        # operator merged it themselves
                             g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
+                            g.pop("rebase_pending", None)  # T1 (01-19): landed by the operator
                         elif on_report or g.get("approved_merge"):
                             # A-3: the grant binds the exact sha the operator saw at park. A tip
                             # that moved between park and execution voids the grant and re-parks
@@ -1439,10 +1444,40 @@ class Engine:
                                 # ride it into a second un-asked merge.
                                 g.pop("approved_merge", None)
                                 g.pop("merge_in_flight", None)    # T1: landed -> in-flight window closed
+                                g.pop("rebase_pending", None)     # T1 (01-19): the ff landed -> clear the flag
                                 stage, msg = "trunk", "gate.trunk"    # merged -> re-validate on trunk
                             else:
                                 self.log("flow", f"gate[{block}] local ff-merge non-ff: {err.strip()}")
-                                stage, msg, renudge = "local", "gate.merge", True  # trunk moved -> rebase + retry
+                                # T1 (01-19, F4/R1): trunk moved -> the ENGINE retries the
+                                # merge, the WORKER gets the rebase order once, rebase_pending
+                                # paces the rest. The retry stays exactly where it is — inside
+                                # this `on_report or approved_merge` guard, behind
+                                # _merge_gated: per-tick while a grant is held (the grant
+                                # survives a non-ff by design, W2 above; F9), report-driven
+                                # otherwise — never hoisted, or it would retry merges
+                                # pre-approval and break the ASK gate (T8). The worker is
+                                # never told to merge (MG-01, contract §3).
+                                # `renudge` stays False and stage stays 'local': the tail
+                                # below fires nothing (msg is None), so the idle re-nudge and
+                                # gate_idle_cap re-engage normally instead of being bypassed by
+                                # a per-tick renudge=True spam (the tron-26 standoff's root
+                                # mechanism — 20 identical "Merge it" sends to a walled
+                                # worker). `rebase_pending` (the branch_gap precedent) makes
+                                # every order-composition site send the rebase line instead of
+                                # gate.local while it's set (T2's ONE composer); it is
+                                # conjuncted on stage=='local' there, so a stage change away
+                                # from local (e.g. an operator self_merge) never rides a stale
+                                # flag into the wrong-stage order (R2-4).
+                                g["rebase_pending"] = True
+                                stage, msg = "local", None
+                                # R3-1: the first (and every subsequent still-undelivered)
+                                # rebase order goes out HERE, immediately at flag-stamp time —
+                                # a fourth caller of the ONE composer (T2) — rather than
+                                # waiting on the idle re-nudge for no reason. force=False: safe
+                                # under the kind-keyed dedupe exactly like every other caller —
+                                # a still-undelivered copy from an earlier tick's retry blocks
+                                # a repeat here.
+                                self._send_gate_order(block, g, "local", wid, force=False)
                         elif g.get("case_merge"):
                             return                                    # tick while parked on operator -> hold quietly
                         else:
@@ -1457,9 +1492,12 @@ class Engine:
                         # The idle machinery keeps re-sending THIS line (branch_gap flag
                         # flips the nudge template) and its cap stays the backstop.
                         g["branch_gap"] = True
-                        if wid and not self.dry:
-                            self._to_worker(wid, self._branch_gap_line(wid, block),
-                                            "gate.branch-gap")
+                        g.pop("rebase_pending", None)  # T1: nothing to rebase if there's no branch
+                        # R3-2: route through the same ONE composer (T2) as every other
+                        # order-composition site, for literal one-seam uniformity — zero
+                        # behavior change (force=True: this arm already fired unconditionally
+                        # on every on_report hit; it still does).
+                        self._send_gate_order(block, g, "local", wid, force=True)
                         self.log("flow", f"gate[{block}] done reported but no visible "
                                          f"branch -> ask for the declaration")
                         stage, msg = "local", None
@@ -1523,19 +1561,14 @@ class Engine:
                     return
                 if (idle_s >= self._pace("gate_nudge_after", 2)
                         and not g.get("nudged_at") and wid):
-                    # Re-send the pending stage prompt — a deliberate duplicate on a FRESH
-                    # mailbox seq (_to_worker bumps it), so the runner's seq-keyed dedupe
-                    # delivers it (R1-4). One nudge per idle episode. W12: while the gap
-                    # is a missing branch, the nudge names THAT — never "validate again".
-                    nudge = self._stage_template(stage)
-                    if nudge:
+                    # T2 (01-19, R2-1): route through the ONE stage-order composer — it
+                    # decides WHAT (gate.local vs branch-gap vs the T1 rebase line), this
+                    # site only decides WHEN. F8: a skipped send (walled, or an undelivered
+                    # copy of this exact kind still outstanding) must never consume the idle
+                    # episode's nudge budget — `nudged_at` is set only on an actual send, so
+                    # the re-check happens next tick instead of going silently overdue.
+                    if self._send_gate_order(block, g, stage, wid, force=False):
                         g["nudged_at"] = now
-                        if g.get("branch_gap") and stage == "local":
-                            self._to_worker(wid, self._branch_gap_line(wid, block),
-                                            "gate.branch-gap")
-                        else:
-                            self.emit(nudge, self._stage_slots(stage, wid, block),
-                                      worker_id=wid)
                         self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
         else:
             g.pop("idle_since", None)
@@ -1543,9 +1576,20 @@ class Engine:
 
         if stage != g.get("stage") or renudge:
             prev = g.get("stage")
+            # T2 (01-19, R2-3): the stage write / pr bookkeeping / flow log / gate_advance
+            # event below run UNCONDITIONALLY — suppression (walled worker, or a deduped
+            # kind) suppresses the SEND only, never this bookkeeping. Freezing the recorded
+            # stage while walled would hand `_post_unhold_nudge` a STALE stage on un-hold, a
+            # new defect wearing this fix's clothes.
             g["stage"], g["pr"] = stage, ((pr or {}).get("number") or g.get("pr"))
             if msg and wid:
-                self.emit(msg, self._stage_slots(stage, wid, block), worker_id=wid)
+                # T2 (01-19, R2-1): the ONE stage-order composer, not a direct emit. A NEW
+                # stage (real advance) always sends (force); a same-stage renudge (the
+                # remote CI-red arm is the one left — T1 removed the local non-ff renudge)
+                # goes through the kind-keyed dedupe like every other repeat, so the
+                # invariant (at most one undelivered copy per kind per worker) is
+                # structural here too, never a per-tick backlog builder.
+                self._send_gate_order(block, g, stage, wid, force=(stage != prev))
             self.log("flow", f"gate[{block}] -> {stage}" + (f" ({reason})" if reason else ""))
             if stage != prev:                            # a real stage advance (01-09), not a re-nudge
                 self.events.event("gate_advance", block=block,
@@ -1591,6 +1635,96 @@ class Engine:
         if stage == "record":
             slots["record_path"] = self._record_path()
         return slots
+
+    def _rebase_line(self, wid, block):
+        """T1 (01-19): the mode-true non-ff remedy — engine-composed via _to_worker (the
+        gate.changes / branch-gap precedent, no new template). In LOCAL mode the engine owns
+        the trunk merge (MG-01, contract §3); trunk moving under the branch means the ONE act
+        the worker can do is rebase its own branch in its own worktree — the engine cannot
+        (git refuses to rebase a branch another worktree holds, the tron-26 standoff's silent
+        half; see trunk.py R1b). Never `gate.merge` here: PMT-DONE-MERGE's "Merge it" is
+        remote-only wording a contract-strict worker correctly REFUSES (§3: you never merge
+        code), which is exactly the ~25-min standoff this block kills. The order names itself
+        gate-authorized-not-a-merge so a strict worker complies instead of walling (contract
+        §3 rider)."""
+        branch = self._block_branch(block)
+        main = self.paths.get("main_branch", "main")
+        return (f"[TRON]  {wid} — {block}: trunk moved under your branch; my ff-merge can't "
+                f"land it as-is. Rebase {branch} onto {main} in your worktree — do not "
+                f"merge; I land it. This ordered rebase is gate-authorized and is not a "
+                f"merge (the never-merge rule stands). When it's rebased, report done "
+                f"again with your evidence.")
+
+    def _send_gate_order(self, block, g, stage, wid, force=False):
+        """T2 (01-19, R2-1): the ONE stage-order composer — gate state + stage + wid + block
+        -> the correct order with its mailbox kind. EVERY order-composition site calls this:
+        the _drive_gate stage-emit tail, the gate idle re-nudge, _post_unhold_nudge, the
+        branch-gap direct send (R3-2), and the non-ff first rebase order (R3-1). The dedupe
+        and the walled-worker guard live INSIDE this seam, never re-stated at call sites —
+        the invariant (at most one undelivered copy of the same gate stage order per worker,
+        and no gate stage orders to a walled worker) is structural, not enumerated.
+
+        Composition: branch_gap and rebase_pending (both stage=='local' conjuncts — R2-4:
+        a `self_merge` settle advancing the stage to 'trunk' must never leave a stale flag
+        sending rebase orders at a trunk-stage gate) compose their engine-composed lines;
+        everything else is the stage's own template. branch_gap outranks rebase_pending
+        (no visible branch means nothing to rebase; the W12 arm pops the flag anyway).
+        This kills the pre-existing _post_unhold_nudge divergence for free (R2-1's
+        byproduct): a branch-gap gate un-holding used to get `gate.local`, the same
+        wrong-order class as the rebase defect.
+
+        Guards (in order):
+          walled   the wall case owns the conversation (01-18 T3 stopped idle ACCRUAL;
+                   this stops the stage-order SENDS) — applies even to a forced send; the
+                   caller's bookkeeping (stage write, g['pr'], flow log, gate_advance) runs
+                   regardless (R2-3: suppression suppresses the SEND only). NEVER a blanket
+                   guard in _to_worker/emit — settle-driven notices (gate.changes,
+                   await.proceed, architect.relay, report.bounce, broadcast) still deliver
+                   to a walled worker's mailbox (F3: the D-16-1 swallow class).
+          dedupe   (skipped when force=True — a NEW stage always sends, R3-2's branch-gap
+                   direct send keeps its unconditional fire) kind-keyed (F8 — never the
+                   stage name: stage 'local' legitimately carries gate.local, the branch-gap
+                   line, AND the rebase line; a stage key would suppress a needed different
+                   order): undelivered = the gate's last send-seq for this kind > the
+                   runner-owned consumed seq (.mbox-hwm, jobs.read_hwm — F5: never the
+                   worker record's send counter, never runner.json). Crash-consistent:
+                   mbox_seq and order_seq both persist at tick save, so an at-least-once
+                   re-emit recomputes the same seq and the dedupe stays coherent.
+
+        Returns True on a send, False on a suppressed send (walled / deduped — a skipped
+        send must NOT consume the idle episode's nudge budget: the caller leaves nudged_at
+        unset), None when this gate state composes no order at all (the _post_unhold_nudge
+        heartbeat fallback keys on this, never on a suppression). _drive_close's close-nudge
+        loop is deliberately OUTSIDE this seam (R2-6): already walled-exempt (01-18 T3),
+        ceiling-paced and capped — no per-tick spam class to fix there."""
+        if not wid:
+            return None
+        line = None
+        if stage == "local" and g.get("branch_gap"):
+            kind, line = "gate.branch-gap", self._branch_gap_line(wid, block)
+        elif stage == "local" and g.get("rebase_pending"):
+            kind, line = "gate.rebase", self._rebase_line(wid, block)
+        else:
+            kind = self._stage_template(stage)
+        if not kind:
+            return None
+        bw = next((x for x in self.st.workers if x.get("id") == wid), None)
+        if bw is not None and bw.get("status") == "walled":
+            return False
+        if not force:
+            last = (g.get("order_seq") or {}).get(kind)
+            if last and last > jobs.read_hwm(self.ctx.worker_dir(wid)):
+                return False
+        if line is not None:
+            self._to_worker(wid, line, kind)   # engine-composed line (dry-safe inside)
+        else:
+            self.emit(kind, self._stage_slots(stage, wid, block), worker_id=wid)
+        if bw is not None and not self.dry:
+            # The seq _to_worker just stamped on this send (bumped on bw in memory,
+            # persisted at tick save). Under dry nothing was sent, so nothing is recorded —
+            # the dedupe never engages in dry runs, exactly like every other send effect.
+            g.setdefault("order_seq", {})[kind] = int(bw.get("mbox_seq", 0) or 0)
+        return True
 
     def _drive_close(self, block, g, wid):
         """CLOSE stage (T7): ✅ landed. Fire CLOSE once and HOLD the slot — the worker wraps up
@@ -2251,6 +2385,134 @@ class Engine:
         w.pop("wall_detail", None)         # T3 (01-17): stale detail never survives an un-hold
         return w.pop("held_verbs", None) or []
 
+    def _unhold_and_replay(self, w, block, settled_case):
+        """T3 (01-19, F2/F7/F12/R2-2): the ONE un-hold-and-replay seam BOTH replayers call —
+        the operator-resume arm (_h_apply_decision) and the wall-invariant sweep repair arm
+        (a) (_sweep_wall_invariant, which mirrors resume's semantics and produced tron-26's
+        CASE-012). A walled worker re-sends its wall while held ("re-send, 5th time,
+        unchanged" — tron-25 tick 66); every copy queues whole to held_verbs (_ingest's
+        walled-check); replaying each serially re-raised one fresh case per stale echo, one
+        settle each (CASE-004→012, the wall-replay treadmill).
+
+        PRE-SCAN, then replay (F12): the fold/collapse decision runs over the WHOLE returned
+        queue before any serial _ingest — serial replay re-walls the worker on the first
+        raise and re-queues the rest via the _ingest walled-check, the exact emergent
+        re-queue that perpetuated the treadmill (queue counts 1→N→1 in the tron-26 flow log).
+          fold/collapse KEY (impl-review I-2): the block each wall verb is compared and
+            grouped on is the SENDER-FIRST-RESOLVED block — the worker's own assigned block
+            when it has one, else the canon-resolved text ref — exactly what _admit will
+            resolve the verb to at replay (A-1/W3: a worker's wall always lands on its own
+            block). Never the raw slot: a block-less echo ("re-send, unchanged" lines
+            classify without a block ref) would compare None != the settled block, escape
+            rule 1, and hand rule 2 one fresh case per settle — the treadmill reduced
+            instead of killed, and the arming shape of the I-1 strand below.
+          rule 1 (fold — takes precedence): a replayed `wall` verb matching the settled
+            case's worker+block is FOLDED — already archived at claim time (01-18 T8),
+            flow-logged WITH the folded text (so a mis-fold is visible in the log, F7), no
+            new case; a fold never re-walls the worker and never re-queues the remainder.
+            Inert when settled_case is None (a settle resolved by block with no matching
+            case object — nothing to discriminate against; rule 2 still collapses, R2-2).
+          rule 2 (batch-collapse — walls NOT matching the settled case): N same-worker+block
+            walls collapse to at most ONE fresh raise — the FIRST arrival's position (never
+            reordered: raising the wall last would let later-arriving done-reports advance
+            the gate the wall meant to stop), the NEWEST text. Its raise LEGITIMATELY
+            re-walls the worker mid-batch and re-queues the verbs behind it — a genuine new
+            wall owning the conversation; the re-queued verbs fold/replay at ITS settle.
+            MECHANISM NOTE (deviation from the spec's cited seam, adjudicated APPROVED by
+            the impl review): the spec named the _ingest walled-check as the re-queue
+            mechanism, but _ingest -> _emit only QUEUES the wall:raised trigger —
+            _h_escalate holds the worker at _drain_triggers, strictly AFTER this whole
+            batch would have been ingested, so the walled-check can never fire mid-batch.
+            Left to the trigger timing, a done-report behind the fresh wall would drain
+            AFTER the hold and drive the gate the wall meant to stop — the exact hazard the
+            arrival-order rule names. So THIS seam performs the identical re-queue itself,
+            deterministically: once a rule-2 wall verb is ingested, the remaining verbs go
+            back onto held_verbs whole (the precise state the walled-check would have
+            produced) and the loop stops.
+            RE-QUEUE GUARD (impl-review I-1, repro'd live): re-queue ONLY behind a raise
+            that will actually LAND — mirror _h_escalate's own blocked-guard (~986) and the
+            admission row check against the resolved block BEFORE extending held_verbs. A
+            raise the guard will swallow at drain (block already parked) re-walls nobody;
+            re-queuing behind it stranded the remainder on the held_verbs of an UN-walled
+            worker with zero wall cases — a parked block with no operator handle (the
+            D-22-1 case-unreachable class) plus a lost done-report (the F2+N7 class).
+            When the raise cannot land, the serial replay just continues (the old code's
+            live-replay behavior for exactly this shape); the blocked-list invariant arm
+            (01-18 T6) remains the parked-block-with-no-case backstop.
+          A wall for a different worker's block still raises (its own rule-2 group); note
+          sender-first resolution means a WORKER-sent wall can never name a foreign block —
+          its verbs all resolve to its own assignment (pinned in the suite).
+          Non-wall verbs replay exactly as today, in arrival order.
+
+        ACCEPTED RESIDUAL (F7, named in the spec): a genuinely NOVEL blocker walled while
+        held, same worker+block as the settled case, folds under rule 1 — text-keying cannot
+        rescue it (the replica echoes drift textually every re-send). Recovery: the un-held
+        worker re-walls after the post-unhold nudge and THAT wall raises fresh; one extra
+        round trip, bounded, folded text in the flow log.
+
+        Ends with the 01-16 mutual-wait guard: nothing actually replayed (empty queue OR
+        everything folded) -> the state-appropriate post-unhold nudge."""
+        wid = w.get("id")
+        queued = self._unhold_worker(w)
+        scase_block = (settled_case or {}).get("block")
+        scase_wid = (settled_case or {}).get("worker_id")
+        # I-2: the sender-first resolution _admit will apply at replay, mirrored here so
+        # fold/collapse compare what the verb will ACTUALLY raise on (reviewers gate by
+        # <type>, not block — same carve-out as _admit's).
+        assigned = w.get("block")
+        if assigned and str(assigned).startswith("review:"):
+            assigned = None
+
+        def _resolved(slots):
+            if assigned:
+                return assigned
+            ref = (slots or {}).get("block")
+            return self._resolve_block_ref(str(ref)) if ref else None
+        replay, kept = [], {}
+        for item in queued:
+            tag, slots = item.get("tag"), item.get("slots") or {}
+            if tag == "worker.wall":
+                iblock = _resolved(slots)
+                text = slots.get("detail") or slots.get("_raw") or ""
+                if (settled_case is not None and iblock == scase_block
+                        and scase_wid in (None, wid)):
+                    self.log("flow", f"unhold[{wid}] folded stale wall echo for "
+                                     f"{iblock or '?'} (case already settled): "
+                                     f"{text[:200]}")
+                    continue
+                if iblock in kept:
+                    # Newest text wins, first position stays (arrival order preserved).
+                    replay[kept[iblock]] = item
+                    self.log("flow", f"unhold[{wid}] collapsed duplicate wall for "
+                                     f"{iblock or '?'} to the newest text: {text[:200]}")
+                    continue
+                kept[iblock] = len(replay)
+            replay.append(item)
+        for i, item in enumerate(replay):
+            self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
+            if item.get("tag") != "worker.wall" or i + 1 >= len(replay):
+                continue
+            # I-1: re-queue ONLY behind a raise that will actually land — the exact
+            # conditions under which _h_escalate holds at drain: a resolved block the
+            # canon knows (admission would refuse otherwise) that is NOT already parked
+            # (the ~986 blocked-guard swallows a re-raise of a parked block).
+            rb = _resolved(item.get("slots") or {})
+            if not rb or rb in self.st.blocked or self.st.row(rb) is None:
+                self.log("flow", f"unhold[{wid}] wall raise for {rb or '?'} cannot land "
+                                 f"(parked/unknown) -> serial replay continues")
+                continue
+            # rule 2's fresh raise owns the conversation from here (see the mechanism
+            # note above): re-queue the remainder whole, exactly as the _ingest
+            # walled-check does for a live wall — they fold/replay at ITS settle.
+            rest = replay[i + 1:]
+            w.setdefault("held_verbs", []).extend(rest)
+            self.log("flow", f"unhold[{wid}] re-queued {len(rest)} verb(s) behind "
+                             f"the fresh wall raise")
+            break
+        if not replay:
+            self._post_unhold_nudge(w, block)
+        return replay
+
     def _post_unhold_nudge(self, w, block):
         """01-16 addendum (tron-19/20 mutual wait): the state-appropriate next message after
         an un-hold whose replay queue was empty — restoring `held_status` (often `idle`) with
@@ -2268,10 +2530,15 @@ class Engine:
         row = self.st.row(block)
         if g is not None:
             stage = g.get("stage")
-            nudge = self._stage_template(stage)
-            if nudge:
-                self.emit(nudge, self._stage_slots(stage, wid, block), worker_id=wid)
-            else:
+            # T2 (01-19, R2-1): the ONE stage-order composer — this site used to re-derive
+            # the order from _stage_template alone, with NO branch_gap (and no rebase)
+            # awareness: a branch-gap gate un-holding got `gate.local`, the exact
+            # wrong-order class this block fixes for the rebase case. The composer kills
+            # that divergence as a byproduct. force=False: an undelivered copy of this
+            # exact kind already sitting in the mailbox IS the worker's next message —
+            # the runner drains it on its next poll, so no mutual wait either way; only a
+            # composeless gate state (stage None) falls to the heartbeat.
+            if self._send_gate_order(block, g, stage, wid, force=False) is None:
                 self.emit("heartbeat.ping", {"worker_id": wid}, worker_id=wid)
             self.log("flow", f"resume[{block}] -> re-nudge {wid} at '{stage}' "
                              f"(empty replay queue)")
@@ -2551,6 +2818,18 @@ class Engine:
             self._escalate_from_architect(slots)
         elif handler in ("edit_self", "best_effort"):
             self.log("side", f"{handler}: {slots}")
+            # T4 (01-19, F1 BLOCKER + R2-5): the observed death path — operator free text
+            # classified `operator.directive` -> `best_effort` (routing.yaml:57) or
+            # `operator.knob_change` -> `edit_self` (routing.yaml:56) — dies HERE, silently,
+            # every time; neither run in the tron-25/26 evidence ever produced an
+            # `unclassified` event. Guard the HANDLER CLASS (both), not one enumerated
+            # handler — a misclassification between the two must never resurrect the exact
+            # same silent death through the adjacent door. Sender KIND is the test (R2-9):
+            # an operator line carries `{"kind": "operator"}` from the drain (~2976);
+            # `slots.get("worker_id")` would be the wrong test (operator senders carry no
+            # id). Existing template only (F10's trap avoided: never the PMT body).
+            if (sender or {}).get("kind") == "operator":
+                self.emit("escalate.unclassified", {"detail": NOT_RELAYED_NOTE})
         # observe / none: deliberately nothing.
 
     def _relay_architect_answer(self, slots):
@@ -2745,18 +3024,16 @@ class Engine:
             # (a): the case settled but nothing un-held this worker. Close the case too
             # (parity with an ordinary `resume` settle, which always closes what it acts
             # on) — a decided case has nothing left for any settle to do with it.
-            # T2 (01-18, F2+N7): mirror an operator `resume`'s semantics exactly —
-            # _unhold_worker returns the held-verb queue; replay it here (via `_ingest`,
-            # in arrival order) instead of dropping it on the floor, and send the
-            # post-unhold nudge ONLY when the queue came back empty (same mutual-wait
-            # guard resume already applies, 01-16 addendum).
-            queued = self._unhold_worker(w)
+            # T2 (01-18, F2+N7) + T3 (01-19, F2): mirror an operator `resume`'s semantics
+            # exactly — via the ONE shared un-hold-and-replay helper the resume arm calls
+            # (the same factoring discipline _unhold_worker itself got in 01-18 T2). This
+            # seam is the treadmill's second door: tron-26's CASE-012 replayed a stale wall
+            # echo through HERE, post-safe-park, after 005–011 came through resume — a fold
+            # implemented only at the resume arm would have left this one re-raising. The
+            # already-settled `case` object is the discriminator this un-hold acted on.
             self._close_case(None, case)
             self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
-            for item in queued:
-                self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
-            if not queued:
-                self._post_unhold_nudge(w, block)
+            self._unhold_and_replay(w, block, case)
             self._emit("pulse")
         else:
             # (b): no case at all — this worker is unreachable. Re-raise one.
