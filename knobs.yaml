@@ -34,6 +34,13 @@ knobs:
   gate_nudge_after: 2      # x wake_ceiling_sec of continuous idle -> re-send the stage prompt once
                            # (fresh mailbox seq); keep < gate_idle_cap
   gate_close_cap: 3        # x wake_ceiling_sec of idle at close -> force release
+                           # DUAL USE (01-18 addendum): this ONE knob reads as two different
+                           # shapes at its two call sites in fsm.py — _drive_close's own
+                           # wall-clock pace (a wake_ceiling_sec MULTIPLIER, via _pace) and
+                           # _confirm_close's close_nudges (a plain ATTEMPTS COUNT of failed
+                           # confirm retries, via knobs.get + int()). Retuning this value
+                           # moves BOTH; they are not independently adjustable today
+                           # (splitting them is new config surface — deferred, net-zero).
   # ── operator-case pacing (F-4/R-7, tron-13): same wall-clock law. A parked case
   # re-pings the operator every case_reping_after x wake_ceiling_sec; after
   # case_reping_max unanswered re-pings it SAFE-PARKS (named, resumable — the session

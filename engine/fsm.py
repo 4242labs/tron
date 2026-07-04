@@ -1059,6 +1059,26 @@ class Engine:
                 self._close_case(m.get("case"), case)             # unknown reply — drop case, hold
             self.log("flow", f"merge-gate[{block}] -> {decision}")
             self._emit("pulse"); return
+        if case is not None and case.get("kind") == "await" and decision in ("resume", "approve"):
+            # T5 (01-18 addendum, N1): an `await` case (opened by _h_await rung (a), ~937)
+            # never blocks the block or holds the worker — it matches none of the
+            # wall/merge arms below, so before this fix the case just closed here and the
+            # worker stayed paused until the orphan-idle sweep raised a SECOND wall minutes
+            # later (two operator round-trips for one answered question). Notify the paused
+            # worker directly with the exact proceed line rung (c) already owns (~950),
+            # worded for a settled checkpoint — same vocabulary, no new template (engine-
+            # composed via _to_worker, gate.changes precedent). `approve` means the same
+            # thing here as `resume` does everywhere else in this settle. `abandon` on an
+            # await case is untouched by this branch — it falls through to the ordinary
+            # unconditional abandon arm below (today's drop-the-block behavior, unchanged).
+            wid = case.get("worker_id")
+            if wid and not self.dry:
+                self._to_worker(wid, "Proceed — the operator cleared your checkpoint.",
+                                "await.proceed")
+            self._close_case(m.get("case"), case)
+            self.log("flow", f"await[{block or '?'}] settled by operator -> {wid or '?'} resumed")
+            self._emit("pulse")
+            return
         if not block:
             # T3 (D-15-3): a settle that resolves NO pending case is never a silent no-op —
             # this is the `resume CASE-007` no-op's exact shape (classify mangled the case
@@ -1633,6 +1653,10 @@ class Engine:
             return
         now = self._now_s()
         since = g.setdefault("close_idle_since", now)
+        # DUAL USE (01-18 addendum): `gate_close_cap` reads as a wake_ceiling_sec MULTIPLIER
+        # here (via _pace — a wall-clock idle span) but as a plain ATTEMPTS COUNT at
+        # _confirm_close's `close_nudges` check below — the SAME knob, two different units.
+        # Retuning it moves both.
         if now - since >= self._pace("gate_close_cap", 3):
             self._force_release_block(block)
             self.st.gate.pop(block, None)
@@ -1880,6 +1904,10 @@ class Engine:
                           "onto the trunk, leave it in place, then confirm again",
                 "error": f"paperwork landing failed: {ldetail}",
             }[code]
+            # DUAL USE (01-18 addendum): `gate_close_cap` reads as a plain ATTEMPTS COUNT
+            # here (close_nudges, incremented per failed confirm) but as a wake_ceiling_sec
+            # MULTIPLIER at _drive_close's own wall-clock pace above (`self._pace(...)`) —
+            # the SAME knob, two different units. Retuning it moves both.
             n = g.get("close_nudges", 0) + 1
             g["close_nudges"] = n
             if n >= int(self.knobs.get("gate_close_cap", 3)):
@@ -2908,6 +2936,37 @@ class Engine:
                 since = g.setdefault("orphan_since", now)
                 if now - since >= ping * 60:
                     self._resolve_workerless_gate(block, g)
+        # T6 (01-18 addendum, N2): the wall-pairing law's THIRD key. 01-17 repaired the
+        # worker-keyed half (_sweep_wall_invariant above) and the gate-keyed half (the
+        # workerless-gate net just above); a block in st.blocked with NO undecided case,
+        # NO walled worker, and NO gate is unreachable by every net — an operator mis-verb
+        # (`approve` on a plain workerless wall is a valid-verb silent spend of the only
+        # handle) or a crash window. Same one-silence-window law, same repair vocabulary
+        # (_reraise_wall: a fresh case, the ordinary escalate.wall notice) as the other two
+        # arms. `blocked` is runtime state (a plain list), never trunk-read, so this needs
+        # no _trunk_fault guard — it runs every sweep. The clock lives in a sibling dict on
+        # st.data (manifest state, same idiom as gate['orphan_since']/worker['wall_bad_since']
+        # but blocked has no per-block object of its own to stamp) and clears the instant
+        # coverage returns, from either direction.
+        bad_since = self.st.data.setdefault("blocked_bad_since", {})
+        now3 = self._now_s()
+        for block in list(self.st.blocked):
+            covered = (
+                any(c.get("block") == block and c.get("decision") is None
+                    for c in self.st.pending_cases.values())
+                or any(w.get("block") == block and w.get("status") == "walled"
+                       for w in self.st.workers)
+                or block in self.st.gate)
+            if covered:
+                bad_since.pop(block, None)
+                continue
+            since3 = bad_since.setdefault(block, now3)
+            if now3 - since3 >= ping * 60:
+                bad_since.pop(block, None)
+                self._reraise_wall(block, None,
+                                   f"{block} is blocked with no pending case, no walled "
+                                   f"worker, and no gate — unreachable by any settle; "
+                                   f"invariant repair")
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):
@@ -2969,7 +3028,15 @@ class Engine:
         (approve|resume|abandon) anywhere in the text resolves to `operator.decision` slots
         with zero model calls. Returns None (no match -> classify) when either half is
         missing; `_h_apply_decision` resolves the case (and its block) by the id itself, so
-        no `block` slot is needed here."""
+        no `block` slot is needed here.
+
+        WARNING (01-18 addendum doc rider): both halves match ANYWHERE in the text, in
+        either order, with no prose/negation awareness — this is a regex, not a reading of
+        intent. "don't approve CASE-7" contains both a CASE id and the verb `approve`, so it
+        SETTLES the case as approved; there is no deterministic way to tell a negation from
+        an instruction without a model call this path exists specifically to avoid. Operators
+        must reply with the bare verb + case id (`resume CASE-007`), never a sentence that
+        merely mentions one while meaning the opposite."""
         m = CASE_ID_RE.search(text or "")
         v = SETTLE_VERB_RE.search(text or "")
         if not m or not v:
@@ -3050,6 +3117,7 @@ class Engine:
         self.st.data["dropped"] = []
         self.st.data["cadence"] = {}
         self.st.data["counters"] = {}            # T9/S1-12: stall-count (+ case-seq, refresh-fail) must not leak across sessions
+        self.st.data["blocked_bad_since"] = {}   # T6 (01-18 addendum) review fix: a stale prior-session epoch would fire the blocked-list arm INSTANTLY on the first uncovered block of a new run — same T9/S1-12 law
         self.st.data["pending_cases"] = {}
         self.st.data["reconciled"] = []
         self.st.data["review_markers"] = {}      # since-last-review markers don't carry across sessions (T6)

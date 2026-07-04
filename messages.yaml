@@ -27,6 +27,10 @@ slots:
   reason: <str>
   count: <int>
   case: <str>           # escalation correlation id (e.g. CASE-001) — reply with it to settle
+                        # WARNING (01-18 addendum): the settle match is a plain regex — the
+                        # case id + a verb (approve|resume|abandon) ANYWHERE in your reply,
+                        # prose and negations included. "don't approve CASE-7" still approves
+                        # it. Reply with the bare verb + case id, never a sentence about one.
   assignment: <str>     # ASSIGN: the per-role work string the engine composes at emit
   merge_path: <str>     # ASSIGN: the mode-true merge instruction (local: no PR, engine merges; remote: PR) — 01-11 FX-4
   record_path: <str>    # DONE-RECORD: the mode-specific landing instruction for the gate-authorized ✅ commit — 01-11 FX-3
