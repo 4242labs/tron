@@ -233,12 +233,17 @@ def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
     if rrc != 0:
         _run(["git", "-C", repo_root, "rebase", "--abort"])
         _run(["git", "-C", repo_root, "checkout", main_branch])
-        # R1b (01-19, peer review): the RETURNED detail is still non_ff_detail (today's wall
-        # text, unchanged — every caller/test that reads it keeps reading the same thing).
-        # This only ADDS the rebase-retry's own failure reason, log-only (the caller's flow
-        # line is the sole reader, fsm.py ~1444) — without it a worktree-refused rebase (git
-        # refuses to rebase a branch another worktree holds) is indistinguishable in the logs
-        # from a genuine conflict; both fell through to the identical original ff error.
+        # R1b (01-19, impl-review I-3): the RETURNED detail is CHANGED here — the original
+        # ff error is preserved verbatim as the prefix, with the rebase-retry's own failure
+        # reason appended (200-char capped). Without it a worktree-refused rebase (git
+        # refuses to rebase a branch another worktree holds — the tron-26 standoff's silent
+        # half) is indistinguishable from a genuine conflict; both fell through to the
+        # identical original ff error. Readers of this return, all intended: the DONE
+        # gate's non-ff flow line (fsm._drive_gate), AND — a deliberate surface change,
+        # adjudged useful by the impl review — land_docs / land_ordered_merge propagate it
+        # into operator/worker-facing failure text (the landing nudge, paperwork-wall case
+        # details): exactly the surfaces that were starved of the refusal-vs-conflict
+        # distinction.
         return False, (f"{non_ff_detail} (rebase-retry: {rebase_err.strip()[:200]})"
                        if rebase_err.strip() else non_ff_detail)
     rc2, _, err2 = _run(["git", "-C", repo_root, "checkout", main_branch])
