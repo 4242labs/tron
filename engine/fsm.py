@@ -1138,23 +1138,14 @@ class Engine:
                 if w.get("block") == block and w.get("status") == "walled":
                     unheld = True
                     # T2 (01-18): _unhold_worker now owns the held_verbs pop and returns the
-                    # queue — this seam only replays it.
-                    # T1 (01-15 D-16-1 seam 1): replay whatever queued whole while held, in
-                    # arrival order — this is the exact `clean` confirmation the wall used
-                    # to swallow (tron-16 D-16-1: it arrived 15s after its own wall held it).
-                    queued = self._unhold_worker(w)
-                    for item in queued:
-                        self._ingest(item["tag"], item["slots"],
-                                    {"kind": "worker", "id": w.get("id")})
-                    if not queued:
-                        # 01-16 addendum (tron-19/20): un-holding with an EMPTY replay
-                        # queue used to leave a MUTUAL WAIT — the live runner idles
-                        # awaiting a mailbox message while the engine waits for the worker
-                        # to speak, and the restored idle entry consumes its slot forever
-                        # (dispatch starves with no gate for any net to key on). Every
-                        # un-hold now ends with the worker's state-appropriate next
-                        # message — never two parties waiting on each other.
-                        self._post_unhold_nudge(w, block)
+                    # queue. T3 (01-19, F2): the replay itself now lives in the ONE shared
+                    # helper both replay seams call (this resume arm AND the sweep's
+                    # invariant arm (a)) — _unhold_and_replay pre-scans the queue against
+                    # the settled case this un-hold acted on (`case` here; None is fine —
+                    # rule 1 goes inert, rule 2 still collapses) before any serial _ingest,
+                    # folding the stale wall echoes that used to raise one fresh case per
+                    # re-send (the tron-26 CASE-004→012 treadmill).
+                    self._unhold_and_replay(w, block, case)
             vg2 = self.st.gate.get(block)
             if vg2 and vg2.get("violation_pending"):
                 # T6 (01-15): resume means the worker resolves its own branch — clear the
@@ -2394,6 +2385,72 @@ class Engine:
         w.pop("wall_detail", None)         # T3 (01-17): stale detail never survives an un-hold
         return w.pop("held_verbs", None) or []
 
+    def _unhold_and_replay(self, w, block, settled_case):
+        """T3 (01-19, F2/F7/F12/R2-2): the ONE un-hold-and-replay seam BOTH replayers call —
+        the operator-resume arm (_h_apply_decision) and the wall-invariant sweep repair arm
+        (a) (_sweep_wall_invariant, which mirrors resume's semantics and produced tron-26's
+        CASE-012). A walled worker re-sends its wall while held ("re-send, 5th time,
+        unchanged" — tron-25 tick 66); every copy queues whole to held_verbs (_ingest's
+        walled-check); replaying each serially re-raised one fresh case per stale echo, one
+        settle each (CASE-004→012, the wall-replay treadmill).
+
+        PRE-SCAN, then replay (F12): the fold/collapse decision runs over the WHOLE returned
+        queue before any serial _ingest — serial replay re-walls the worker on the first
+        raise and re-queues the rest via the _ingest walled-check, the exact emergent
+        re-queue that perpetuated the treadmill (queue counts 1→N→1 in the tron-26 flow log).
+          rule 1 (fold — takes precedence): a replayed `wall` verb matching the settled
+            case's worker+block is FOLDED — already archived at claim time (01-18 T8),
+            flow-logged WITH the folded text (so a mis-fold is visible in the log, F7), no
+            new case; a fold never re-walls the worker and never re-queues the remainder.
+            Inert when settled_case is None (a settle resolved by block with no matching
+            case object — nothing to discriminate against; rule 2 still collapses, R2-2).
+          rule 2 (batch-collapse — walls NOT matching the settled case): N same-worker+block
+            walls collapse to at most ONE fresh raise — the FIRST arrival's position (never
+            reordered: raising the wall last would let later-arriving done-reports advance
+            the gate the wall meant to stop), the NEWEST text. Its raise LEGITIMATELY
+            re-walls the worker mid-batch and re-queues the verbs behind it — a genuine new
+            wall owning the conversation; the re-queued verbs fold/replay at ITS settle.
+          A wall for a different block still raises (its own rule-2 group of one).
+          Non-wall verbs replay exactly as today, in arrival order.
+
+        ACCEPTED RESIDUAL (F7, named in the spec): a genuinely NOVEL blocker walled while
+        held, same worker+block as the settled case, folds under rule 1 — text-keying cannot
+        rescue it (the replica echoes drift textually every re-send). Recovery: the un-held
+        worker re-walls after the post-unhold nudge and THAT wall raises fresh; one extra
+        round trip, bounded, folded text in the flow log.
+
+        Ends with the 01-16 mutual-wait guard: nothing actually replayed (empty queue OR
+        everything folded) -> the state-appropriate post-unhold nudge."""
+        wid = w.get("id")
+        queued = self._unhold_worker(w)
+        scase_block = (settled_case or {}).get("block")
+        scase_wid = (settled_case or {}).get("worker_id")
+        replay, kept = [], {}
+        for item in queued:
+            tag, slots = item.get("tag"), item.get("slots") or {}
+            if tag == "worker.wall":
+                iblock = slots.get("block")
+                text = slots.get("detail") or slots.get("_raw") or ""
+                if (settled_case is not None and iblock == scase_block
+                        and scase_wid in (None, wid)):
+                    self.log("flow", f"unhold[{wid}] folded stale wall echo for "
+                                     f"{iblock or '?'} (case already settled): "
+                                     f"{text[:200]}")
+                    continue
+                if iblock in kept:
+                    # Newest text wins, first position stays (arrival order preserved).
+                    replay[kept[iblock]] = item
+                    self.log("flow", f"unhold[{wid}] collapsed duplicate wall for "
+                                     f"{iblock or '?'} to the newest text: {text[:200]}")
+                    continue
+                kept[iblock] = len(replay)
+            replay.append(item)
+        for item in replay:
+            self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
+        if not replay:
+            self._post_unhold_nudge(w, block)
+        return replay
+
     def _post_unhold_nudge(self, w, block):
         """01-16 addendum (tron-19/20 mutual wait): the state-appropriate next message after
         an un-hold whose replay queue was empty — restoring `held_status` (often `idle`) with
@@ -2905,18 +2962,16 @@ class Engine:
             # (a): the case settled but nothing un-held this worker. Close the case too
             # (parity with an ordinary `resume` settle, which always closes what it acts
             # on) — a decided case has nothing left for any settle to do with it.
-            # T2 (01-18, F2+N7): mirror an operator `resume`'s semantics exactly —
-            # _unhold_worker returns the held-verb queue; replay it here (via `_ingest`,
-            # in arrival order) instead of dropping it on the floor, and send the
-            # post-unhold nudge ONLY when the queue came back empty (same mutual-wait
-            # guard resume already applies, 01-16 addendum).
-            queued = self._unhold_worker(w)
+            # T2 (01-18, F2+N7) + T3 (01-19, F2): mirror an operator `resume`'s semantics
+            # exactly — via the ONE shared un-hold-and-replay helper the resume arm calls
+            # (the same factoring discipline _unhold_worker itself got in 01-18 T2). This
+            # seam is the treadmill's second door: tron-26's CASE-012 replayed a stale wall
+            # echo through HERE, post-safe-park, after 005–011 came through resume — a fold
+            # implemented only at the resume arm would have left this one re-raising. The
+            # already-settled `case` object is the discriminator this un-hold acted on.
             self._close_case(None, case)
             self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
-            for item in queued:
-                self._ingest(item["tag"], item["slots"], {"kind": "worker", "id": wid})
-            if not queued:
-                self._post_unhold_nudge(w, block)
+            self._unhold_and_replay(w, block, case)
             self._emit("pulse")
         else:
             # (b): no case at all — this worker is unreachable. Re-raise one.
