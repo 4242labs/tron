@@ -407,7 +407,7 @@ def _make_echo_cli_script(tmpdir):
 def t3a_host_cli_adapter_raises_on_failure_never_a_healthy_turn():
     d = tempfile.mkdtemp(prefix="tron-hostcli-")
     script = _make_echo_cli_script(d)
-    adapter = worker_runner.HostCliAdapter(script, "test-session", d)
+    adapter = worker_runner.HostCliAdapter(script, "test-session", d, model="test-model")
     try:
         healthy = adapter.run_turn("hello there")
         ok("T3a a healthy turn's subtype/is_error are recorded, never discarded",
@@ -438,7 +438,7 @@ def t3a_healthy_success_mentioning_refusal_wording_never_raises():
     the shape match is not a content classifier of legitimate coding-turn output."""
     d = tempfile.mkdtemp(prefix="tron-hostcli-clean-")
     script = _make_echo_cli_script(d)
-    adapter = worker_runner.HostCliAdapter(script, "test-session", d)
+    adapter = worker_runner.HostCliAdapter(script, "test-session", d, model="test-model")
     try:
         result = adapter.run_turn("CLEAN_SUCCESS_MENTIONS_LIMIT please")
         ok("T3a a healthy success turn mentioning 'rate limit exceeded' in its own "

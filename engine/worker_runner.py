@@ -48,18 +48,57 @@ def _now():
 
 
 class RunnerRefusal(RuntimeError):
-    """T3(a) (01-20, tron-27/28 quota-blindness): raised for a runtime-failure TURN — the
-    host CLI answered, but its own result record says the turn was not a healthy success
-    (`is_error` true, `subtype` != "success", or the CLI's own known refusal wording, e.g.
-    a provider quota/limit banner returned as ordinary `turn_done` text — BLOCKER-1: the
-    quota-state result shape is unverified and may arrive dressed as `success`). A DISTINCT
-    exception CLASS (never a bare RuntimeError) so the engine's fleet-hold sweep (T3(b))
-    can recognize the CAUSE structurally off this class's __name__, recorded as a plain
-    `kind` field on the runner's own turn_error timeline event — never by reading the
-    refusal TEXT engine-side (NET-ZERO: the shapes stay this adapter's own knowledge).
-    Rides the EXISTING exception path unchanged: Runner.run()'s one `except Exception`
-    already turns any raise here into turn_error -> state `error` -> jobs.is_alive() False
-    -> the sweep recovers."""
+    """A runtime-failure TURN with no healthy outcome — in either of two modes (01-22 T1
+    broadened this class from mode (1) alone, tron-29..32 evidence):
+
+    (1) (T3(a), 01-20, tron-27/28 quota-blindness) the host CLI ANSWERED, but its own
+    result record says the turn was not a healthy success (`is_error` true, `subtype`
+    != "success", or the CLI's own known refusal wording, e.g. a provider quota/limit
+    banner returned as ordinary `turn_done` text — BLOCKER-1: the quota-state result
+    shape is unverified and may arrive dressed as `success`).
+
+    (2) (01-22 T1) the host CLI NEVER answered at all: a genuine mid-turn death (its
+    process exited, or its stream closed — worker_runner.py's HostStreamEnded) while
+    this turn's `result` was still genuinely owed, i.e. Runner._stopped() was FALSE at
+    the moment the drop was observed. The opposite mode from (1) in every particular
+    (no answer at all, vs. an answer that was unhealthy) except the consequence: still
+    a real turn failure, riding the SAME path. (When Runner._stopped() is TRUE instead,
+    the drop is expected teardown, never reaches this class at all — see Runner.run()'s
+    dispatch of HostStreamEnded.)
+
+    A DISTINCT exception CLASS (never a bare RuntimeError) so the engine's fleet-hold
+    sweep (T3(b), fsm.py `_refusal_death`) can recognize the CAUSE structurally off
+    this class's __name__, recorded as a plain `kind` field on the runner's own
+    turn_error timeline event — never by reading the refusal TEXT engine-side
+    (NET-ZERO: the shapes stay this adapter's own knowledge). Rides the EXISTING
+    exception path unchanged: Runner.run()'s turn-failure handling turns any raise
+    (or reclassification) here into turn_error -> state `error` -> jobs.is_alive()
+    False -> the sweep recovers.
+
+    Fleet-hold consequence (policy unchanged, now reachable by a second route, T3(b)
+    fsm.py `_fleet_hold_note`): two RunnerRefusal-caused deaths inside the fleet-hold's
+    rolling window engage the hold fleet-wide (dispatch freezes); it self-clears via
+    the canary re-spawn probe on the first healthy turn. Out of scope for 01-22: the
+    hold's engage/release policy and death window are unchanged — mode (2) simply
+    feeds more genuine deaths into the SAME evidence stream mode (1) already fed."""
+
+
+class HostStreamEnded(RuntimeError):
+    """Adapter-internal signal (01-22 T1, tron-29..32): the host-CLI process exited, or
+    its stdout stream closed, before this turn's `result` event arrived — raised at
+    BOTH sibling sites (process-exit, stream-end) under this ONE type so Runner.run()
+    has a single thing to discriminate on, never a one-off per site.
+
+    This is deliberately NOT itself a verdict. The adapter cannot tell a benign
+    teardown (the runner is stopping/released, so no further turn was owed — the
+    seq-7 case in the evidence) from a genuine mid-turn death (a turn was genuinely
+    owed and the host-CLI simply never answered) — that would be exactly the
+    per-message "is this real work" heuristic the runner architecture exists to
+    avoid. Only the runner's own stop/release state (Runner._stopped()) knows which,
+    so Runner.run() is the ONE place that decision is made: stopped -> expected
+    teardown (no turn_error, not `error` state, no bare raise); not stopped -> a
+    turn was genuinely owed, reclassified as RunnerRefusal (see its docstring's mode
+    (2)) so it rides the SAME structural path the fleet-hold sweep already reads."""
 
 
 # T3(a) (01-20, BLOCKER-1 / impl-review MAJOR-3): known runtime-refusal SHAPES — the
@@ -150,11 +189,14 @@ class HostCliAdapter:
             rlist, _, _ = select.select([self.proc.stdout], [], [], min(remaining, 1.0))
             if not rlist:
                 if self.proc.poll() is not None:
-                    raise RuntimeError("host-cli process exited before a result event")
+                    # 01-22 T1: HostStreamEnded, not a bare RuntimeError — Runner.run() is
+                    # the ONE place that discriminates expected teardown from a genuine
+                    # mid-turn death (this adapter cannot tell the two apart).
+                    raise HostStreamEnded("host-cli process exited before a result event")
                 continue
             line = self.proc.stdout.readline()
             if not line:
-                raise RuntimeError("host-cli stream ended before a result event")
+                raise HostStreamEnded("host-cli stream ended before a result event")
             line = line.strip()
             if not line:
                 continue
@@ -313,6 +355,40 @@ class Runner:
                     self._timeline(event="turn_start", seq=seq, kind=m.get("kind"))
                     try:
                         result = self.adapter.run_turn(m.get("text", ""))
+                    except HostStreamEnded as e:
+                        # 01-22 T1 (tron-29..32): the adapter raised the SAME signal for
+                        # both sibling sites (process-exit, stream-end) — discriminate
+                        # HERE, at the lifecycle layer, off the runner's OWN stop/release
+                        # state, checked FRESH at this exact moment (never a value cached
+                        # before the turn started). release() (jobs.py) writes the `.stop`
+                        # sentinel BEFORE it SIGTERMs the host-CLI's whole process group,
+                        # so by the time that SIGTERM actually kills/EOFs the host-CLI and
+                        # this except fires, `.stop` is already on disk — this is what
+                        # also resolves the deliver-vs-release race (a message delivered
+                        # after the block closed but before `.stop`/SIGTERM lands): the
+                        # turn started on it dies from that SAME landing SIGTERM, by which
+                        # time `.stop` already exists.
+                        if self._stopped():
+                            # Expected teardown — no turn was owed once release() landed.
+                            # Never a turn_error, never state `error` (must not strand a
+                            # gate mid-turn on a routine release).
+                            self._timeline(event="turn_teardown", seq=seq,
+                                           text=f"{type(e).__name__}: {e}")
+                            self._write_state("released")
+                            self._timeline(event="stopped",
+                                           text="released by TRON (mid-turn teardown)")
+                            return 0
+                        # A turn was genuinely owed and the host-CLI never answered at
+                        # all — reclassify under RunnerRefusal's broadened contract (its
+                        # docstring's mode (2)) so this rides the SAME structural path
+                        # (kind='RunnerRefusal') the fleet-hold sweep already reads,
+                        # instead of a bare RuntimeError that would strand the gate.
+                        refusal = RunnerRefusal(f"runtime drop with no answer: {e}")
+                        self._timeline(event="turn_error", seq=seq,
+                                       text=f"{type(refusal).__name__}: {refusal}",
+                                       kind=type(refusal).__name__)
+                        self._write_state("error")
+                        return 1
                     except Exception as e:                      # adapter/process died mid-turn
                         # T3(b) (01-20): `kind` is the exception CLASS name, a structural
                         # field (like `state`/`event` elsewhere) — the engine's fleet-hold
