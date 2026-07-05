@@ -62,12 +62,23 @@ class RunnerRefusal(RuntimeError):
     -> the sweep recovers."""
 
 
-# T3(a) (01-20, BLOCKER-1): known runtime-refusal SHAPES — the host CLI's OWN quota/limit
-# wording. Versioned constants living HERE, in the host-CLI adapter, because they are
-# runtime-specific translation knowledge (exactly what an adapter is for) — the engine
-# NEVER reads this list or any turn text (NET-ZERO: no new knob/verb/template; this is a
-# private detection detail of ONE adapter, not TRON vocabulary). Update it if/when the
-# host CLI's own wording changes.
+# T3(a) (01-20, BLOCKER-1 / impl-review MAJOR-3): known runtime-refusal SHAPES — the
+# host CLI's OWN quota/limit wording. Versioned constants living HERE, in the host-CLI
+# adapter, because they are runtime-specific translation knowledge (exactly what an
+# adapter is for) — the engine NEVER reads this list or any turn text (NET-ZERO: no new
+# knob/verb/template; this is a private detection detail of ONE adapter, not TRON
+# vocabulary). Update it if/when the host CLI's own wording changes.
+#
+# BOUNDARY (MAJOR-3): this is a shape match, and a shape match on free assistant prose is
+# a classifier — undisciplined, it false-kills a coding turn whose OWN summary happens to
+# mention "rate limit exceeded" (this fleet's product wraps LiteLLM: quotas, rate limits
+# and usage-cap strings are exactly what its engineers write and describe). So this list
+# is consulted ONLY when the turn's own structural fields (`subtype`/`is_error`) have
+# NOT already affirmed a clean success — see `run_turn` below: a record with
+# `is_error=False` AND `subtype=="success"` never reaches this check at all, regardless
+# of its text. It exists purely for the shape BLOCKER-1 named unverified: a quota/limit
+# turn whose subtype is missing entirely (no affirmative "success" to trust) — never for
+# a turn the CLI itself already vouched for.
 _KNOWN_REFUSAL_SHAPES = (
     "usage limit reached",
     "you've reached your usage limit",
@@ -145,14 +156,23 @@ class HostCliAdapter:
                 text = ev.get("result", "") or ""
                 subtype = ev.get("subtype")
                 is_error = bool(ev.get("is_error"))
-                # T3(a) (01-20): a healthy turn is EARNED, never assumed — is_error, a
-                # non-"success" subtype, or the CLI's own known refusal wording (quota-
-                # blindness's BLOCKER-1: that shape may otherwise arrive as an ordinary
-                # `success` turn) all raise RunnerRefusal, riding the SAME exception path
-                # every other turn failure already does (turn_error -> state error ->
-                # jobs.is_alive() False -> the sweep recovers).
-                if is_error or (subtype is not None and subtype != "success") \
-                        or _is_known_refusal(text):
+                # T3(a) (01-20): a healthy turn is EARNED, never assumed — is_error or a
+                # non-"success" subtype always raises RunnerRefusal, riding the SAME
+                # exception path every other turn failure already does (turn_error ->
+                # state error -> jobs.is_alive() False -> the sweep recovers).
+                if is_error or (subtype is not None and subtype != "success"):
+                    raise RunnerRefusal(
+                        f"turn reported failure (subtype={subtype!r}, "
+                        f"is_error={is_error}): {text[:200]}")
+                # impl-review MAJOR-3: the known-refusal SHAPE match is consulted ONLY
+                # when the record has NOT already affirmed a clean success — a healthy
+                # `is_error=False`/`subtype=="success"` turn NEVER raises off its own
+                # prose, however that prose reads (a coding turn legitimately describing
+                # "rate limit exceeded" handling must never be false-killed). It exists
+                # for the shape BLOCKER-1 flagged unverified: a quota/limit turn that
+                # arrives with no affirmative subtype to trust at all.
+                clean_success = (subtype == "success" and not is_error)
+                if not clean_success and _is_known_refusal(text):
                     raise RunnerRefusal(
                         f"turn reported failure (subtype={subtype!r}, "
                         f"is_error={is_error}): {text[:200]}")

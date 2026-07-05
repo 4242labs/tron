@@ -384,9 +384,13 @@ def _make_echo_cli_script(tmpdir):
         "    elif 'REFUSE_SUBTYPE' in text:\n"
         "        out = {'type': 'result', 'subtype': 'error_max_turns', 'is_error': False,\n"
         "               'result': 'too many turns'}\n"
-        "    elif 'REFUSE_SHAPE' in text:\n"
-        "        out = {'type': 'result', 'subtype': 'success', 'is_error': False,\n"
+        "    elif 'REFUSE_SHAPE_UNVERIFIED' in text:\n"
+        "        out = {'type': 'result',\n"
         "               'result': 'You have reached your usage limit. Try again later.'}\n"
+        "    elif 'CLEAN_SUCCESS_MENTIONS_LIMIT' in text:\n"
+        "        out = {'type': 'result', 'subtype': 'success', 'is_error': False,\n"
+        "               'result': 'done: added handling for rate limit exceeded '\n"
+        "                         'responses from the provider'}\n"
         "    else:\n"
         "        out = {'type': 'result', 'subtype': 'success', 'is_error': False,\n"
         "               'result': 'ok: ' + text}\n"
@@ -419,9 +423,28 @@ def t3a_host_cli_adapter_raises_on_failure_never_a_healthy_turn():
                 return True
         ok("T3a is_error:true raises RunnerRefusal", _raises("REFUSE_ISERROR please"))
         ok("T3a a non-'success' subtype raises RunnerRefusal", _raises("REFUSE_SUBTYPE please"))
-        ok("T3a a known host-CLI refusal SHAPE raises even though is_error is false and "
-           "subtype is 'success' (BLOCKER-1: the quota shape may arrive dressed as success)",
-           _raises("REFUSE_SHAPE please"))
+        ok("T3a a known refusal SHAPE with NO affirmed subtype/is_error raises (BLOCKER-1: "
+           "the quota shape is unverified and may arrive with nothing to trust)",
+           _raises("REFUSE_SHAPE_UNVERIFIED please"))
+    finally:
+        adapter.close()
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t3a_healthy_success_mentioning_refusal_wording_never_raises():
+    """impl-review MAJOR-3 (MINOR-6b): a clean success turn (is_error=False,
+    subtype=='success') whose OWN prose happens to contain a known refusal SHAPE (e.g.
+    describing rate-limit handling this fleet's own product builds) must NEVER raise —
+    the shape match is not a content classifier of legitimate coding-turn output."""
+    d = tempfile.mkdtemp(prefix="tron-hostcli-clean-")
+    script = _make_echo_cli_script(d)
+    adapter = worker_runner.HostCliAdapter(script, "test-session", d)
+    try:
+        result = adapter.run_turn("CLEAN_SUCCESS_MENTIONS_LIMIT please")
+        ok("T3a a healthy success turn mentioning 'rate limit exceeded' in its own "
+           "summary text does NOT raise RunnerRefusal",
+           isinstance(result, dict) and result.get("subtype") == "success"
+           and result.get("is_error") is False, f"result={result}")
     finally:
         adapter.close()
         shutil.rmtree(d, ignore_errors=True)
@@ -528,7 +551,7 @@ def t3b_fleet_hold_engages_probes_canary_resumes_never_walls():
     orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
     jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
     redispatched = []
-    eng._redispatch = lambda block: redispatched.append(block)
+    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
     try:
         # Tick 1: ENG-A-01 dies of refusal — a LONE death, hold not yet active; the
         # ordinary per-worker stall handling still applies.
@@ -590,6 +613,97 @@ def t3b_fleet_hold_engages_probes_canary_resumes_never_walls():
            hold2.get("active") is False, f"hold={hold2}")
     finally:
         jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = orig
+
+
+def t3b_active_hold_freezes_real_switchboard_dispatch():
+    """impl-review BLOCKER-1 (the verdict's 'add a test driving REAL _pulse'): the older
+    t3b stubbed _redispatch and never drove the dispatch path, so it could not observe
+    that the hold actually FREEZES FILL SLOTS — it only proved the walls went quiet. Drive
+    the REAL _switchboard: with a ready pick AND a free slot, an ACTIVE hold must dispatch
+    nothing; clearing the hold must let the very SAME pick through — proving _dispatch_held()
+    is the freeze, not an empty queue (the BLOCKER-1 silent spawn-burn is dead)."""
+    eng = _eng()
+    eng.dry = False
+    eng.st.run_control = None
+    dispatched = []
+    slots = {"n": 1}
+    eng._free_slots = lambda: slots["n"]
+    eng._select_work = lambda: ("block", "A-01")
+    eng._dispatch_engineer = lambda ref: (dispatched.append(ref), slots.__setitem__("n", 0))
+    eng._in_scope_rows = lambda: []          # neutralise CLEAR AHEAD — only FILL SLOTS is under test
+    eng._all_settled = lambda: False
+    eng._fleet_refusal_hold()["active"] = True
+    eng._switchboard()
+    ok("T3b(BLOCKER-1) an ACTIVE fleet hold freezes real FILL-SLOTS dispatch — nothing spawns",
+       dispatched == [], f"dispatched={dispatched}")
+    eng._fleet_refusal_hold()["active"] = False
+    eng._switchboard()
+    ok("T3b(BLOCKER-1) clearing the hold lets the SAME ready pick through — the gate, not "
+       "an empty queue, was the freeze",
+       dispatched == ["A-01"], f"dispatched={dispatched}")
+
+
+def t3b_canary_probe_is_role_agnostic_and_bypasses_the_gate():
+    """impl-review MAJOR-2: the canary must be role-AGNOSTIC and a gated held block must
+    stay probeable (I2). A reviewer refusal death elects a reviewer canary (its rtype) that
+    probes through _dispatch_reviewer; an engineer canary probes through _redispatch WITH
+    bypass_gate=True. The old suite drove neither the election role-agnosticism nor the
+    real _sweep_fleet_refusal_canary routing."""
+    eng = _eng()
+    eng.dry = False
+    clock = {"t": 6000.0}
+    eng._now_s = lambda: clock["t"]
+    eng._release_worker = lambda w, notify=True, reason=None: None   # side-effect-free election
+    reviewer, redispatch = [], []
+    eng._dispatch_reviewer = lambda ref: reviewer.append(ref)
+    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    orig = (jobs.find, jobs.is_alive)
+    jobs.find = lambda wid, idx=None: None       # no live canary yet -> the probe path
+    jobs.is_alive = lambda wid, idx=None: False
+    try:
+        # a REVIEWER refusal death elects a role-tagged reviewer canary (its rtype)
+        eng._fleet_refusal_hold()["active"] = True
+        eng._drive_fleet_refusal_hold({"id": "REV-code", "role": "reviewer",
+                                       "rtype": "code", "session_id": "real"})
+        hold = eng._fleet_refusal_hold()
+        ok("T3b(MAJOR-2) a reviewer death elects a role-tagged reviewer canary keyed on rtype "
+           "(an engineer-only election would wedge the hold when the deaths are reviewers)",
+           hold.get("canary") == "code" and hold.get("canary_role") == "reviewer", f"hold={hold}")
+        eng._sweep_fleet_refusal_canary({})
+        ok("T3b(MAJOR-2) the reviewer canary probes via _dispatch_reviewer, never _redispatch",
+           reviewer == ["code"] and redispatch == [], f"rev={reviewer} rd={redispatch}")
+        # an ENGINEER canary on an already-gated block still probes, via bypass_gate=True
+        hold.update({"canary": "A-01", "canary_role": "engineer", "canary_probed_at": None})
+        eng.st.gate["A-01"] = {"stage": "local", "pr": None}
+        clock["t"] += 1
+        eng._sweep_fleet_refusal_canary({})
+        ok("T3b(MAJOR-2) an engineer canary probes via _redispatch WITH bypass_gate=True — a "
+           "gated held block stays probeable (I2), never a permanent silent wedge",
+           redispatch == [("A-01", True)], f"rd={redispatch}")
+    finally:
+        jobs.find, jobs.is_alive = orig
+
+
+def t3b_redispatch_honors_bypass_gate_on_a_gated_block():
+    """impl-review MAJOR-2 (proving the fix acts, not just that the flag is passed): the
+    REAL _redispatch no-ops on a gated block for the plain recovery call (unchanged) but
+    reaches the re-spawn under bypass_gate=True — every OTHER hard stop (done/parked/
+    dropped/live-PR/deps/active-worker) still applies to both."""
+    eng = _eng()
+    eng.st.workers[:] = []                       # the active-worker stop is separate; clear it
+    eng.st.gate["A-01"] = {"stage": "local", "pr": None}   # A-01 has already gated
+    spawned = []
+    eng._spawn = lambda wid, *a, **k: (spawned.append(wid) or ("sess", "sh"))
+    eng._reserve = lambda w: eng.st.workers.append(w)
+    eng.st.record_dispatch = lambda *a, **k: None
+    eng.events.event = lambda *a, **k: None
+    eng._redispatch("A-01", bypass_gate=False)
+    ok("T3b(MAJOR-2) plain _redispatch STILL no-ops on a gated block (gate ownership unchanged)",
+       spawned == [], f"spawned={spawned}")
+    eng._redispatch("A-01", bypass_gate=True)
+    ok("T3b(MAJOR-2) bypass_gate=True reaches the re-spawn on the gated block (the canary "
+       "can re-prove the runtime for a held block that gated)",
+       spawned == [eng._worker_id("engineer", "A-01")], f"spawned={spawned}")
 
 
 # ══ T4: settling an architect-kind case acts (idempotent against T1/T5) ══
@@ -731,27 +845,38 @@ def t6a_bounce_stays_role_agnostic_for_non_architect_senders():
 
 
 def t6b_engine_wake_never_resets_the_idle_anchor():
+    """impl-review MAJOR-4 fix: an engine-initiated wake (here, a REAL _bounce_gate call
+    — not a hand-set field) stamps the EXPLICIT engine_wake_seq marker; while the runner
+    hasn't consumed up to it, the busy blip it causes must never wipe the idle anchor.
+    dispatch-realistic: mbox_seq is already nonzero (a real job's persona/order sends)
+    BEFORE the wake — proving the marker, not the generic mbox_seq, drives the gate."""
     eng = _eng()
+    eng.dry = False   # real _to_worker sends, so the wake stamp is the ACTUAL mechanism
     arch = _arch(eng, job={"kind": "log", "type": "code"}, status="busy")
+    arch["mbox_seq"] = 3   # dispatch-realistic: prior persona/job-order sends already happened
     clock = {"t": 1000.0}
     eng._now_s = lambda: clock["t"]
     orig_idle, orig_hwm = jobs.runner_idle, jobs.read_hwm
     jobs.runner_idle = lambda wid, idx=None: True
-    jobs.read_hwm = lambda wdir: 0
+    jobs.read_hwm = lambda wdir: 3
     try:
         eng._drive_architect_liveness()      # anchors job_idle_since at 1000.0
         ok("T6b setup: idle anchor set", arch.get("job_idle_since") == 1000.0)
-        # An engine-initiated wake: mbox_seq bumps as _to_worker/emit would on a bounce or
-        # idle re-nudge send; the runner goes briefly busy processing OUR OWN message.
-        arch["mbox_seq"] = 1
-        jobs.runner_idle = lambda wid, idx=None: False
+        # An ENGINE-initiated wake: a real bounce, which stamps engine_wake_seq at the
+        # exact seq of THAT send (never the generic mbox_seq the dispatch itself already
+        # bumped to 3 above — MAJOR-4's false-cap came from comparing against that).
+        eng._bounce_gate({"kind": "worker", "id": arch["id"]}, "bad verb")
+        wake_seq = arch.get("engine_wake_seq")
+        ok("T6b setup: the bounce stamped an EXPLICIT engine_wake_seq (not inferred)",
+           wake_seq == arch.get("mbox_seq") and wake_seq == 4, f"arch={arch}")
+        jobs.runner_idle = lambda wid, idx=None: False   # runner goes briefly busy answering OUR bounce
         clock["t"] = 1010.0
         eng._drive_architect_liveness()
-        ok("T6b an engine-initiated wake's busy blip never wipes the idle anchor",
+        ok("T6b the wake's busy blip never wipes the idle anchor",
            arch.get("job_idle_since") == 1000.0, f"arch={arch}")
         # The runner finishes answering our wake (consumed hwm catches up) and idles
         # again — accrual continues from the ORIGINAL anchor, never a fresh one.
-        jobs.read_hwm = lambda wdir: 1
+        jobs.read_hwm = lambda wdir: wake_seq
         jobs.runner_idle = lambda wid, idx=None: True
         clock["t"] = 1000.0 + eng._pace("gate_idle_cap", 3) + 1
         eng._drive_architect_liveness()
@@ -763,20 +888,26 @@ def t6b_engine_wake_never_resets_the_idle_anchor():
 
 
 def t6b_genuinely_busy_runner_still_never_accrues():
-    # A-4 pin (block_01_13_test's t_arch_liveness_working_never_accrues, unbroken): a
-    # runner busy with NO engine wake ever sent (mbox_seq 0) still never accrues idle.
+    """A-4 pin (block_01_13_test's t_arch_liveness_working_never_accrues, unbroken),
+    proved at DISPATCH-REALISTIC state (impl-review MAJOR-4): mbox_seq >= 1 and
+    read_hwm behind it — exactly what a real dispatched job's whole first turn looks
+    like (consumed never catches up until the turn ends). The prior pin used mbox_seq=0,
+    a state no dispatched job ever occupies, and so never actually exercised the bug."""
     eng = _eng()
     arch = _arch(eng, job={"kind": "log", "type": "code"}, status="busy")
+    arch["mbox_seq"] = 2        # dispatch-realistic: persona + job order already sent
     arch["job_idle_since"] = 1.0
-    orig_idle = jobs.runner_idle
+    orig_idle, orig_hwm = jobs.runner_idle, jobs.read_hwm
     jobs.runner_idle = lambda wid, idx=None: False
+    jobs.read_hwm = lambda wdir: 0   # consumed hasn't caught up to mbox_seq — a genuine long turn
     try:
         eng._now_s = lambda: 99999.0
         eng._drive_architect_liveness()
-        ok("T6b a genuinely busy runner (no engine wake pending) still never accrues idle",
+        ok("T6b a genuinely busy runner (dispatch-realistic mbox_seq, no engine wake "
+           "ever marked) still never accrues idle",
            not arch.get("job_idle_since") and not arch.get("job_case"), f"arch={arch}")
     finally:
-        jobs.runner_idle = orig_idle
+        jobs.runner_idle, jobs.read_hwm = orig_idle, orig_hwm
 
 
 def main():

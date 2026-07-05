@@ -482,6 +482,15 @@ class Engine:
         #    so a drained-to-empty fleet idles awaiting the operator rather than auto-closing.
         if self.st.run_control in ("pause", "drain"):
             return
+        # T3(b) (01-20, impl-review BLOCKER-1): the fleet-refusal hold FREEZES dispatch —
+        # the same class of freeze as PAUSE, engine-raised instead of operator-raised.
+        # Without this gate the hold only silenced the walls while FILL SLOTS refilled
+        # every released slot straight into the dead quota (silent unbounded spawn-burn).
+        # The ONLY spawn allowed while held is the single canary probe, which runs on the
+        # sweep cadence (_sweep_fleet_refusal_canary -> _redispatch(probe=True)), never
+        # through here. Resume (first healthy canary turn) pulses and this gate lifts.
+        if self._dispatch_held():
+            return
         # 1. FILL SLOTS — one dispatch per free worker slot, in priority order.
         while self._free_slots() > 0:
             pick = self._select_work()
@@ -647,10 +656,15 @@ class Engine:
         self.emit("terminal.dispatched", {"worker_id": wid, "block": block})
         self.log("flow", f"build:block:next -> dispatch {wid} on {block}")
 
-    def _redispatch(self, block):
+    def _redispatch(self, block, bypass_gate=False):
         """Recovery: re-spawn an engineer on a block whose prior worker died, even if the
         agent had already moved it to 🔄 on trunk (TRON's worker/PR tracking is the real
-        in-flight authority). Skips if it's done, parked, has a live PR, or deps unmet."""
+        in-flight authority). Skips if it's done, parked, has a live PR, or deps unmet.
+        `bypass_gate` (T3(b) 01-20, MAJOR-2): the ONE caller is the fleet-hold's canary
+        probe (_sweep_fleet_refusal_canary) — a canary whose block already reached a
+        gate stage before its worker's refusal death must still be probeable, or the
+        hold wedges permanently the instant any held block gates (I2). Every OTHER hard
+        stop below still applies unconditionally; only the gate-membership check lifts."""
         row = self.st.row(block)
         if not row or row.get("status") not in OPEN_STATUSES:
             return
@@ -658,7 +672,7 @@ class Engine:
         if not all(idx.get(d) == "done" for d in row.get("depends_on", [])):
             return
         if (block in self.st.blocked or block in self._dropped()
-                or block in self.st.gate
+                or (not bypass_gate and block in self.st.gate)
                 or self._block_branch(block) in (self.st.open_prs or {})
                 or self.st.has_active_worker_for_block(block)):
             return
@@ -1115,6 +1129,7 @@ class Engine:
                 arch.pop("job_bounces", None)
                 self._close_case(m.get("case"), case)
                 self._emit_arch_job(job, arch.get("id"))
+                self._mark_engine_wake(arch)   # T6(b): this re-delivery must not itself pop the anchor
                 self.log("flow", f"architect-case[{block or '?'}] -> {decision}: job "
                                  f"re-armed, order re-delivered")
             elif decision == "abandon":
@@ -2419,6 +2434,15 @@ class Engine:
         else:                                             # log-review -> remediation blocks
             self.emit("arch.remediation", {"type": job.get("type", "code")}, worker_id=awid)
 
+    def _mark_engine_wake(self, arch):
+        """T6(b) (01-20, MAJOR-4): stamp the EXPLICIT engine-initiated-wake marker — call
+        this at the exact moment (and ONLY the moments) the engine itself re-sends to an
+        already-dispatched architect job: this idle re-nudge, an architect-targeted
+        _bounce, and T4's case-settle re-delivery. Must run AFTER the send so mbox_seq
+        already reflects it. Never called at the original job dispatch — that's genuine
+        new work, not a wake, and must pop the anchor like any other busy turn."""
+        arch["engine_wake_seq"] = int(arch.get("mbox_seq", 0) or 0)
+
     def _drive_architect_liveness(self):
         """01-13 (tron-14 F2/F4): the architect's job queue gets the SAME wall-clock idle
         law as every gate — `busy` on a job while its runner sits idle is a stall, not
@@ -2430,22 +2454,32 @@ class Engine:
         if not arch or arch.get("status") != "busy" or not arch.get("current_job"):
             return
         if not jobs.runner_idle(arch.get("id")):
-            # T6(b) (01-20): an ENGINE-initiated wake (bounce, this SAME idle re-nudge,
-            # any re-delivery) must never itself restart the idle clock — the tron-27
-            # livelock: bouncing/nudging flips the runner briefly busy PROCESSING OUR OWN
-            # last-sent message, and wiping job_idle_since on that blip let a wrongly-
-            # replying architect starve the idle-cap forever (evidence #5). The existing
-            # per-worker send-seq (mbox_seq, bumped on every _to_worker/emit send) versus
-            # the runner's own CONSUMED high-water (jobs.read_hwm — the same T2 01-19
-            # dedupe's other half) tells the two apart with no new state: while the runner
-            # hasn't yet finished the turn that answers our own last send, this busy spell
-            # is attributable to US — leave the anchor alone. Once it catches up, a STILL-
-            # busy runner is genuine work (A-4, unchanged: pop and never accrue against it).
-            wake_seq = arch.get("mbox_seq", 0) or 0
-            consumed = (jobs.read_hwm(self.ctx.worker_dir(arch.get("id")))
-                       if arch.get("id") else 0)
-            if wake_seq and consumed < wake_seq:
-                return
+            # T6(b) (01-20, MAJOR-4 fix): an ENGINE-initiated wake (bounce, this SAME
+            # idle re-nudge, T4's re-delivery) must never itself restart the idle clock —
+            # the tron-27 livelock: bouncing/nudging flips the runner briefly busy
+            # PROCESSING OUR OWN last-sent message, and wiping job_idle_since on that
+            # blip let a wrongly-replying architect starve the idle-cap forever (evidence
+            # #5). But a GENUINE busy turn must ALWAYS keep resetting it (A-4) — including
+            # one that runs longer than any wake we ever sent. The prior mechanism
+            # compared the architect's GENERIC mbox_seq (bumped by every send, including
+            # the ORIGINAL job dispatch itself) against consumed — since read_hwm only
+            # advances at turn end, that comparison stayed true for the ENTIRE genuine
+            # first turn, false-capping it (MAJOR-4). Discriminate instead by an EXPLICIT
+            # marker the engine stamps ONLY at its own wake sends (the nudge below,
+            # _bounce for an architect sender, T4's re-delivery) — `engine_wake_seq`, the
+            # mbox_seq value AT that send. While the runner hasn't yet consumed up to
+            # THAT specific seq, the observed busy spell is attributable to processing
+            # OUR wake, not the worker's own initiative — leave the anchor alone. Once
+            # consumed catches up the wake is resolved; every later busy tick pops again,
+            # genuine or not, exactly as pre-01-20 (unset by default — ordinary dispatch
+            # never sets it, so a fresh job's own first turn always pops normally).
+            wake_seq = arch.get("engine_wake_seq")
+            if wake_seq:
+                consumed = (jobs.read_hwm(self.ctx.worker_dir(arch.get("id")))
+                           if arch.get("id") else 0)
+                if consumed < wake_seq:
+                    return
+                arch.pop("engine_wake_seq", None)
             arch.pop("job_idle_since", None)
             arch.pop("job_nudged_at", None)
             return
@@ -2462,6 +2496,7 @@ class Engine:
         if idle_s >= self._pace("gate_nudge_after", 2) and not arch.get("job_nudged_at"):
             arch["job_nudged_at"] = now
             self._emit_arch_job(job, arch.get("id"))
+            self._mark_engine_wake(arch)   # T6(b): this re-delivery must not itself pop the anchor
             self.log("flow", f"architect idle on '{job.get('kind')}' -> re-deliver the order")
 
     def _open_architect_stall_case(self, arch, reason):
@@ -2509,6 +2544,7 @@ class Engine:
             arch.pop("job_idle_since", None)
             arch.pop("job_nudged_at", None)
             arch.pop("job_bounces", None)   # T6(a) (01-20): a fresh job gets a fresh bounce budget
+            arch.pop("engine_wake_seq", None)   # T6(b) (01-20): ditto — a fresh wake marker
         self._pump_architect()
 
     # ── worker hold (T2, D-15-2) ──
@@ -2942,6 +2978,8 @@ class Engine:
                         f"clean) and `--block <your block id>` when the act concerns "
                         f"your block. Say the same thing; carry the tags.",
                         "report.bounce")
+        if w.get("role") == "architect":
+            self._mark_engine_wake(w)   # T6(b): a bounce is an engine-initiated wake too
         self.log("flow", f"bounced {sid}: {why}")
 
     def _bounce_gate(self, sender, why):
@@ -3265,8 +3303,18 @@ class Engine:
     def _fleet_refusal_hold(self):
         """Engine-internal state (not a knob) — created on first use. `deaths`: a rolling
         window of refusal-death timestamps; `active`: the hold is currently engaged;
-        `canary`: the block currently probing dispatch."""
+        `canary`/`canary_role`: the block/rtype (and its role) currently probing dispatch."""
         return self.st.data.setdefault("refusal_hold", {"deaths": [], "active": False})
+
+    def _dispatch_held(self):
+        """T3(b) (01-20, impl-review BLOCKER-1): true while the fleet-refusal hold is
+        engaged — the ONE predicate _switchboard's FILL-SLOTS gates on. Without this,
+        the hold only silenced the per-worker walls while FILL SLOTS kept refilling
+        every released slot straight back into the dead quota (silent unbounded
+        spawn-burn). The single canary probe never goes through here — it's dispatched
+        by _sweep_fleet_refusal_canary directly, on the sweep cadence, never through
+        _select_work/_pulse."""
+        return bool(self._fleet_refusal_hold().get("active"))
 
     def _refusal_death(self, w, idx):
         """True iff `w`'s runner died in the `error` state with the adapter's own
@@ -3307,33 +3355,45 @@ class Engine:
     def _drive_fleet_refusal_hold(self, w):
         """Absorb this dead worker into the active hold: release its slot without touching
         its block's gate/blocked state — held blocks stay exactly 📋 (no gate mutation,
-        nothing walls, no per-worker stall-count/redispatch). Elects the FIRST held
-        engineer block as the hold's canary candidate if none is elected yet; the actual
-        probe is paced separately (_sweep_fleet_refusal_canary), on the existing sweep
-        cadence."""
+        nothing walls, no per-worker stall-count/redispatch). Elects the FIRST absorbed
+        death as the hold's canary candidate if none is elected yet — role-AGNOSTIC
+        (MAJOR-2): an engineer-only election could wedge the hold permanently when the
+        sustaining deaths are all reviewer (the engineer's own lone-first death, before
+        the hold engages, is never absorbed here at all — _fleet_hold_note's <2 guard
+        hands it to the ordinary per-worker recover instead). The actual probe is paced
+        separately (_sweep_fleet_refusal_canary), on the existing sweep cadence."""
         hold = self._fleet_refusal_hold()
-        if not hold.get("canary") and w.get("role") == "engineer" and w.get("block"):
-            hold["canary"] = w.get("block")
+        if not hold.get("canary"):
+            role = w.get("role")
+            ref = (w.get("block") if role == "engineer"
+                   else w.get("rtype") if role == "reviewer" else None)
+            if ref:
+                hold["canary"], hold["canary_role"] = ref, role
         self._release_worker(w, notify=False, reason="fleet-refusal-hold")
 
     def _sweep_fleet_refusal_canary(self, idx):
         """While the hold is active: probe with exactly ONE canary re-spawn (paced like an
         idle re-nudge — gate_nudge_after, no new knob) and resume fleet dispatch the
         instant that canary completes its first healthy turn. A dead canary just re-probes
-        next cadence; held blocks stay 📋 throughout — never a gate mutation, never a wall."""
+        next cadence; held blocks stay 📋 throughout — never a gate mutation, never a wall.
+        MAJOR-2: never park the hold un-probeable — if no canary is elected yet this
+        cadence (the next absorbed death, any role, elects one), just return and try
+        again next sweep."""
         hold = self._fleet_refusal_hold()
         if not hold.get("active"):
             return
         block = hold.get("canary")
         if not block:
             return
-        wid = self._worker_id("engineer", block)
+        role = hold.get("canary_role", "engineer")
+        wid = self._worker_id(role, block)
         rec = jobs.find(wid, idx)
         if rec is not None:
             if jobs.is_alive(wid, idx) and rec.get("turns", 0) >= 1:
                 hold["active"] = False
                 hold["deaths"] = []
                 hold.pop("canary", None)
+                hold.pop("canary_role", None)
                 hold.pop("canary_probed_at", None)
                 self.log("flow", f"fleet refusal-hold cleared: canary {wid} turned "
                                  f"healthy -> resume dispatch")
@@ -3345,8 +3405,17 @@ class Engine:
         last = hold.get("canary_probed_at")
         if last is None or now - last >= self._pace("gate_nudge_after", 2):
             hold["canary_probed_at"] = now
-            self._redispatch(block)
-            self.log("flow", f"fleet refusal-hold: canary re-spawn probe on {block}")
+            if role == "reviewer":
+                self._dispatch_reviewer(block)
+            else:
+                # MAJOR-2: the ONE caller allowed to bypass _redispatch's "already at a
+                # gate stage" no-op — a canary whose block reached the done-gate before
+                # its worker's refusal death must still be probeable (the canary's only
+                # job is proving the RUNTIME is healthy, independent of the block's own
+                # gate progress). Every other hard stop (done/parked/dropped/PR/deps/
+                # active-worker) still applies unconditionally.
+                self._redispatch(block, bypass_gate=True)
+            self.log("flow", f"fleet refusal-hold: canary re-spawn probe on {role}:{block}")
 
     # ── liveness sweep (engine side-system, deterministic — no LLM) ──
     def _sweep(self):
