@@ -2420,6 +2420,8 @@ class Engine:
         job = self.st.architect_queue.pop(0)
         arch["status"], arch["current_job"] = "busy", job
         self._emit_arch_job(job, arch.get("id"))
+        if job.get("kind") == "log":
+            self._mark_log_dispatch(arch)   # T2 (01-22): this job settles on its own turn-done
         self.log("architect", f"dispatch {job}")
 
     def _emit_arch_job(self, job, awid):
@@ -2447,6 +2449,45 @@ class Engine:
         new work, not a wake, and must pop the anchor like any other busy turn."""
         arch["engine_wake_seq"] = int(arch.get("mbox_seq", 0) or 0)
 
+    def _mark_log_dispatch(self, arch):
+        """T2 (01-22, tron-29..32): stamp the seq a self-contained `log` job's own turn
+        settles against. Call this right after EVERY (re-)delivery of a `log` job — the
+        original dispatch (_pump_architect) and the idle re-nudge (_drive_architect_
+        liveness) alike — so `log_dispatch_seq` always names the LATEST delivery. The
+        runner's hwm (jobs.read_hwm) catching up to this seq is model-agnostic proof
+        that the architect's own turn on THIS delivery is done (worker_runner.py:330:
+        hwm advances only after a turn fully finishes) — the completion signal `_log_
+        job_settled` reads, entirely independent of whether a worker.done/recorded-
+        tagged report ever arrives. Scoped to `log` only; forward/reconcile/triage
+        never set or read this field."""
+        arch["log_dispatch_seq"] = int(arch.get("mbox_seq", 0) or 0)
+
+    def _log_job_settled(self, arch, job):
+        """T2 (01-22): true (and already fully settled, via the SAME bookkeeping the
+        tagged path uses) iff a self-contained `log` job's OWN turn has completed —
+        checked off the runner's hwm (jobs.read_hwm) catching up to `log_dispatch_seq`
+        (_mark_log_dispatch), never off a worker.done/recorded-tagged report a `log`
+        turn may never emit (_resolve_by_sender). This removes the false architect-
+        idle-cap firings at their root (AC-3) while changing nothing for a genuinely
+        unfinished/unreported job: hwm only advances after a SUCCESSFUL turn
+        (worker_runner.py:330), so a failed/stuck/silent turn never satisfies this and
+        the idle-cap backstop below still catches it exactly as before (AC-4). Routes
+        through `_architect_advance` — pops job_case, resets the bounce budget, pumps
+        the next queued job — never a parallel half-settle."""
+        if job.get("kind") != "log":
+            return False
+        dispatch_seq = arch.get("log_dispatch_seq")
+        if not dispatch_seq or not arch.get("id"):
+            return False
+        consumed = jobs.read_hwm(self.ctx.worker_dir(arch["id"]))
+        if consumed < dispatch_seq:
+            return False
+        self.log("flow", f"architect log job settled on its own turn-done "
+                         f"(hwm {consumed} >= {dispatch_seq})")
+        self._architect_advance()
+        self._emit("pulse")
+        return True
+
     def _drive_architect_liveness(self):
         """01-13 (tron-14 F2/F4): the architect's job queue gets the SAME wall-clock idle
         law as every gate — `busy` on a job while its runner sits idle is a stall, not
@@ -2456,6 +2497,12 @@ class Engine:
         the architect's own report — this catches the report that never arrived."""
         arch = self._architect()
         if not arch or arch.get("status") != "busy" or not arch.get("current_job"):
+            return
+        job = arch.get("current_job") or {}
+        if self._log_job_settled(arch, job):
+            # T2 (01-22): a self-contained `log` job's own turn is already done (hwm
+            # advanced past its dispatch seq) — settled above, off the ladder entirely.
+            # No idle wait, no nudge, no cap: there is no report to wait for at all.
             return
         if not jobs.runner_idle(arch.get("id")):
             # T6(b) (01-20, MAJOR-4 fix): an ENGINE-initiated wake (bounce, this SAME
@@ -2492,7 +2539,6 @@ class Engine:
         now = self._now_s()
         since = arch.setdefault("job_idle_since", now)
         idle_s = now - since
-        job = arch.get("current_job") or {}
         if idle_s >= self._pace("gate_idle_cap", 3):
             self._open_architect_stall_case(
                 arch, f"idle {int(idle_s)}s with no completion report")
@@ -2501,6 +2547,8 @@ class Engine:
             arch["job_nudged_at"] = now
             self._emit_arch_job(job, arch.get("id"))
             self._mark_engine_wake(arch)   # T6(b): this re-delivery must not itself pop the anchor
+            if job.get("kind") == "log":
+                self._mark_log_dispatch(arch)   # T2 (01-22): settle against THIS re-delivery
             self.log("flow", f"architect idle on '{job.get('kind')}' -> re-deliver the order")
 
     def _open_architect_stall_case(self, arch, reason):
@@ -2549,6 +2597,7 @@ class Engine:
             arch.pop("job_nudged_at", None)
             arch.pop("job_bounces", None)   # T6(a) (01-20): a fresh job gets a fresh bounce budget
             arch.pop("engine_wake_seq", None)   # T6(b) (01-20): ditto — a fresh wake marker
+            arch.pop("log_dispatch_seq", None)  # T2 (01-22): ditto — a fresh log-settle marker
         self._pump_architect()
 
     # ── worker hold (T2, D-15-2) ──
