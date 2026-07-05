@@ -2430,6 +2430,22 @@ class Engine:
         if not arch or arch.get("status") != "busy" or not arch.get("current_job"):
             return
         if not jobs.runner_idle(arch.get("id")):
+            # T6(b) (01-20): an ENGINE-initiated wake (bounce, this SAME idle re-nudge,
+            # any re-delivery) must never itself restart the idle clock — the tron-27
+            # livelock: bouncing/nudging flips the runner briefly busy PROCESSING OUR OWN
+            # last-sent message, and wiping job_idle_since on that blip let a wrongly-
+            # replying architect starve the idle-cap forever (evidence #5). The existing
+            # per-worker send-seq (mbox_seq, bumped on every _to_worker/emit send) versus
+            # the runner's own CONSUMED high-water (jobs.read_hwm — the same T2 01-19
+            # dedupe's other half) tells the two apart with no new state: while the runner
+            # hasn't yet finished the turn that answers our own last send, this busy spell
+            # is attributable to US — leave the anchor alone. Once it catches up, a STILL-
+            # busy runner is genuine work (A-4, unchanged: pop and never accrue against it).
+            wake_seq = arch.get("mbox_seq", 0) or 0
+            consumed = (jobs.read_hwm(self.ctx.worker_dir(arch.get("id")))
+                       if arch.get("id") else 0)
+            if wake_seq and consumed < wake_seq:
+                return
             arch.pop("job_idle_since", None)
             arch.pop("job_nudged_at", None)
             return
@@ -2440,26 +2456,36 @@ class Engine:
         idle_s = now - since
         job = arch.get("current_job") or {}
         if idle_s >= self._pace("gate_idle_cap", 3):
-            cid = self._open_case(job.get("block"), "architect", arch.get("id"),
-                                  f"architect stalled on job '{job.get('kind')}' "
-                                  f"({job.get('block') or job.get('type') or '?'}) — "
-                                  f"idle {int(idle_s)}s with no completion report")
-            arch["job_case"] = cid
-            self.events.failure("gate-stuck", "architect-idle-cap",
-                                f"complete architect job '{job.get('kind')}'",
-                                f"idle {int(idle_s)}s", actor=arch.get("id"),
-                                block=job.get("block"),
-                                node="architect queue", next_action="escalate")
-            self.emit("escalate.wall", {"worker_id": arch.get("id") or "?",
-                                        "block": job.get("block") or "?",
-                                        "detail": f"architect job '{job.get('kind')}' "
-                                                  f"stalled (idle, no completion report)",
-                                        "case": cid})
+            self._open_architect_stall_case(
+                arch, f"idle {int(idle_s)}s with no completion report")
             return
         if idle_s >= self._pace("gate_nudge_after", 2) and not arch.get("job_nudged_at"):
             arch["job_nudged_at"] = now
             self._emit_arch_job(job, arch.get("id"))
             self.log("flow", f"architect idle on '{job.get('kind')}' -> re-deliver the order")
+
+    def _open_architect_stall_case(self, arch, reason):
+        """The ONE architect-idle-cap case opener (originally inline in
+        _drive_architect_liveness, ~2300 pre-01-20) — shared by the ordinary idle-cap arm
+        above and T6(a)'s bounce-cap arm (_bounce_gate): the SAME existing escalation kind
+        either way, never a second one. Idempotent — a case already parked on this job is
+        never re-opened."""
+        if arch.get("job_case"):
+            return
+        job = arch.get("current_job") or {}
+        cid = self._open_case(job.get("block"), "architect", arch.get("id"),
+                              f"architect stalled on job '{job.get('kind')}' "
+                              f"({job.get('block') or job.get('type') or '?'}) — {reason}")
+        arch["job_case"] = cid
+        self.events.failure("gate-stuck", "architect-idle-cap",
+                            f"complete architect job '{job.get('kind')}'", reason,
+                            actor=arch.get("id"), block=job.get("block"),
+                            node="architect queue", next_action="escalate")
+        self.emit("escalate.wall", {"worker_id": arch.get("id") or "?",
+                                    "block": job.get("block") or "?",
+                                    "detail": f"architect job '{job.get('kind')}' stalled "
+                                              f"({reason})",
+                                    "case": cid})
 
     def _triage_detail(self, job):
         """Build the TRIAGE {detail} (T4). Prepend `"{sender}, on block {block}: "` ONLY when
@@ -2482,6 +2508,7 @@ class Engine:
                 self._close_case(arch.pop("job_case"), None)
             arch.pop("job_idle_since", None)
             arch.pop("job_nudged_at", None)
+            arch.pop("job_bounces", None)   # T6(a) (01-20): a fresh job gets a fresh bounce budget
         self._pump_architect()
 
     # ── worker hold (T2, D-15-2) ──
@@ -2784,7 +2811,7 @@ class Engine:
                              f"{sender.get('id')} -> dropped")
             self.events.unclassified(msg.get("text", "")[:200],
                                      f"unknown structured verb '{verb}'", sender=sender)
-            self._bounce(sender, f"'{verb}' is not a verb I know")
+            self._bounce_gate(sender, f"'{verb}' is not a verb I know")
             return "drop", None
         tag, extra = hit
         slots = {**(msg.get("slots") or {}), **extra}
@@ -2829,7 +2856,7 @@ class Engine:
                 self.log("flow", f"{tag} for unknown block '{ref}' -> refused (no canon row)")
                 self.events.unclassified(f"{tag} block ref: {ref}",
                                          "unknown block id (no canon row)", sender=sender)
-                self._bounce(sender, f"'{tag}' names no block the canon knows"
+                self._bounce_gate(sender, f"'{tag}' names no block the canon knows"
                                      + (f" (ref '{ref}')" if ref else " (no --block)"))
                 return None
             g = self.st.gate.get(block)
@@ -2916,6 +2943,27 @@ class Engine:
                         f"your block. Say the same thing; carry the tags.",
                         "report.bounce")
         self.log("flow", f"bounced {sid}: {why}")
+
+    def _bounce_gate(self, sender, why):
+        """T6(a) (01-20): cap `_bounce` at 2 per architect `current_job` — a 3rd bounce for
+        the SAME stalled job is never sent; the ordinary idle-cap case opens directly
+        instead (_open_architect_stall_case, the SAME existing escalation kind
+        _drive_architect_liveness already uses), so a wrongly-replying architect job
+        resolves exactly like an idle one, never an unbounded bounce loop. `_bounce` itself
+        stays role-agnostic and unchanged — every other sender bounces exactly as before;
+        this wrapper is the ONE place the architect's own counter (keyed to its
+        current_job, reset the moment the job advances — _architect_advance) is engine-
+        internal state, not a knob. Every `_bounce` call site routes through here."""
+        sid = (sender or {}).get("id")
+        arch = self._architect()
+        if arch and sid == arch.get("id") and arch.get("current_job"):
+            n = arch.get("job_bounces", 0)
+            if n >= 2:
+                self._open_architect_stall_case(
+                    arch, f"{n} bounced reports with no usable completion")
+                return
+            arch["job_bounces"] = n + 1
+        self._bounce(sender, why)
 
     def _ingest(self, tag, slots, sender):
         if tag == "drop":                                # A-2: invalid structured line, already recorded
@@ -3671,12 +3719,12 @@ class Engine:
                 inputs={"text": raw[:200], "attempts": len(attempts)},
                 node="§4 classify", attempt=len(attempts), next_action="auto-ack -> unclassified")
             self.events.unclassified(raw, "classify exhausted (invalid-output budget)", sender=sender)  # T3
-            self._bounce(sender, "I could not read it")           # 01-13: never a silent discard
+            self._bounce_gate(sender, "I could not read it")           # 01-13: never a silent discard
             return "unclassified", {"detail": raw[:120]}
         tag = out["tag"]
         if tag == "unclassified":                         # the model itself found no matching tag (T3)
             self.events.unclassified(raw, "model returned unclassified (no tag matched)", sender=sender)
-            self._bounce(sender, "it fits no tag I know")         # 01-13: correct the sender too
+            self._bounce_gate(sender, "it fits no tag I know")         # 01-13: correct the sender too
         return tag, {**out.get("slots", {}), **data_slots}   # W10: data over prose
 
     # ── lifecycle ──
