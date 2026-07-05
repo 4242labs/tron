@@ -101,19 +101,29 @@ class HostCliAdapter:
     verbs the runtime rejects). One-turn atomicity: run_turn returns only when the process emits
     that turn's `result` event."""
 
-    def __init__(self, runtime, session_id, cwd):
+    def __init__(self, runtime, session_id, cwd, model=None):
         self.runtime, self.session_id, self.cwd = runtime, session_id, cwd
+        self.model = model
         self.proc = None
 
     def _ensure(self):
         if self.proc and self.proc.poll() is None:
             return
+        # 01-21 T1 (AC-1 defense-in-depth): the model must be an explicit, resolved
+        # string by the time the adapter builds the runtime's own argv — every upstream
+        # caller (spawn_runner, this module's own --model) already refuses to reach here
+        # without one, but this adapter never silently omits the flag either.
+        if not self.model:
+            raise RuntimeError(
+                "HostCliAdapter: no worker model resolved — refusing to launch the "
+                "host runtime on its own ambient default")
         cmd = [
             self.runtime, "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
             "--session-id", self.session_id,
+            "--model", self.model,
         ]
         if WORKER_PERMS:
             cmd += WORKER_PERMS.split()   # config-driven worker permission posture (see WORKER_PERMS)
@@ -208,7 +218,7 @@ ADAPTERS = {"host-cli": HostCliAdapter, "echo": EchoAdapter}
 
 
 class Runner:
-    def __init__(self, worker_id, worker_dir, session_id, cwd, runtime, adapter):
+    def __init__(self, worker_id, worker_dir, session_id, cwd, runtime, adapter, model=None):
         self.worker_id, self.worker_dir = worker_id, worker_dir
         self.session_id = session_id
         self.mailbox = os.path.join(worker_dir, jobs.MAILBOX)
@@ -219,7 +229,7 @@ class Runner:
         self.turns = 0
         self._stop = False
         adapter_cls = ADAPTERS.get(adapter, HostCliAdapter)
-        self.adapter = adapter_cls(runtime, session_id, cwd)
+        self.adapter = adapter_cls(runtime, session_id, cwd, model=model)
 
     # ── durable high-water: the last seq whose turn fully finished (crash-safe resume) ──
     def _read_hwm(self):
@@ -345,9 +355,13 @@ def main():
     ap.add_argument("--cwd", default=None)
     ap.add_argument("--runtime", default=jobs.RUNTIME)
     ap.add_argument("--adapter", default=jobs.ADAPTER)
+    # 01-21 T1 (AC-1/AC-2): no default at all — a direct/manual invocation of this script
+    # without a resolved model must refuse (argparse exits nonzero) rather than fall
+    # through to whatever the runtime's own ambient default happens to be.
+    ap.add_argument("--model", required=True)
     a = ap.parse_args()
     return Runner(a.worker_id, a.worker_dir, a.session_id,
-                  a.cwd, a.runtime, a.adapter).run()
+                  a.cwd, a.runtime, a.adapter, model=a.model).run()
 
 
 if __name__ == "__main__":

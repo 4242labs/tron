@@ -26,6 +26,7 @@ import signal
 import sys
 import time
 
+import jobs
 import util
 
 
@@ -159,6 +160,15 @@ def run(ctx):
                 # ran=False -> the lock was held; leave the clocks, retry next poll
             time.sleep(poll)
     finally:
+        # 01-21 T2: the engine-death reaper's shutdown half. `_end_session` (tron stop /
+        # halt) already released every worker gracefully before this loop was even
+        # signaled — this is the backstop for every OTHER way this daemon stops (SIGTERM
+        # sent directly to it, a bug that escapes the tick's own supervision above): no
+        # worker this engine owns may outlive it. Scoped to THIS instance's own store
+        # (configure() below), never a blanket sweep of other projects' workers.
+        with contextlib.suppress(Exception):
+            jobs.configure(ctx.workers_dir)
+            jobs.reap_all()
         with contextlib.suppress(FileNotFoundError):
             if _read_pid(ctx) == os.getpid():
                 os.remove(ctx.wake_pid)

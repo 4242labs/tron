@@ -36,6 +36,29 @@ RUNTIME = os.environ.get("TRON_RUNTIME", "claude")
 # config value (env here; project.yaml at seed), never hardcoded in the engine.
 ADAPTER = os.environ.get("TRON_WORKER_ADAPTER", "host-cli")
 
+# The worker MODEL (01-21 T1) — an explicit, engine-owned, FAIL-CLOSED input. Unlike RUNTIME/
+# ADAPTER above, this carries NO baked default: a run's worker model must be a declared,
+# reproducible input (knobs.yaml `worker_model`, threaded by fsm._spawn from the project's
+# own config) or the run must not start at all — never the host CLI's own ambient saved-
+# default model (the credit-drain root cause: 3 orphaned workers found running on an
+# undeclared, potentially expensive tier). TRON_WORKER_MODEL exists purely as the same kind
+# of override knob RUNTIME/ADAPTER already have (useful standalone/tests). Read DYNAMICALLY
+# (a function, not a frozen module constant like RUNTIME/ADAPTER) — a caller that sets the
+# env var right before spawning must not lose the race against whenever this module first
+# happened to be imported. Its absence is NOT itself the failure — spawn_runner refuses only
+# when NEITHER this NOR an explicit `model=` argument resolves to a value. TRON_WORKER_PERMS
+# stays permission-posture-only; the model is no longer smuggled through it.
+def _env_model():
+    return os.environ.get("TRON_WORKER_MODEL")
+
+
+class WorkerModelUnconfigured(RuntimeError):
+    """Raised by spawn_runner (01-21 T1/AC-2) when no worker model resolves from any source.
+    Fail-closed: a worker must never launch on the host CLI's own ambient default. The real
+    source is the project's declared config (knobs.yaml `worker_model`, resolved by
+    fsm._spawn); this is the last-line-of-defense guard against a future call site that
+    forgets to thread it."""
+
 # Per-worker file names (single source of truth — worker_runner.py imports these).
 MAILBOX = "tron-inbox.jsonl"
 HWM = ".mbox-hwm"
@@ -274,8 +297,11 @@ def retire_stale_dir(worker_dir, kill_wait_s=3.0):
         return None
     pid = st.get("pid")
     if pid and _pid_alive(pid):
+        # 01-21 T2: killpg, not kill — the runner leads its own process group
+        # (spawn_runner's start_new_session=True), so a child it forked cannot
+        # outlive it here either.
         try:
-            os.kill(int(pid), signal.SIGTERM)
+            os.killpg(int(pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError, ValueError, TypeError):
             pass
         deadline = time.time() + kill_wait_s
@@ -283,7 +309,7 @@ def retire_stale_dir(worker_dir, kill_wait_s=3.0):
             time.sleep(0.2)
         if _pid_alive(pid):
             try:
-                os.kill(int(pid), signal.SIGKILL)
+                os.killpg(int(pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError, ValueError, TypeError):
                 pass
     parent = os.path.dirname(worker_dir.rstrip(os.sep))
@@ -308,7 +334,7 @@ def retire_stale_dir(worker_dir, kill_wait_s=3.0):
 
 
 def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
-                 runtime=None, adapter=None, settle_s=2.0):
+                 runtime=None, adapter=None, model=None, settle_s=2.0):
     """Spawn the worker-runner fully detached from this TTY. The runner drives the agent
     turn-by-turn off the mailbox; TRON owns its lifecycle (spawn here, liveness via the
     store, release via the .stop sentinel). start_new_session=True + devnull I/O so a
@@ -317,7 +343,19 @@ def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
     NOTE (01-13/F7): this function deliberately RESUMES an existing dir (crash-restart:
     same identity, high-water preserved, no replay). Identity freshness is the ENGINE'S
     call — fsm._spawn retires a predecessor's dir (retire_stale_dir) before its first
-    mailbox write, so a NEW worker under a reused id never inherits a stale mailbox."""
+    mailbox write, so a NEW worker under a reused id never inherits a stale mailbox.
+
+    01-21 T1: `model` is the declared, project-configured worker model (fsm._spawn passes
+    knobs.yaml's `worker_model`). FAIL-CLOSED: if neither `model` nor TRON_WORKER_MODEL
+    resolves to a value, this refuses to spawn at all — a worker must never launch on the
+    host CLI's own ambient default (raises WorkerModelUnconfigured, BEFORE any process is
+    started)."""
+    resolved_model = model if model is not None else _env_model()
+    if not resolved_model:
+        raise WorkerModelUnconfigured(
+            "no worker model configured — set `worker_model` in knobs.yaml (project "
+            "config) or TRON_WORKER_MODEL; refusing to launch a worker on the host "
+            "CLI's own ambient default model")
     os.makedirs(worker_dir, exist_ok=True)
     stop = os.path.join(worker_dir, STOP)
     if os.path.exists(stop):        # a prior release sentinel must not kill a fresh runner
@@ -332,6 +370,7 @@ def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
         "--session-id", session_id,
         "--runtime", runtime or RUNTIME,
         "--adapter", adapter or ADAPTER,
+        "--model", resolved_model,
     ]
     if cwd:
         cmd += ["--cwd", cwd]
@@ -353,13 +392,17 @@ def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
 def kill_hard(worker_id, idx=None):
     """SIGKILL a runner presumed suspended (R-2(ii)): past its own turn deadline, SIGTERM
     (release) can't be trusted — a SIGSTOPped process ignores it. ONLY the past-ceiling
-    escalation path calls this; ordinary releases stay graceful."""
+    escalation path (and the 01-21 T2 reaper below) calls this; ordinary releases stay
+    graceful. 01-21 T2: killpg, not kill — the runner leads its own process group
+    (spawn_runner's start_new_session=True), so a forked child dies with it too; a
+    process group persists as long as any member does, so this still reaches a lingering
+    child even if the runner itself already exited."""
     rec = find(worker_id, idx)
     pid = (rec or {}).get("pid")
     if not pid:
         return False
     try:
-        os.kill(int(pid), signal.SIGKILL)
+        os.killpg(int(pid), signal.SIGKILL)
         return True
     except (ProcessLookupError, PermissionError, ValueError, TypeError):
         return False
@@ -368,7 +411,8 @@ def kill_hard(worker_id, idx=None):
 def release(worker_id, idx=None):
     """Stop a worker's runner. Only the spine releases workers (R7). Writes the .stop
     sentinel (the runner polls it and exits cleanly, closing its agent) and SIGTERMs the
-    runner pid as a backstop. Idempotent."""
+    runner's WHOLE PROCESS GROUP as a backstop (01-21 T2 — a child it forked must not
+    survive a release either). Idempotent."""
     rec = find(worker_id, idx)
     wdir = rec["dir"] if rec else (os.path.join(_STORE, worker_id) if _STORE else None)
     if not wdir:
@@ -382,7 +426,28 @@ def release(worker_id, idx=None):
     pid = st.get("pid")
     if pid:
         try:
-            os.kill(int(pid), signal.SIGTERM)
+            os.killpg(int(pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError, ValueError, TypeError):
             pass
     return True
+
+
+def reap_all():
+    """The engine-death reaper (01-21 T2): group-kill every worker THIS store still shows
+    alive. Called at engine shutdown (wake.run's finally — clean exit or a signal) and at
+    a fresh engine startup (fsm.Engine.start — crash recovery: a new session owns none of
+    whatever is still sitting in the store), so no `worker_runner` this engine ever spawned
+    outlives it, idle-polling forever and re-spawning a real agent on the next mailbox write
+    (the exact leak this block closes).
+
+    Scoped to `index()` alone — this ONE store, whatever `configure()` last pointed at.
+    It can never reach a different project's instance (a different store entirely), and a
+    concurrently-live engine cannot coexist on THIS SAME store (the WAKE pidfile's atomic
+    single-daemon claim already guarantees at most one), so there is nothing else within one
+    store to avoid. Returns the worker ids it killed."""
+    idx = index()
+    killed = []
+    for wid, rec in idx.items():
+        if _pid_alive(rec.get("pid")) and kill_hard(wid, idx):
+            killed.append(wid)
+    return killed

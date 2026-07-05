@@ -725,7 +725,11 @@ class Engine:
             # turn 1: the persona/onboarding, via the mailbox — through emit() (S-4/W4:
             # every worker send goes through the one slot-injecting sender).
             self.emit(template_id, slots, worker_id=wid)
-            jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=self.paths["root"])
+            # 01-21 T1: the worker model is a declared, project-configured input — read
+            # from knobs.yaml (never the host CLI's own ambient default) and threaded
+            # explicitly. jobs.spawn_runner fails closed if this resolves to nothing.
+            jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=self.paths["root"],
+                              model=self.knobs.get("worker_model"))
         except Exception as e:
             self.events.failure(                          # forensic record (AC-2/AC-6)
                 "dispatch-fail", "spawn-failed", "spawn a worker process",
@@ -3830,6 +3834,13 @@ class Engine:
         self.st.run_control = None
 
     def start(self, worker_count):
+        # 01-21 T2: a fresh session begins here only when no live session already owns
+        # this instance (cmd_start refuses otherwise) — so anything still alive in this
+        # instance's worker store is orphaned residue from a prior run that crashed
+        # without a clean _end_session (the engine-death reaper's startup half). Reap it
+        # before this session's own dispatch begins; skipped under dry (no real store).
+        if not self.dry:
+            jobs.reap_all()
         self.st.data.setdefault("session", {})["started_at"] = util.now_iso()
         self.st.live_config["worker_count"] = worker_count
         self.knobs["worker_count"] = worker_count

@@ -8,8 +8,8 @@ A malformed flow must fail at seed/validate time, not at runtime. Two layers:
     resolves to an Engine method · the only judgment tools are the canon two.
 
   COMPOSITION (knobs.yaml) — the per-project knobs the engine reads:
-    worker_count present · cadence types map to positive ints · session shape ·
-    WAKE timing knobs (cooldown/ceiling) positive.
+    worker_count present · worker_model present (01-21) · cadence types map to
+    positive ints · session shape · WAKE timing knobs (cooldown/ceiling) positive.
 
   PROMPTS (prompts/registry.yaml) — the PMT layer the engine imports at tick:
     every registry id resolves to a self-contained file · every worker-channel
@@ -197,6 +197,14 @@ def _composition(comp, project):
     # L10 — worker_count knob declared (value may be null -> required at runtime).
     r.append(Result("L10 worker_count knob present", "worker_count" in knobs,
                     "" if "worker_count" in knobs else "missing worker_count"))
+
+    # L25 (01-21 T1) — worker_model knob declared. Presence-only here (a null value ships
+    # in canon, mirroring L10) — the REAL fail-closed enforcement is jobs.spawn_runner's
+    # own spawn-time guard (WorkerModelUnconfigured), which refuses regardless of what
+    # this lint sees. This just makes an operator's config drift (the knob deleted
+    # entirely) visible at seed/validate time too, never only at first spawn.
+    r.append(Result("L25 worker_model knob present", "worker_model" in knobs,
+                    "" if "worker_model" in knobs else "missing worker_model"))
 
     # L11 — every cadence type maps to a positive int threshold.
     badc = [f"{t}={v}" for t, v in cadence.items()

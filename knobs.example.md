@@ -49,6 +49,16 @@ value lands in the MANIFEST (`manifest.yaml`).
 |:--|:--|
 | `worker_count` | Size of the worker pool — **engineers + reviewers share it**. The architect is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
 
+## Required config (no default; set once in `knobs.yaml` before seeding)
+
+TRON asks at seed time and refuses to spawn any worker until this is set — never asked again at
+session start (it's not a per-session choice), and never inherited from the host runtime's own
+saved default.
+
+| Knob | Notes |
+|:--|:--|
+| `worker_model` | The exact model every spawned worker runs on — an explicit, declared, project-owned input. **No baked default anywhere in the engine.** Unset → the spawn path refuses outright rather than silently run a worker on the host CLI's own ambient default (the root cause of an unattributed credit drain this knob closes). |
+
 ## Fixed knobs (set once; edit `knobs.yaml` to change)
 
 | Knob | Default | Notes |

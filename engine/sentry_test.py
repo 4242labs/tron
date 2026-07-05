@@ -11,6 +11,7 @@ Covers: DONE gate (AC-3), bootup gateway + B12 (AC-4), escalation correlation
 """
 import os
 import sys
+import atexit
 import shutil
 import tempfile
 
@@ -19,15 +20,41 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 os.environ["TRON_DRY"] = "1"
+# 01-21 T1: jobs.spawn_runner now fails closed without a resolved worker model. Most of
+# the suite stays dry (never reaches it), but several cases deliberately flip
+# `eng.dry = False` for one narrow real-send path and can collaterally trigger a real
+# SWITCHBOARD dispatch in the same tick. This is the same override knob RUNTIME/ADAPTER
+# already have — never a real model (these ticks never reach a real runtime either).
+os.environ.setdefault("TRON_WORKER_MODEL", "test-model")
 
 import util            # noqa: E402
 import reader          # noqa: E402
 import trunk           # noqa: E402
+import jobs            # noqa: E402
 from ctx import Ctx    # noqa: E402
 from fsm import Engine  # noqa: E402
 
 NOW = "2026-06-28T00:00:00Z"
 _results = []
+
+# 01-21 test-hygiene: a few cases across the suite flip `eng.dry = False` for a narrow
+# real-send path and collaterally trigger a real SWITCHBOARD dispatch — spawning a real
+# `worker_runner` OUTSIDE the FSM start()/wake.run() lifecycle the engine's own reaper
+# (jobs.reap_all) guards, so it would otherwise linger orphaned after the test process
+# exits. Every `build()` store is registered here and group-reaped at process exit — no
+# test leaks a worker. (Now harmless in cost too: TRON_WORKER_MODEL pins the model, and
+# these ticks never reach a real runtime — but a leaked process is still a leak.)
+_reap_stores = set()
+_reap_registered = False
+
+
+def _reap_test_workers():
+    for wd in list(_reap_stores):
+        try:
+            jobs.configure(wd)
+            jobs.reap_all()
+        except Exception:
+            pass
 
 
 def ok(name, cond, detail=""):
@@ -66,6 +93,11 @@ def build(blocks=None, scope=None):
                           _block_md(bid, status, deploy=deploy))
     util.atomic_write(os.path.join(repo, "meta", "pipeline.md"), "\n".join(rows) + "\n")
     ctx = Ctx(d)
+    global _reap_registered
+    _reap_stores.add(ctx.workers_dir)
+    if not _reap_registered:
+        atexit.register(_reap_test_workers)
+        _reap_registered = True
     if scope:
         util.save_yaml(ctx.state, {"scope": scope})
     return ctx, repo

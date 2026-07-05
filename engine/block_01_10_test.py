@@ -24,6 +24,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
+# 01-21 T1: spawn_runner now fails closed without a resolved worker model. This suite
+# calls it directly (real runner subprocess, echo adapter) — same override knob RUNTIME/
+# ADAPTER already have, never a real model (token-free; the echo adapter ignores it).
+os.environ.setdefault("TRON_WORKER_MODEL", "test-model")
+
 import util            # noqa: E402
 import trunk           # noqa: E402
 import judge           # noqa: E402

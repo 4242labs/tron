@@ -11,6 +11,12 @@ knobs:
   worker_count: ~          # REQUIRED per-session input: max concurrent workers
                            # (engineers + reviewers share this pool; architect EXCLUDED).
                            # NO baked default — start refuses until the operator sets it.
+  worker_model: ~          # REQUIRED, engine-owned, FAIL-CLOSED input (01-21): the exact
+                           # model string every spawned worker runs on. NO baked default —
+                           # the seeder/operator sets it once per project. Unset -> the
+                           # spawn path refuses outright (jobs.WorkerModelUnconfigured)
+                           # rather than silently inherit the host CLI's own ambient
+                           # default (the credit-drain root cause this block closes).
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
   git: on                  # whether the build commits via git (drives R8 + any ci availability)
   ask_before_merging: false  # ON -> the trunk-merge step pauses for the operator (T8); the bootup

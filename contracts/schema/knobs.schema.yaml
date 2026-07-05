@@ -3,7 +3,7 @@
 # SWITCHBOARD, encoded in the engine) and is NOT composed per project — there are
 # no `steps`/`primitives` here. The seeder (B1) writes only the knobs below.
 # Lives at <agents>/tron/knobs.yaml. Tracked + PR'd.
-# Re-read every session start. Validated by blueprint-lint (contracts §9, L10–L15).
+# Re-read every session start. Validated by blueprint-lint (contracts §9, L10–L15, L25).
 #
 # The seeder writes THIS. It never writes routing.yaml or the event table (canon).
 
@@ -11,6 +11,10 @@
 knobs:                             # REQUIRED
   worker_count: <n>                # REQUIRED key; value may be null -> asked at every session start.
                                    # The worker pool (engineers + reviewers); architect EXCLUDED.
+  worker_model: <str>              # REQUIRED key (01-21); the exact model every spawned worker
+                                   # runs on. NO baked default anywhere in the engine — set once by
+                                   # the seeder/operator. Null/absent -> the spawn path refuses
+                                   # outright rather than fall back to a host-CLI ambient default.
   architect_count: 1               # persistent architect queue drainers (throughput knob)
   git: on | off                    # whether the build commits via git (R8)
   silence_ping_min: 6              # worker silent this long (min) -> heartbeat ping; multiple of wake cadence
