@@ -323,6 +323,63 @@ def patch_id_matches(repo_root, ref_a, ref_b, main_branch="main", dry=False):
     return bool(ida) and ida == idb
 
 
+def is_descendant(repo_root, sha, ancestor_sha, dry=False):
+    """T2 (01-20): True iff `sha` is a STRICT descendant of `ancestor_sha` (the ancestor is
+    reachable from it, and the two differ) — rev-parse ancestry only, never prose. Used by
+    the record-stage re-merge predicate to confirm a worker's branch grew FORWARD past an
+    already-landed tip (a required fix parked post-pin) — a divergent/rewritten history is
+    the ratchet's own contradiction arm's job, not this one. False on any unresolvable ref
+    or git failure (fail-closed: never re-drive on an unverifiable ancestry)."""
+    if dry or not repo_root or not sha or not ancestor_sha or sha == ancestor_sha:
+        return False
+    rc, _, _ = _run(["git", "-C", repo_root, "merge-base", "--is-ancestor", ancestor_sha, sha])
+    return rc == 0
+
+
+def delta_has_code(repo_root, base, tip, allowlist, dry=False, denylist=None, line_scoped=None):
+    """T2 (01-20): the code-vs-paperwork discriminator `land_docs` already uses, applied to
+    an arbitrary base..tip delta instead of a paperwork-lander branch — a path outside the
+    paperwork allowlist (or inside the denylist, with the exact-file-allow override) is a
+    code-lane path; a line_scoped path (a declared paperwork-scoped exception) is never
+    code. '' base/tip, no changed files, or a git failure -> False (fail-closed: never
+    re-drive on an unverifiable or empty delta)."""
+    if dry or not repo_root or not base or not tip or base == tip:
+        return False
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only", f"{base}..{tip}"])
+    if rc != 0:
+        return False
+    files = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if not files:
+        return False
+    exact_allows = [e for e in (allowlist or []) if not e.strip().endswith("/")]
+    for f in files:
+        if (line_scoped or {}).get(f) is not None:
+            continue
+        if _path_allowed(f, exact_allows):
+            continue
+        if _path_allowed(f, denylist):
+            return True
+        if not _path_allowed(f, allowlist):
+            return True
+    return False
+
+
+def branch_touches_path(repo_root, branch, path, main_branch="main", dry=False):
+    """T1 (01-20): does `branch`'s diff against `main_branch` touch `path` (a block file's
+    repo-relative path)? Git-only correlation used to tie an architect's landed paperwork
+    branch to its live forward/reconcile job — never prose, and read BEFORE the landing
+    deletes the branch. False on '' inputs or any git failure (fail-closed: no correlation
+    without positive evidence)."""
+    if dry or not repo_root or not branch or not path:
+        return False
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only",
+                       f"{main_branch}...{branch}"])
+    if rc != 0:
+        return False
+    files = {ln.strip() for ln in out.splitlines() if ln.strip()}
+    return path in files
+
+
 def _path_allowed(path, allowlist):
     """Path-component-aware allowlist match (tron-13 D1 rider): `meta/` covers meta/**
     but never `metadata/…`; a file entry matches exactly (`README.md` never matches
