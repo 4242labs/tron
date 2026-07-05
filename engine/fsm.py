@@ -3161,6 +3161,93 @@ class Engine:
             self.emit("tg.escalate", {"worker_id": wid or "?", "detail": detail})
         self.log("flow", f"sweep: {wid} walled with no case -> reopened ({block or '?'})")
 
+    # ── T3(b) (01-20): fleet-global refusal backoff (quota-blindness's BLOCKER-2) ──
+    def _fleet_refusal_hold(self):
+        """Engine-internal state (not a knob) — created on first use. `deaths`: a rolling
+        window of refusal-death timestamps; `active`: the hold is currently engaged;
+        `canary`: the block currently probing dispatch."""
+        return self.st.data.setdefault("refusal_hold", {"deaths": [], "active": False})
+
+    def _refusal_death(self, w, idx):
+        """True iff `w`'s runner died in the `error` state with the adapter's own
+        RunnerRefusal cause — read STRUCTURALLY off the runner's timeline `kind` field
+        (jobs.last_turn_error_kind), never the refusal TEXT (NET-ZERO: the shapes stay
+        worker_runner.py's own adapter knowledge)."""
+        rec = jobs.find(w.get("id"), idx) or {}
+        if rec.get("state") != "error":
+            return False
+        return jobs.last_turn_error_kind(rec.get("dir", "")) == "RunnerRefusal"
+
+    def _fleet_hold_note(self, w):
+        """Record this refusal death in the fleet-hold's rolling window (short: the ladder's
+        own gate_idle_cap pace unit — no new knob); engage the hold on REPEATED deaths
+        (>=2) inside it. Returns True while the hold is (now or already) active — the
+        caller absorbs this tick's stall handling into the hold instead of the ordinary
+        per-worker recover (BLOCKER-2: per-worker recover thrashes when the cause is
+        fleet-wide, e.g. a provider quota, not one worker's problem)."""
+        now = self._now_s()
+        hold = self._fleet_refusal_hold()
+        window = self._pace("gate_idle_cap", 3)
+        hold["deaths"] = [t for t in hold.get("deaths", []) if now - t <= window] + [now]
+        if not hold.get("active"):
+            if len(hold["deaths"]) < 2:
+                return False                     # a lone death — the ordinary recover handles it
+            hold["active"], hold["since"] = True, now
+            hold.pop("canary", None)
+            hold.pop("canary_probed_at", None)
+            detail = (f"fleet dispatch held — {len(hold['deaths'])} refusal-caused runner "
+                     f"deaths within {int(window)}s; probing with a canary re-spawn")
+            self.events.failure("gate-stuck", "fleet-refusal-hold",
+                                "dispatch across the fleet", detail,
+                                node="runner fleet", next_action="canary re-spawn")
+            self.emit("escalate.unclassified", {"detail": detail})
+            self.log("flow", "fleet refusal-hold engaged: dispatch held fleet-wide")
+        return True
+
+    def _drive_fleet_refusal_hold(self, w):
+        """Absorb this dead worker into the active hold: release its slot without touching
+        its block's gate/blocked state — held blocks stay exactly 📋 (no gate mutation,
+        nothing walls, no per-worker stall-count/redispatch). Elects the FIRST held
+        engineer block as the hold's canary candidate if none is elected yet; the actual
+        probe is paced separately (_sweep_fleet_refusal_canary), on the existing sweep
+        cadence."""
+        hold = self._fleet_refusal_hold()
+        if not hold.get("canary") and w.get("role") == "engineer" and w.get("block"):
+            hold["canary"] = w.get("block")
+        self._release_worker(w, notify=False, reason="fleet-refusal-hold")
+
+    def _sweep_fleet_refusal_canary(self, idx):
+        """While the hold is active: probe with exactly ONE canary re-spawn (paced like an
+        idle re-nudge — gate_nudge_after, no new knob) and resume fleet dispatch the
+        instant that canary completes its first healthy turn. A dead canary just re-probes
+        next cadence; held blocks stay 📋 throughout — never a gate mutation, never a wall."""
+        hold = self._fleet_refusal_hold()
+        if not hold.get("active"):
+            return
+        block = hold.get("canary")
+        if not block:
+            return
+        wid = self._worker_id("engineer", block)
+        rec = jobs.find(wid, idx)
+        if rec is not None:
+            if jobs.is_alive(wid, idx) and rec.get("turns", 0) >= 1:
+                hold["active"] = False
+                hold["deaths"] = []
+                hold.pop("canary", None)
+                hold.pop("canary_probed_at", None)
+                self.log("flow", f"fleet refusal-hold cleared: canary {wid} turned "
+                                 f"healthy -> resume dispatch")
+                self._emit("pulse")
+            elif not jobs.is_alive(wid, idx):
+                hold.pop("canary_probed_at", None)   # the canary died too -> re-probe next cadence
+            return
+        now = self._now_s()
+        last = hold.get("canary_probed_at")
+        if last is None or now - last >= self._pace("gate_nudge_after", 2):
+            hold["canary_probed_at"] = now
+            self._redispatch(block)
+            self.log("flow", f"fleet refusal-hold: canary re-spawn probe on {block}")
+
     # ── liveness sweep (engine side-system, deterministic — no LLM) ──
     def _sweep(self):
         if self.dry:
@@ -3189,6 +3276,16 @@ class Engine:
                     self._spawn_architect()
                 continue
             if not alive:
+                # T3(b) (01-20, BLOCKER-2): a refusal-caused death (the runner's OWN
+                # structural `kind` on its last turn_error — RunnerRefusal, worker_runner.py
+                # — never the refusal text, NET-ZERO) is fleet-global (a provider quota),
+                # not this one worker's problem; a per-worker recover just thrashes
+                # (re-dispatch -> instant death x3 -> wall). Repeated fleet-wide refusal
+                # deaths inside a short window hold dispatch instead of the ordinary
+                # recover — this worker's own stall handling is absorbed into the hold.
+                if self._refusal_death(w, idx) and self._fleet_hold_note(w):
+                    self._drive_fleet_refusal_hold(w)
+                    continue
                 self._emit("worker:stalled", {"worker_id": w.get("id")})
                 continue
             # Deterministic two-step online handshake (01-10 return-path fix): a spawned worker is
@@ -3296,6 +3393,10 @@ class Engine:
             elif delta > ping * 60 and not w.get("pinged_at"):
                 w["pinged_at"] = util.now_iso()
                 self.emit("heartbeat.ping", {"worker_id": w.get("id")}, worker_id=w.get("id"))
+        # T3(b) (01-20): while the fleet-refusal hold is active, probe with exactly one
+        # canary re-spawn (paced like an idle re-nudge) and resume dispatch on its first
+        # healthy turn — every sweep, whether or not THIS tick added a new death.
+        self._sweep_fleet_refusal_canary(idx)
         # T2 (01-16, D-17-1): the gate-orphaned predicate above requires an idle WORKER to
         # exist to fire — a gate whose block has NO live bound worker AT ALL (purged,
         # force-released, or any other path that outlives the roster entry) escapes it

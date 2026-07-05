@@ -159,6 +159,33 @@ def timeline_tail(worker_id, n=20, idx=None):
     return "\n".join(b for b in bits if b)
 
 
+def last_turn_error_kind(worker_dir):
+    """T3(b) (01-20): the engine's fleet-hold sweep reads the runner's own STRUCTURAL
+    `kind` field on its last turn_error timeline event (the exception class name the
+    runner recorded, e.g. "RunnerRefusal" — worker_runner.py) to recognize a refusal-
+    caused death across the fleet. Never reads the refusal TEXT (NET-ZERO: that stays
+    adapter-only knowledge). '' when no turn_error is recorded, or the dir is missing."""
+    path = os.path.join(worker_dir or "", TIMELINE)
+    if not worker_dir or not os.path.isfile(path):
+        return ""
+    kind = ""
+    try:
+        with open(path) as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    ev = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("event") == "turn_error":
+                    kind = ev.get("kind") or ""
+    except OSError:
+        return ""
+    return kind
+
+
 def activity_signals(worker_id, since_iso=None, idx=None):
     """Liveness signals for the engine's deterministic stall sweep (contracts §5).
 

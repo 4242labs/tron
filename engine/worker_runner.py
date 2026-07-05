@@ -47,6 +47,42 @@ def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+class RunnerRefusal(RuntimeError):
+    """T3(a) (01-20, tron-27/28 quota-blindness): raised for a runtime-failure TURN — the
+    host CLI answered, but its own result record says the turn was not a healthy success
+    (`is_error` true, `subtype` != "success", or the CLI's own known refusal wording, e.g.
+    a provider quota/limit banner returned as ordinary `turn_done` text — BLOCKER-1: the
+    quota-state result shape is unverified and may arrive dressed as `success`). A DISTINCT
+    exception CLASS (never a bare RuntimeError) so the engine's fleet-hold sweep (T3(b))
+    can recognize the CAUSE structurally off this class's __name__, recorded as a plain
+    `kind` field on the runner's own turn_error timeline event — never by reading the
+    refusal TEXT engine-side (NET-ZERO: the shapes stay this adapter's own knowledge).
+    Rides the EXISTING exception path unchanged: Runner.run()'s one `except Exception`
+    already turns any raise here into turn_error -> state `error` -> jobs.is_alive() False
+    -> the sweep recovers."""
+
+
+# T3(a) (01-20, BLOCKER-1): known runtime-refusal SHAPES — the host CLI's OWN quota/limit
+# wording. Versioned constants living HERE, in the host-CLI adapter, because they are
+# runtime-specific translation knowledge (exactly what an adapter is for) — the engine
+# NEVER reads this list or any turn text (NET-ZERO: no new knob/verb/template; this is a
+# private detection detail of ONE adapter, not TRON vocabulary). Update it if/when the
+# host CLI's own wording changes.
+_KNOWN_REFUSAL_SHAPES = (
+    "usage limit reached",
+    "you've reached your usage limit",
+    "you have reached your usage limit",
+    "quota exceeded",
+    "rate limit exceeded",
+    "please upgrade your plan",
+)
+
+
+def _is_known_refusal(text):
+    low = (text or "").lower()
+    return any(shape in low for shape in _KNOWN_REFUSAL_SHAPES)
+
+
 # ── adapters: one operation — run_turn(text) blocks until the turn ends, returns its result ──
 class HostCliAdapter:
     """Drives ONE persistent host-CLI process per worker via stream-json. Successive turns feed
@@ -106,7 +142,21 @@ class HostCliAdapter:
             except json.JSONDecodeError:
                 continue
             if ev.get("type") == "result":
-                return ev.get("result", "") or ""
+                text = ev.get("result", "") or ""
+                subtype = ev.get("subtype")
+                is_error = bool(ev.get("is_error"))
+                # T3(a) (01-20): a healthy turn is EARNED, never assumed — is_error, a
+                # non-"success" subtype, or the CLI's own known refusal wording (quota-
+                # blindness's BLOCKER-1: that shape may otherwise arrive as an ordinary
+                # `success` turn) all raise RunnerRefusal, riding the SAME exception path
+                # every other turn failure already does (turn_error -> state error ->
+                # jobs.is_alive() False -> the sweep recovers).
+                if is_error or (subtype is not None and subtype != "success") \
+                        or _is_known_refusal(text):
+                    raise RunnerRefusal(
+                        f"turn reported failure (subtype={subtype!r}, "
+                        f"is_error={is_error}): {text[:200]}")
+                return {"text": text, "subtype": subtype, "is_error": is_error}
 
     def close(self):
         if self.proc and self.proc.poll() is None:
@@ -128,7 +178,7 @@ class EchoAdapter:
         pass
 
     def run_turn(self, text):
-        return f"echo: {text[:80]}"
+        return {"text": f"echo: {text[:80]}", "subtype": "success", "is_error": False}
 
     def close(self):
         pass
@@ -234,7 +284,13 @@ class Runner:
                     try:
                         result = self.adapter.run_turn(m.get("text", ""))
                     except Exception as e:                      # adapter/process died mid-turn
-                        self._timeline(event="turn_error", seq=seq, text=f"{type(e).__name__}: {e}")
+                        # T3(b) (01-20): `kind` is the exception CLASS name, a structural
+                        # field (like `state`/`event` elsewhere) — the engine's fleet-hold
+                        # sweep reads THIS, never the text, to recognize a refusal-caused
+                        # death (NET-ZERO: the refusal wording stays adapter-only knowledge).
+                        self._timeline(event="turn_error", seq=seq,
+                                       text=f"{type(e).__name__}: {e}",
+                                       kind=type(e).__name__)
                         self._write_state("error")              # the sweep sees not-alive -> recover
                         return 1
                     self.turns += 1
@@ -242,8 +298,18 @@ class Runner:
                     # committed. A crash before this re-runs the same seq on restart (at-least-once);
                     # a crash after it skips the seq (already applied) — never double-applied.
                     self._write_hwm(seq)
-                    self._timeline(event="turn_done", seq=seq,
-                                   text=(result or "")[:200])
+                    if isinstance(result, dict):
+                        # T3(a) (01-20): observability at the seam — subtype/is_error ride
+                        # into the timeline instead of being discarded (a healthy turn's own
+                        # record is {"subtype":"success","is_error":false,...}; this is that
+                        # shape surfacing structurally, never re-derived from prose).
+                        self._timeline(event="turn_done", seq=seq,
+                                       text=(result.get("text") or "")[:200],
+                                       subtype=result.get("subtype"),
+                                       is_error=bool(result.get("is_error")))
+                    else:
+                        self._timeline(event="turn_done", seq=seq,
+                                       text=(result or "")[:200])
             self._write_state("released")
             self._timeline(event="stopped", text="released by TRON")
             return 0
