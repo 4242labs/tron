@@ -511,6 +511,99 @@ def record_commit_ok(repo_root, block_file, dry=False):
     return True, sha[:8]
 
 
+def block_invariant_ok(repo_root, branch, merged_sha, main_branch="main", dry=False):
+    """T1 (01-25, R-03a): the block invariant, checked ONCE at record->close — every
+    code-bearing commit attributable to this block is an ancestor of trunk, ref-agnostically.
+    Unlike the mid-gate anchors above (`is_ancestor`, best-effort, empty-sha reads as a quiet
+    pass), this is the LAST gate and fails CLOSED: an anchor that no longer resolves (a
+    deleted/unregistered ref, seam 5) is NOT a free pass, and no anchor at all resolving is
+    itself a failure — there is nothing left to verify the block ever landed. Checks every
+    anchor that DOES resolve (the live branch tip, if the branch still exists, AND the
+    tracked merged_sha, if set) — a stray commit parked on the branch after the last accepted
+    merge fails via the branch-tip arm even when merged_sha alone would still read clean.
+    Returns (ok, detail)."""
+    if dry or not repo_root:
+        return True, "dry/none"
+    branch_tip = tip_sha(repo_root, branch, dry) if branch else ""
+    checked = False
+    if branch_tip:
+        checked = True
+        if not is_ancestor(repo_root, branch_tip, main_branch, dry):
+            return False, f"branch {branch} tip {branch_tip[:7]} is not on trunk"
+    if merged_sha:
+        checked = True
+        if not is_ancestor(repo_root, merged_sha, main_branch, dry):
+            return False, f"merged sha {str(merged_sha)[:7]} is not on trunk"
+    if not checked:
+        return False, "no resolvable anchor (branch gone, no tracked merge) — cannot verify the block landed"
+    return True, ""
+
+
+def merge_base(repo_root, ref_a, ref_b, dry=False):
+    """`git merge-base ref_a ref_b`, or '' on any unresolvable ref / git failure. Best-effort,
+    like every other read here — callers must treat '' as "unknown", never a free pass."""
+    if dry or not repo_root or not ref_a or not ref_b:
+        return ""
+    rc, out, _ = _run(["git", "-C", repo_root, "merge-base", ref_a, ref_b])
+    return out.strip() if rc == 0 else ""
+
+
+def run_block_tests(repo_root, base, merged_sha, dry=False):
+    """T2 (01-25, R-03b) + review fix (F-3 reopened): the engine's OWN observed signal at the
+    trunk-stage trust point — the worker's report is a claim, this runs it. Discovers the
+    block's own test files over the FULL `base..merged_sha` range, never merged_sha's own
+    single-commit diff alone: under `merge_ff_only` a multi-commit branch lands as a literal
+    fast-forward, so merged_sha's OWN diff (`git show` against its immediate parent) is only
+    its LAST commit — an earlier commit in the same landed range that added the block's real
+    feature + test file went unseen, and a trivially-green trailing commit's own diff made the
+    signal flip GREEN having never run the feature's test (the exact F-3 shape this block
+    exists to close). `base` must be captured by the CALLER at merge time (trunk before the
+    ff) — recomputing `merge-base(main, branch)` here, after the fact, cannot recover it: a
+    fast-forward collapses branch and trunk onto the identical commit, so that merge-base
+    would just return merged_sha back (a self-ancestor), the same one-commit blind spot this
+    fixes.
+
+    Reviewer fix (F-3 relocated, AC-5): base=='' or base==merged_sha means the range is
+    UNKNOWN, not narrow — on the out-of-band arms (self_merge, out-of-gate branch_merged,
+    remote-PR-merged) the caller's own best-effort `merge_base(main, branch)` collapses to
+    merged_sha (or fails to resolve) exactly when that external merge was itself a bare
+    fast-forward. Falling back to merged_sha's single-commit diff there silently re-opens the
+    same blind spot this function exists to close: an unrelated already-green trailing commit
+    reads as the whole block's signal while the real (possibly broken) test never runs. There
+    is no pre-image to reconstruct here — the out-of-band arms genuinely cannot recover it —
+    so this fails CLOSED instead: NOT-OK, holding the gate at trunk (the existing
+    repeat-report escalation backstop handles a persistent hold), mirroring AC-5's "absent
+    signal never flips passed." The PRIMARY engine ff arm is unaffected: its base is a real
+    pre-merge sha (trunk's HEAD read before the ff), never equal to merged_sha for a landed
+    block, and a genuine 1-commit block still has base == the parent commit, not merged_sha.
+
+    Executes each discovered test file directly — never the worker's worktree, never a
+    say-so. No test file found in the range is a FAIL, same as a failing run: a validated
+    block always ran something observable. Returns (ok, detail)."""
+    if dry:
+        return True, "dry"
+    if not repo_root or not merged_sha:
+        return False, "no merged sha to validate"
+    if not base or base == merged_sha:
+        return False, ("validation range unresolved (base collapsed) — cannot verify tests ran "
+                        f"({str(merged_sha)[:7]})")
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only", f"{base}..{merged_sha}"])
+    span = f"{str(base)[:7]}..{str(merged_sha)[:7]}"
+    if rc != 0:
+        return False, f"{span}: diff unreadable"
+    tests = sorted({f.strip() for f in out.splitlines() if f.strip().endswith("_test.py")})
+    if not tests:
+        return False, f"no test file in the merged range ({span})"
+    for f in tests:
+        path = os.path.join(repo_root, f)
+        if not os.path.exists(path):
+            return False, f"{f}: missing on trunk"
+        rc, _, err = _run(["python3", path], cwd=repo_root, timeout=120)
+        if rc != 0:
+            return False, f"{f}: failed ({err.strip()[:150]})"
+    return True, f"{len(tests)} test file(s) green ({span})"
+
+
 def replica_clean(repo_root, branch, main_branch="main", dry=False):
     """CLOSE-gate cleanliness (01-11 FX-9): deterministic git reads — the worker's clean-exit
     claim is verified, never trusted. Scoped to THIS block (review finding: with
