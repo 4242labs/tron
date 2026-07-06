@@ -24,7 +24,7 @@ Invoked from `<WORKSPACE_PATH>` (this directory).
 | Security Reviewer | `<META_REPO_NAME>/agents/reviewer-security.md` | Security posture audits |
 | SUPER-M | `<META_REPO_NAME>/agents/super-m-local.md` | Workflow health monitoring |
 | Product-Designer | _(shared-KB path TBD — see TD-10)_ | Idea → backlog → pipeline block frame (problem framing, market scan, JTBD) |
-| Analyst-Marketing | _(shared-KB path TBD — see TD-10)_ | Positioning, go-to-market, pricing presentation |
+| Emily | _(shared-KB path TBD — see TD-10)_ | Marketing & discoverability — positioning, go-to-market, pricing presentation, SEO, GEO/AEO |
 | Analyst-Finance | _(shared-KB path TBD — see TD-10)_ | Pricing strategy, cost analysis, unit economics |
 | Advisor-Legal | _(shared-KB path TBD — see TD-10)_ | Legal, compliance, privacy |
 | i18n | _(shared-KB path TBD — see TD-10)_ | Multi-language localization strategy, translation quality, locale coverage |
