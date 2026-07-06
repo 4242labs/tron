@@ -1302,8 +1302,32 @@ class Engine:
         engine-raised) never auto-clears. Undecided ONLY: by the time an operator/architect
         settle lands, _h_apply_decision has always already closed the case it acted on, so
         'already settled' and 'no wall of mine is open' collapse to the same honest no-op
-        here — never a silent drop (D-15-3's law extended to this new verb)."""
+        here — never a silent drop (D-15-3's law extended to this new verb).
+
+        F1 fix (01-24 review cycle 1): `worker.wall` is a DEFERRED trigger — `_ingest`
+        resolves it to `wall:raised:<block>` via `_emit`, which only QUEUES it into
+        `self._tq`; it is not acted on until end-of-tick `_drain_triggers` runs `_h_escalate`.
+        `worker.retract`, in contrast, is an IMMEDIATE side-handler — it runs the INSTANT the
+        message is ingested. So a same-tick "wall then retract" from the SAME sender (the
+        exact fat-finger F-1 exists to contain) would otherwise reach this point BEFORE the
+        wall's case exists and before the worker is even held: the pending_cases lookup below
+        finds nothing, reports a false "nothing to retract", and then the still-queued wall
+        trigger drains anyway at end-of-tick -> _h_escalate holds the worker and pages the
+        operator despite the sender's own same-tick retraction. Cancel the sender's own
+        still-queued wall trigger FIRST — pop it out of self._tq before it ever opens — so
+        _h_escalate never runs for it at all: no case, no hold, no page."""
         sid = (sender or {}).get("id")
+        if sid:
+            for i, (trig, tslots) in enumerate(self._tq):
+                if trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid:
+                    self._tq.pop(i)
+                    self.events.event("retract", actor=sid, block=(tslots or {}).get("block"),
+                                      cid=None, detail="same-tick queued wall cancelled before it opened")
+                    self.log("flow", f"retract[{sid}] -> cancelled its own still-queued wall "
+                                     f"trigger before it ever opened (same-tick self-clear, "
+                                     f"F-1)")
+                    self._emit("pulse")
+                    return
         w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
         case_id, case = None, None
         for cid, c in self.st.pending_cases.items():
@@ -3224,15 +3248,23 @@ class Engine:
         through the SAME close-case/unhold/replay seam every settle uses
         (_unhold_and_replay) — never a second teardown mechanism, never a new case kind
         (the case stays kind=='wall' throughout). Inert (plain relay, unchanged) when the
-        job carries no case, or the case already resolved by some other path."""
+        job carries no case, or the case already resolved by some other path.
+
+        F3 fix (01-24 review cycle 1): a case-carrying job whose case is no longer live
+        (e.g. the sender retracted its own wall — _h_retract — BEFORE the architect
+        answered) must not deliver a stale "[TRON] Architect: ..." to a worker that has
+        already moved on. Check case-liveness BEFORE the _to_worker send, not only before
+        the unhold/replay below — a plain peer relay (no `case` on the job at all) is
+        untouched, still always delivered."""
         arch = self._architect()
         cur = arch.get("current_job") if arch else None
         target = (cur or {}).get("sender") or slots.get("worker_id")
         answer = slots.get("detail", "")
-        if target and not self.dry:
-            self._to_worker(target, f"[TRON] Architect: {answer}", "architect.relay")
         case_id = (cur or {}).get("case")
         case = self.st.pending_cases.get(case_id) if case_id else None
+        stale = case_id is not None and case is None
+        if target and not self.dry and not stale:
+            self._to_worker(target, f"[TRON] Architect: {answer}", "architect.relay")
         if case is not None and case.get("kind") == "wall" and case.get("decision") is None:
             block = case.get("block")
             if block in self.st.blocked:
@@ -3244,6 +3276,11 @@ class Engine:
                 self._unhold_and_replay(w, block, case)
             self.log("flow", f"architect-relayed settle: wall {case_id} released "
                              f"({block or '?'}) with the relayed answer as payload")
+        elif stale:
+            self.log("flow", f"architect-relayed answer for case {case_id} suppressed: "
+                             f"the wall was already resolved by another path (e.g. a "
+                             f"same-sender retract) before the architect answered — no "
+                             f"stale relay")
         self.log("flow", f"relay architect answer -> {target or '?'}")
         self._architect_advance()
         self._emit("pulse")

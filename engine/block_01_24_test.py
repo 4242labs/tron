@@ -66,13 +66,34 @@ def _arch_idle(eng):
 
 
 def _wall(eng, block, wid, detail="flaky ci", kind=None):
-    """Raise a wall against an already-rostered worker. Returns the parked case id."""
+    """Raise a wall against an already-rostered worker THROUGH THE REAL PIPELINE.
+
+    `worker.wall` resolves to the DEFERRED trigger `wall:raised:<block>` — `_ingest`
+    only queues it into `self._tq` via `_emit`; `_h_escalate` does not run until
+    `_drain_triggers` drains the queue at end-of-tick. Driving it via `_ingest` +
+    `_drain_triggers` (never a direct `_h_escalate(...)` call) is what makes the F-1
+    same-tick wall+retract race even reachable by a test — a direct call bypasses the
+    exact queue/drain seam the bug lives in.
+
+    Returns the parked case id."""
     eng._tq = []
-    m = {"block": block, "worker_id": wid, "detail": detail}
+    slots = {"block": block, "detail": detail}
     if kind:
-        m["kind"] = kind
-    eng._h_escalate(m)
+        slots["kind"] = kind
+    eng._ingest("worker.wall", slots, {"kind": "worker", "id": wid})
+    eng._drain_triggers()
     return next(cid for cid, c in eng.st.pending_cases.items() if c.get("kind") == "wall")
+
+
+def _arch_answers(eng, arch, answer):
+    """Simulate the architect's REAL completion report for a triage job: an architect
+    worker reporting `worker.done` while its own record shows a live `busy`/`triage`
+    job is remapped by sender-truth (_resolve_by_sender) into `architect.relay` —
+    exactly the tag a genuine architect session's report resolves to. This drives
+    `_relay_architect_answer` through the real `_ingest` -> side-handler seam, never a
+    direct call, so the F-3 stale-relay-suppression fix is exercised as a live
+    architect report would exercise it."""
+    eng._ingest("worker.done", {"detail": answer}, {"kind": "worker", "id": arch["id"]})
 
 
 def _capture(eng):
@@ -189,6 +210,52 @@ def ac1_flag_looking_token_inside_the_quoted_message_is_never_flagged():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def ac1_kind_modifier_rides_before_the_message_like_branch_and_block():
+    # F2 (MAJOR, review cycle 1): report.sh had NO way to carry a wall's declared kind —
+    # AC-4's architect kind-routing was unreachable through the structured path the
+    # spec requires (fsm.py read `kind` only from LLM free-text classification). --kind
+    # is a MODIFIER: it rides exactly like --branch/--block, flags-before-message, and
+    # lands in the inbox line's structured slots.
+    d, script = _report_sandbox()
+    try:
+        r = _run_report(script, "ENG-A", "--tag", "wall", "--kind", "scope",
+                        "which schema version — v1 or v2?")
+        ok("F2 --tag wall --kind scope succeeds", r.returncode == 0,
+           f"rc={r.returncode} stderr={r.stderr!r}")
+        lines = _inbox_lines(d)
+        ok("F2 the declared kind lands in slots.kind — the structured DATA path, "
+           "never prose", len(lines) == 1 and lines[0].get("tag") == "wall"
+           and lines[0].get("slots", {}).get("kind") == "scope", f"lines={lines}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def ac1_no_kind_modifier_leaves_slots_unchanged_default_unaffected():
+    d, script = _report_sandbox()
+    try:
+        r = _run_report(script, "ENG-A", "--tag", "wall", "stuck, no kind given")
+        ok("F2 a wall with no --kind still succeeds (today's default, unchanged)",
+           r.returncode == 0, f"rc={r.returncode} stderr={r.stderr!r}")
+        lines = _inbox_lines(d)
+        ok("F2 no --kind -> no slots.kind key at all (never a guessed default)",
+           len(lines) == 1 and "kind" not in lines[0].get("slots", {}), f"lines={lines}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def ac1_kind_after_the_message_is_rejected_same_hard_error_as_every_other_flag():
+    d, script = _report_sandbox()
+    try:
+        r = _run_report(script, "ENG-A", "--tag", "wall", "stuck", "--kind", "scope")
+        ok("F2 --kind AFTER the message is the same flags-after-message hard error",
+           r.returncode != 0 and "flags must come before" in r.stderr.lower(),
+           f"rc={r.returncode} stderr={r.stderr!r}")
+        ok("F2 the malformed --kind-after-message form never reaches the inbox",
+           _inbox_lines(d) == [], f"inbox={_inbox_lines(d)}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # T2 (AC-2): retract — sender-scoped auto-dismiss
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -245,7 +312,11 @@ def ac2_already_settled_retract_is_an_honest_no_op():
     eng = _eng()
     wid = "ENG-A-01"
     cid = _wall(eng, "A-01", wid, detail="a real wall")
-    eng._h_apply_decision({"case": cid, "decision": "resume", "block": "A-01"})
+    # Real pipeline: operator:decision:<block> is itself a DEFERRED trigger — settle
+    # through _ingest + _drain_triggers, never a direct _h_apply_decision(...) call.
+    eng._ingest("operator.decision", {"case": cid, "decision": "resume", "block": "A-01"},
+               {"kind": "operator"})
+    eng._drain_triggers()
     ok("setup: the settle already closed the case", cid not in eng.st.pending_cases)
     w = next(x for x in eng.st.workers if x["id"] == wid)
     ok("setup: the settle already un-held the worker", w.get("status") != "walled")
@@ -259,6 +330,48 @@ def ac2_already_settled_retract_is_an_honest_no_op():
        not eng.st.pending_cases, f"cases={eng.st.pending_cases}")
     ok("AC-2 the honest notice fires for an already-settled retract too",
        any(wid_ == wid and "nothing to retract" in txt.lower() for wid_, txt, _ in tw),
+       f"tw={tw}")
+
+
+def ac2_same_tick_wall_then_retract_self_clears_fully():
+    """F1 (BLOCKER, review cycle 1): `worker.wall` resolves to the DEFERRED trigger
+    `wall:raised:<block>` — `_ingest` only QUEUES it into `self._tq` via `_emit`;
+    `_h_escalate` does not run until end-of-tick `_drain_triggers` drains the queue.
+    `worker.retract` is an IMMEDIATE side-handler that runs the instant it is ingested.
+    So a worker fat-fingering `--tag wall` then `--tag retract` in the SAME tick must
+    fully self-clear — no case ever opens, the worker is never held, and zero operator
+    page fires — proven here by driving BOTH messages through the real _ingest + _tq +
+    _drain_triggers seam, in one tick, never touching _h_escalate/_h_retract directly
+    (the exact bypass that let this bug hide behind 52/52 green before)."""
+    eng = _eng()
+    wid = "ENG-A-01"
+    sent = _capture(eng)
+    tw = _capture_to_worker(eng)
+    eng.dry = False
+    try:
+        eng._tq = []
+        # Message 1: the fat-fingered wall — its trigger only QUEUES; _h_escalate has
+        # not run yet.
+        eng._ingest("worker.wall", {"block": "A-01", "detail": "fat-fingered wall"},
+                   {"kind": "worker", "id": wid})
+        # Message 2, SAME tick: the sender catches its own mistake immediately.
+        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
+        # End-of-tick drain — mirrors tick()'s own _drain_triggers() call.
+        eng._drain_triggers()
+    finally:
+        eng.dry = True
+    ok("F1 no wall case ever opens (the queued wall was cancelled before _h_escalate ran)",
+       not any(c.get("kind") == "wall" for c in eng.st.pending_cases.values()),
+       f"cases={eng.st.pending_cases}")
+    w = next(x for x in eng.st.workers if x["id"] == wid)
+    ok("F1 the worker is never left walled", w.get("status") != "walled", f"w={w}")
+    ok("F1 the block never lands in the blocked pool", "A-01" not in eng.st.blocked,
+       f"blocked={eng.st.blocked}")
+    ok("F1 ZERO operator page (no escalate.wall / tg.escalate)",
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
+    ok("F1 no false 'nothing to retract' notice either — the same-tick retract genuinely "
+       "acted, it did not fall through to the honest-no-op arm",
+       not any(wid_ == wid and "nothing to retract" in txt.lower() for wid_, txt, _ in tw),
        f"tw={tw}")
 
 
@@ -373,7 +486,7 @@ def ac4_architect_relayed_answer_settles_the_routed_wall():
     tw = _capture_to_worker(eng)
     eng.dry = False
     try:
-        eng._relay_architect_answer({"detail": "use schema v2 — v1 is deprecated"})
+        _arch_answers(eng, arch, "use schema v2 — v1 is deprecated")
     finally:
         eng.dry = True
     ok("AC-3/AC-4 the architect-relayed answer reaches the walled worker",
@@ -394,17 +507,81 @@ def ac4_plain_peer_relay_without_a_case_stays_a_plain_relay():
     eng = _eng()
     wid = "ENG-A-01"
     arch = _arch_idle(eng)
-    eng._triage_to_architect("a peer design question", sender=wid, block="A-01")
+    # Real pipeline: worker.question_peer's side (triage_peer) is what actually calls
+    # _triage_to_architect for a live peer question — drive it via _ingest.
+    eng._ingest("worker.question_peer", {"detail": "a peer design question"},
+               {"kind": "worker", "id": wid})
     tw = _capture_to_worker(eng)
     eng.dry = False
     try:
-        eng._relay_architect_answer({"detail": "use a factory here"})
+        _arch_answers(eng, arch, "use a factory here")
     finally:
         eng.dry = True
     ok("T10 regression: a plain peer relay still delivers the answer",
        any(wid_ == wid and "use a factory here" in txt for wid_, txt, _ in tw), f"tw={tw}")
     ok("T10 regression: no wall bookkeeping touched (nothing parked to begin with)",
        not eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+
+
+def ac4_kind_declared_via_the_structured_report_path_routes_to_the_architect():
+    # F2 (MAJOR, review cycle 1): prove the declared kind reaches routing through the
+    # SAME structured path a real report.sh JSON line actually takes (_structured, zero
+    # model calls) — never through LLM free-text classification. This is the exact gap
+    # F2 found: fsm.py's kind-routing existed, but nothing could ever hand it a
+    # structured `kind` because report.sh had no --kind modifier before this fix.
+    eng = _eng()
+    wid = "ENG-A-01"
+    arch = _arch_idle(eng)
+    sent = _capture(eng)
+    # Shaped exactly like the JSON line report.sh's new --kind modifier now emits.
+    msg = {"at": "2026-07-06T00:00:00Z", "text": "which schema version — v1 or v2?",
+           "sender": {"kind": "worker", "id": wid},
+           "tag": "wall", "slots": {"kind": "scope"}}
+    tag, slots = eng._classify(msg)          # the exact call tick() makes (fsm.py:251)
+    ok("F2 the structured wall resolves deterministically to worker.wall, kind carried "
+       "as DATA, never prose", tag == "worker.wall" and slots.get("kind") == "scope",
+       f"tag={tag} slots={slots}")
+    slots = {**slots, "_raw": msg["text"]}   # mirror tick()'s own _raw carry (fsm.py:255)
+    eng._ingest(tag, slots, msg["sender"])
+    eng._drain_triggers()
+    ok("F2 the operator is never paged for a structurally-declared spec-ownable wall",
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
+    ok("F2 the architect IS dispatched, carrying the wall's case id",
+       (arch.get("current_job") or {}).get("kind") == "triage"
+       and (arch.get("current_job") or {}).get("case") is not None, f"arch={arch}")
+
+
+def ac4_retract_before_architect_answers_suppresses_the_stale_relay():
+    """F3 (MAJOR, review cycle 1): a spec-ownable wall routes to the architect; the
+    sender retracts its OWN still-undecided wall BEFORE the architect answers — real
+    pipeline (_ingest + _drain_triggers), never a direct _h_retract call. _h_retract
+    correctly closes the case and un-holds the worker, but the architect's triage job
+    (current_job) is left stale, still naming the now-gone case. When the architect's
+    answer THEN arrives — also via the real _ingest -> sender-truth -> architect.relay
+    seam (_arch_answers), never a direct _relay_architect_answer call — it must NOT
+    deliver a stale "[TRON] Architect: ..." to a worker that already moved on."""
+    eng = _eng()
+    wid = "ENG-A-01"
+    arch = _arch_idle(eng)
+    cid = _wall(eng, "A-01", wid, detail="which schema — v1 or v2?", kind="scope")
+    ok("setup: routed to the architect", (arch.get("current_job") or {}).get("case") == cid)
+    tw = _capture_to_worker(eng)
+    eng.dry = False
+    try:
+        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
+        ok("setup: the retract closed the wall case before the architect answered",
+           cid not in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+        w = next(x for x in eng.st.workers if x["id"] == wid)
+        ok("setup: the retract un-held the worker", w.get("status") != "walled", f"w={w}")
+        # The architect, unaware its case is gone, answers anyway.
+        _arch_answers(eng, arch, "use schema v2 — v1 is deprecated")
+    finally:
+        eng.dry = True
+    ok("F3 the stale architect answer is NEVER delivered to the worker that retracted",
+       not any(wid_ == wid and "use schema v2" in txt for wid_, txt, _ in tw), f"tw={tw}")
+    ok("F3 no stale [TRON] Architect relay reaches that worker at all",
+       not any(wid_ == wid and txt.startswith("[TRON] Architect:") for wid_, txt, _ in tw),
+       f"tw={tw}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
