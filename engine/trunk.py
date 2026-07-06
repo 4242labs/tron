@@ -561,8 +561,21 @@ def run_block_tests(repo_root, base, merged_sha, dry=False):
     ff) — recomputing `merge-base(main, branch)` here, after the fact, cannot recover it: a
     fast-forward collapses branch and trunk onto the identical commit, so that merge-base
     would just return merged_sha back (a self-ancestor), the same one-commit blind spot this
-    fixes. base=='' or base==merged_sha (no wider range known/captured) falls back to the
-    legacy single-commit diff — narrower, never a free pass, never worse than before.
+    fixes.
+
+    Reviewer fix (F-3 relocated, AC-5): base=='' or base==merged_sha means the range is
+    UNKNOWN, not narrow — on the out-of-band arms (self_merge, out-of-gate branch_merged,
+    remote-PR-merged) the caller's own best-effort `merge_base(main, branch)` collapses to
+    merged_sha (or fails to resolve) exactly when that external merge was itself a bare
+    fast-forward. Falling back to merged_sha's single-commit diff there silently re-opens the
+    same blind spot this function exists to close: an unrelated already-green trailing commit
+    reads as the whole block's signal while the real (possibly broken) test never runs. There
+    is no pre-image to reconstruct here — the out-of-band arms genuinely cannot recover it —
+    so this fails CLOSED instead: NOT-OK, holding the gate at trunk (the existing
+    repeat-report escalation backstop handles a persistent hold), mirroring AC-5's "absent
+    signal never flips passed." The PRIMARY engine ff arm is unaffected: its base is a real
+    pre-merge sha (trunk's HEAD read before the ff), never equal to merged_sha for a landed
+    block, and a genuine 1-commit block still has base == the parent commit, not merged_sha.
 
     Executes each discovered test file directly — never the worker's worktree, never a
     say-so. No test file found in the range is a FAIL, same as a failing run: a validated
@@ -571,12 +584,11 @@ def run_block_tests(repo_root, base, merged_sha, dry=False):
         return True, "dry"
     if not repo_root or not merged_sha:
         return False, "no merged sha to validate"
-    if base and base != merged_sha:
-        rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only", f"{base}..{merged_sha}"])
-        span = f"{str(base)[:7]}..{str(merged_sha)[:7]}"
-    else:
-        rc, out, _ = _run(["git", "-C", repo_root, "show", "--name-only", "--format=", merged_sha])
-        span = str(merged_sha)[:7]
+    if not base or base == merged_sha:
+        return False, ("validation range unresolved (base collapsed) — cannot verify tests ran "
+                        f"({str(merged_sha)[:7]})")
+    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only", f"{base}..{merged_sha}"])
+    span = f"{str(base)[:7]}..{str(merged_sha)[:7]}"
     if rc != 0:
         return False, f"{span}: diff unreadable"
     tests = sorted({f.strip() for f in out.splitlines() if f.strip().endswith("_test.py")})

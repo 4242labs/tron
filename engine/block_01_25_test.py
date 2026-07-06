@@ -173,7 +173,11 @@ def t_ac4_clean_landing_passes():
 # ── AC-5: the signal is OBSERVED, never reported — absent/failing never flips "passed" ──
 def t_ac5_validation_signal_observed_not_reported():
     d = _mkrepo()
-    # (a) code landed, no test file at all in the merged commit's own diff.
+    # (a) code landed, no test file at all in the merged commit's own diff. `base` is the
+    # caller-captured pre-merge trunk tip (real, resolvable, != merged_sha) — never None/
+    # collapsed, per the review fix below (AC-5's forbidden shape is COLLAPSED base, not a
+    # real narrow one).
+    _, base_a = _git(d, "rev-parse", "HEAD")
     _git(d, "checkout", "-q", "-b", "feat/A-05a")
     with open(os.path.join(d, "src.txt"), "a") as fh:
         fh.write("feature, no test\n")
@@ -181,11 +185,12 @@ def t_ac5_validation_signal_observed_not_reported():
     _git(d, "checkout", "-q", "main")
     _git(d, "merge", "-q", "--ff-only", "feat/A-05a")
     _, sha_a = _git(d, "rev-parse", "HEAD")
-    okc, detail = trunk.run_block_tests(d, None, sha_a, False)
+    okc, detail = trunk.run_block_tests(d, base_a, sha_a, False)
     ok("AC-5 absent test file in the landed delta fails — no signal, no pass",
        not okc and "no test file" in detail, detail)
 
     # (b) code landed WITH a failing test file — the report never substitutes for the run.
+    _, base_b = _git(d, "rev-parse", "HEAD")
     _git(d, "checkout", "-q", "-b", "feat/A-05b")
     with open(os.path.join(d, "src.txt"), "a") as fh:
         fh.write("feature b\n")
@@ -196,11 +201,12 @@ def t_ac5_validation_signal_observed_not_reported():
     _git(d, "checkout", "-q", "main")
     _git(d, "merge", "-q", "--ff-only", "feat/A-05b")
     _, sha_b = _git(d, "rev-parse", "HEAD")
-    okc, detail = trunk.run_block_tests(d, None, sha_b, False)
+    okc, detail = trunk.run_block_tests(d, base_b, sha_b, False)
     ok("AC-5 a failing OBSERVED test-run fails, regardless of any worker claim",
        not okc and "b_test.py" in detail, detail)
 
     # (c) code landed WITH a genuinely passing test file — the only way the signal flips.
+    _, base_c = _git(d, "rev-parse", "HEAD")
     _git(d, "checkout", "-q", "-b", "feat/A-05c")
     with open(os.path.join(d, "src.txt"), "a") as fh:
         fh.write("feature c\n")
@@ -211,7 +217,7 @@ def t_ac5_validation_signal_observed_not_reported():
     _git(d, "checkout", "-q", "main")
     _git(d, "merge", "-q", "--ff-only", "feat/A-05c")
     _, sha_c = _git(d, "rev-parse", "HEAD")
-    okc, detail = trunk.run_block_tests(d, None, sha_c, False)
+    okc, detail = trunk.run_block_tests(d, base_c, sha_c, False)
     ok("AC-5 a genuinely observed passing run is the only way 'passed' flips", okc, detail)
     shutil.rmtree(d, ignore_errors=True)
 
@@ -265,18 +271,62 @@ def t_ac5b_multi_commit_range_discovers_earlier_test():
     ok("AC-5 gap: a failing test anywhere in the full range still fails the signal",
        not okc2 and "feature_test.py" in detail2, detail2)
 
-    # And the OLD single-commit idiom (base=None, the tip's own diff alone), replayed on
-    # the ORIGINAL ff-merged tip (commit2, the trailing decoy): commit2's own diff never
-    # mentions feature_test.py at all, so the legacy fallback finds no test file in scope
-    # and fails closed on that basis — never a silent PASS, but proof of exactly the blind
-    # spot the caller-supplied `base` (used above) closes: the reviewer's exact scenario,
-    # where the OLD code ran only the decoy commit's own diff, found nothing, but a
-    # differently-shaped decoy (one that touches an ALREADY-GREEN test file) would have
-    # returned a false PASS having never run feature_test.py at all.
+    # Review fix (F-3 relocated, fix cycle 2): the OLD single-commit fallback (base=None,
+    # the tip's own diff alone) is now REMOVED entirely, not just narrowed — a collapsed/
+    # unknown base is untrusted, never a legacy-but-valid signal. Proven directly in
+    # t_ac5c_out_of_band_collapsed_base_fails_closed below with the reviewer's exact
+    # false-PASS shape (a decoy commit that touches an ALREADY-GREEN test file, which the
+    # old fallback would have returned as a false PASS rather than "no test file").
     okc3, detail3 = trunk.run_block_tests(d, None, tip, False)
-    ok("AC-5 gap: the tip's OWN single-commit diff alone never even sees feature_test.py "
-       "(the reopened seam this test guards against)",
-       not okc3 and "no test file" in detail3, detail3)
+    ok("AC-5 gap: base=None is now an untrusted/collapsed range -> NOT-OK, never a fallback "
+       "diff read", not okc3 and "unresolved" in detail3, detail3)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── MUST-FIX (F-3 relocated, fix cycle 2, AC-5): out-of-band arms (self_merge, out-of-gate
+# branch_merged, remote-PR-merged) only have a best-effort `merge_base(main, branch)`. When
+# that external merge was itself a bare fast-forward, merge_base COLLAPSES to merged_sha (or
+# fails to resolve -> ''); the OLD code then fell back to the tip's own single-commit diff and
+# could return a false PASS off an unrelated, already-green decoy commit while the block's REAL
+# (possibly broken) test never ran — the exact shape AC-5 forbids ("a block whose validation
+# signal is absent/failing does not flip passed"). Reproduces the independent reviewer's own
+# repro: commit1 = broken feature.py + feature_test.py (would fail if it ever ran); commit2
+# (tip) = unrelated, already-green other_test.py; ff-merged so base collapses to tip.
+def t_ac5c_out_of_band_collapsed_base_fails_closed():
+    d = _mkrepo()
+    _git(d, "checkout", "-q", "-b", "feat/A-05e")
+
+    # commit1: the feature + a BROKEN test — the real signal, never reached by the old code.
+    with open(os.path.join(d, "feature.py"), "w") as fh:
+        fh.write("def add(a, b):\n    return a + b\n")
+    with open(os.path.join(d, "feature_test.py"), "w") as fh:
+        fh.write("import sys\nsys.exit(1)\n")           # broken: would fail if actually run
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "commit1: add feature + a BROKEN feature_test.py")
+
+    # commit2 (tip): unrelated, already-green decoy — all the tip's own single-commit diff
+    # would ever see.
+    with open(os.path.join(d, "other_test.py"), "w") as fh:
+        fh.write("import sys\nsys.exit(0)\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "commit2: unrelated, already-green other_test.py")
+
+    _git(d, "checkout", "-q", "main")
+    _git(d, "merge", "-q", "--ff-only", "feat/A-05e")    # bare ff: main tip == branch tip
+    _, tip = _git(d, "rev-parse", "HEAD")
+
+    # Out-of-band arm's own best-effort `merge_base(main, branch)` would return `tip` itself
+    # here (a bare ff collapses branch and trunk onto the identical commit) — simulate that
+    # exact collapsed value, never a real range.
+    okc, detail = trunk.run_block_tests(d, tip, tip, False)
+    ok("MUST-FIX AC-5: out-of-band collapsed base (base==merged_sha) holds NOT-OK — "
+       "never a false PASS off the unrelated green decoy",
+       not okc and "unresolved" in detail, detail)
+
+    # Same for the unresolvable/empty-base shape (merge_base failing to resolve at all).
+    okc2, detail2 = trunk.run_block_tests(d, "", tip, False)
+    ok("MUST-FIX AC-5: empty/unresolvable base also holds NOT-OK (never a free pass)",
+       not okc2 and "unresolved" in detail2, detail2)
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -396,6 +446,7 @@ def main():
     t_ac4_clean_landing_passes()
     t_ac5_validation_signal_observed_not_reported()
     t_ac5b_multi_commit_range_discovers_earlier_test()
+    t_ac5c_out_of_band_collapsed_base_fails_closed()
     t_wire_drive_close_invariant_blocks_and_names_it()
     t_wire_drive_close_invariant_pass_through()
     t_wire_block_checked_runs_once()
