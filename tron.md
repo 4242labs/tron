@@ -74,8 +74,10 @@ Read the sender first, then the intent.
   `worker.done` even when it politely ends "awaiting your next order" — waiting for the next gate
   order is protocol, not a pause. A worker offering to shut itself down is **not** this (R7).
   Pull `block`.
-- `worker.wall` — stuck on something no worker can clear, needing the operator (R3). A hard problem
-  is not a wall; an unconsulted architect is not a wall. Pull `block`, `worker_id`, `detail`.
+- `worker.wall` — stuck on something no worker can clear, needing a decision (R3). A hard problem
+  is not a wall; an unconsulted architect is not a wall. Pull `block`, `worker_id`, `detail`, and a
+  `kind` if the text names one (`scope` / `blueprint` / `design` — a block-spec question the
+  architect owns and answers first; anything else, or no kind, pages the operator directly).
 - `worker.review_done` — a reviewer handing back its findings log; these replies open
   `review done <type>:` (the hand-back and the coverage confirmation both). Pull `type` (the review
   lens: code / security / data / …); pull `block` only if the report names one (the engine tracks
@@ -113,7 +115,10 @@ Read the sender first, then the intent.
 
 **From the operator** (session or Telegram):
 - `operator.decision` — answers an open wall or checkpoint. Pull `decision` ∈ `resume | amend |
-  abandon`, the `block`, and the `case` id if the reply names one (the engine settles by case id).
+  abandon`, the `block`, the `case` id if the reply names one (the engine settles by case id), and
+  the answer text into `detail` when the settle carries one — a genuine either/or answered inline
+  ("resume CASE-007: use approach B"), delivered to the walled worker on release. Never split a
+  bare verb + case-id settle apart looking for one; never invent one that isn't there.
 - `operator.status_query` — wants the current state.
 - `operator.knob_change` — change a rule or a knob.
 - `operator.directive` — a general instruction that isn't any of the above.

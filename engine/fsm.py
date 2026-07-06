@@ -93,6 +93,20 @@ TURN_CEILING_S = float(os.environ.get("TRON_TURN_TIMEOUT_S", "1800"))
 # actual format) since the operator types it by hand.
 CASE_ID_RE = re.compile(r"case-0*(\d+)", re.IGNORECASE)
 SETTLE_VERB_RE = re.compile(r"\b(approve|resume|abandon)\b", re.IGNORECASE)
+# T4 (01-24 F-2c): a settle that NEGATES its own verb ("don't approve CASE-7", "do not
+# resume CASE-7") must never resolve to the affirmative handler — the regex above is
+# blind to negation by design (D-15-3's whole point was zero model calls); this is the
+# fail-closed guard that catches the negated shape BEFORE it settles anything. Scoped to
+# a short window immediately before the verb (never a global scan) so an unrelated "not"
+# later in the sentence — "resume CASE-7, this is not urgent" — is never a false hit.
+NEGATION_RE = re.compile(r"\b(don'?t|do\s+not|won'?t|will\s+not|never|shouldn'?t|"
+                         r"should\s+not|refuse\s+to|not)\b", re.IGNORECASE)
+NEGATION_WINDOW = 24     # chars scanned immediately before the settle verb
+# T3 (01-24 F-2b): the SAME kind vocabulary _h_await already classifies checkpoints by
+# (rung b) — a wall whose declared kind names a block-spec question routes to the
+# architect (who owns the block spec) first; anything else (or no kind) pages the
+# operator directly, exactly as every wall has always done. One vocabulary, two readers.
+SPEC_OWNABLE_KINDS = ("scope", "blueprint", "design")
 # T4 (01-19, F1/F11/R2-5/R2-7): the ONE not-relayed wording, shared by every surface that
 # tells the operator their free text never reached a worker (the best_effort/edit_self side
 # arm, and the no-settle-match notice) — a single string so the two never drift apart.
@@ -101,6 +115,11 @@ SETTLE_VERB_RE = re.compile(r"\b(approve|resume|abandon)\b", re.IGNORECASE)
 # an architect relay, and await.proceed all reach a worker outside the gate ladder too).
 NOT_RELAYED_NOTE = ("not relayed — workers hear gate orders and settle-driven notices only; "
                     "use a settle (CASE-id + verb) or act directly")
+# T4 (01-24 F-2c): the negated-settle fail-closed reply — a single string, same law as
+# NOT_RELAYED_NOTE above (one wording, no drift between call sites).
+NEGATED_SETTLE_NOTE = ("settle read as negated (e.g. \"don't approve CASE-7\") — never "
+                       "guessed from prose; reply with the bare verb + case id only: "
+                       "'resume CASE-007' / 'approve CASE-007' / 'abandon CASE-007'")
 
 
 class Engine:
@@ -967,7 +986,7 @@ class Engine:
                        "detail": detail, "case": case_id})
             if self._tg_on():
                 self.emit("tg.escalate", {"worker_id": worker_id or "?", "detail": detail})
-        elif kind in ("scope", "blueprint", "design") or (self._architect() and kind != "trivial"):
+        elif kind in SPEC_OWNABLE_KINDS or (self._architect() and kind != "trivial"):
             self._triage_to_architect(f"await[{block or '?'}]: {detail}",     # rung (b)
                                       sender=worker_id, block=block)
         else:                                                               # rung (c)
@@ -1026,10 +1045,20 @@ class Engine:
         case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
         self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
                           tag="worker.wall", detail=detail)
-        self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
-                                    "detail": detail, "case": case_id})
-        if self._tg_on():
-            self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
+        # T3 (01-24 F-2b): route by the wall's DECLARED kind, never prose — a spec-ownable
+        # decision-wall (scope/blueprint/design) goes to the architect first (it owns the
+        # block spec); anything else pages the operator directly, exactly as before. The
+        # case itself is unchanged either way (still kind=='wall', still a settle away
+        # from release) — only the first-contact notification target differs.
+        kind = (m.get("kind") or "").lower()
+        if kind in SPEC_OWNABLE_KINDS:
+            self._triage_to_architect(f"wall[{block or '?'}]: {detail}",
+                                      sender=freed, block=block, case=case_id)
+        else:
+            self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
+                                        "detail": detail, "case": case_id})
+            if self._tg_on():
+                self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
         self._emit("pulse")
 
     def _h_apply_decision(self, m):
@@ -1194,10 +1223,20 @@ class Engine:
                     self.st.blocked.append(block)
         elif decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
+            # T3 (01-24 F-2a): a content-carrying settle — the operator's answer text (or
+            # an architect-relayed one — _relay_architect_answer mirrors this) reaches the
+            # walled worker on release, through the SAME worker-inbox delivery every
+            # settle-driven notice already uses (mirror of gate.changes, F3) — never a new
+            # channel. A bare "resume CASE-007" with no trailing text is a no-op here
+            # exactly like before (empty payload never sends anything).
+            payload = (m.get("detail") or "").strip()
             unheld = False
             for w in list(self.st.workers):                # T4: a wall-held worker un-holds on resume
                 if w.get("block") == block and w.get("status") == "walled":
                     unheld = True
+                    if payload and not self.dry:
+                        self._to_worker(w.get("id"), f"[TRON] Operator: {payload}",
+                                        "operator.answer")
                     # T2 (01-18): _unhold_worker now owns the held_verbs pop and returns the
                     # queue. T3 (01-19, F2): the replay itself now lives in the ONE shared
                     # helper both replay seams call (this resume arm AND the sweep's
@@ -1250,6 +1289,64 @@ class Engine:
         else:
             self._close_case(m.get("case"), case)
         self.log("flow", f"operator:decision:{block} -> {decision}")
+        self._emit("pulse")
+
+    def _h_retract(self, sender):
+        """T2 (01-24 F-1b): a walled sender's OWN retract auto-dismisses its still-undecided
+        wall — close the case, un-hold the worker, replay its queued verbs, through the
+        SAME close-case/unhold/replay path a settle drives (_unhold_and_replay) — never a
+        second teardown mechanism, before any operator page fires.
+
+        Sender-scoped ONLY (F-1's explicit exclusion): the case's worker_id must be the
+        retracting sender itself — a third-party wall (raised about a different worker, or
+        engine-raised) never auto-clears. Undecided ONLY: by the time an operator/architect
+        settle lands, _h_apply_decision has always already closed the case it acted on, so
+        'already settled' and 'no wall of mine is open' collapse to the same honest no-op
+        here — never a silent drop (D-15-3's law extended to this new verb).
+
+        F1 fix (01-24 review cycle 1): `worker.wall` is a DEFERRED trigger — `_ingest`
+        resolves it to `wall:raised:<block>` via `_emit`, which only QUEUES it into
+        `self._tq`; it is not acted on until end-of-tick `_drain_triggers` runs `_h_escalate`.
+        `worker.retract`, in contrast, is an IMMEDIATE side-handler — it runs the INSTANT the
+        message is ingested. So a same-tick "wall then retract" from the SAME sender (the
+        exact fat-finger F-1 exists to contain) would otherwise reach this point BEFORE the
+        wall's case exists and before the worker is even held: the pending_cases lookup below
+        finds nothing, reports a false "nothing to retract", and then the still-queued wall
+        trigger drains anyway at end-of-tick -> _h_escalate holds the worker and pages the
+        operator despite the sender's own same-tick retraction. Cancel the sender's own
+        still-queued wall trigger FIRST — pop it out of self._tq before it ever opens — so
+        _h_escalate never runs for it at all: no case, no hold, no page."""
+        sid = (sender or {}).get("id")
+        if sid:
+            for i, (trig, tslots) in enumerate(self._tq):
+                if trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid:
+                    self._tq.pop(i)
+                    self.events.event("retract", actor=sid, block=(tslots or {}).get("block"),
+                                      cid=None, detail="same-tick queued wall cancelled before it opened")
+                    self.log("flow", f"retract[{sid}] -> cancelled its own still-queued wall "
+                                     f"trigger before it ever opened (same-tick self-clear, "
+                                     f"F-1)")
+                    self._emit("pulse")
+                    return
+        w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
+        case_id, case = None, None
+        for cid, c in self.st.pending_cases.items():
+            if c.get("kind") == "wall" and c.get("worker_id") == sid and c.get("decision") is None:
+                case_id, case = cid, c
+                break
+        if not (case and w is not None and w.get("status") == "walled"):
+            self.log("flow", f"retract from {sid or '?'}: no undecided wall of its own to clear")
+            if sid and not self.dry:
+                self._to_worker(sid, "Nothing to retract — no undecided wall of yours is "
+                                     "open (already settled, or not yours).", "retract.noop")
+            return
+        block = case.get("block")
+        if block in self.st.blocked:
+            self.st.blocked.remove(block)
+        self._close_case(case_id, case)
+        self._unhold_and_replay(w, block, case)
+        self.events.event("retract", actor=sid, block=block, cid=case_id)
+        self.log("flow", f"retract[{sid}] -> wall {case_id} auto-dismissed, un-held, replayed")
         self._emit("pulse")
 
     def _resolve_case(self, case_id, block):
@@ -2397,18 +2494,23 @@ class Engine:
         self.st.architect_queue.append({"kind": "forward", "block": block})
         self._pump_architect()
 
-    def _triage_to_architect(self, detail, sender=None, block=None):
+    def _triage_to_architect(self, detail, sender=None, block=None, case=None):
         # Hand an unclassifiable input (or a peer question) to the architect to sort. It carries
         # the originating sender + block so the architect can answer-and-relay or escalate (T4/T10).
         # No architect online -> nobody can steer it but the operator, so escalate directly.
+        # `case` (01-24 T3/F-2b): set only when this triage IS a spec-ownable decision-wall
+        # (_h_escalate) — the correlation id _relay_architect_answer settles against once the
+        # architect answers, never read by the plain peer-question path.
         if any(j.get("kind") == "triage" and j.get("detail") == detail
                for j in self.st.architect_queue):
             return
         if not self._architect():
             self.emit("escalate.unclassified", {"detail": detail})
             return
-        self.st.architect_queue.append({"kind": "triage", "detail": detail,
-                                        "sender": sender, "block": block})
+        job = {"kind": "triage", "detail": detail, "sender": sender, "block": block}
+        if case:
+            job["case"] = case
+        self.st.architect_queue.append(job)
         self._pump_architect()
 
     def _pump_architect(self):
@@ -2868,6 +2970,11 @@ class Engine:
         "wall":        ("worker.wall", {}),
         "review-done": ("worker.review_done", {}),
         "clean":       ("worker.done", {"clean_confirm": True}),
+        # T2 (01-24 F-1b): the ONE new verb this block authorizes — a sender retracting
+        # its own still-undecided wall. No admission row (sender-scoped resolution,
+        # never a block/stage gate) and no block ref required — _h_retract resolves the
+        # sender's own live wall case by sender id alone.
+        "retract":     ("worker.retract", {}),
     }
 
     def _structured(self, msg):
@@ -3070,7 +3177,11 @@ class Engine:
         # abandon (the worker record itself goes with it, _force_release_block).
         sid = (sender or {}).get("id")
         hw = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
-        if hw is not None and hw.get("status") == "walled":
+        # T2 (01-24 F-1b): a sender's own `retract` must reach its handler even while
+        # walled — the hold below exists to PRESERVE other verbs until the wall resolves;
+        # retract IS the resolution, so queuing it here would strand it behind the very
+        # hold it lifts.
+        if hw is not None and hw.get("status") == "walled" and tag != "worker.retract":
             hw.setdefault("held_verbs", []).append({"tag": tag, "slots": slots})
             self.log("flow", f"{sid} is walled -> verb '{tag}' queued "
                              f"({len(hw['held_verbs'])} pending)")
@@ -3100,6 +3211,8 @@ class Engine:
             self.log("side", f"question_tron: {slots.get('detail', '')}")
         elif handler == "record_branch":
             self._record_branch(slots)
+        elif handler == "retract_own_wall":               # T2 (01-24 F-1b): sender-scoped auto-dismiss
+            self._h_retract(sender)
         elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
             self._triage_to_architect(slots.get("detail", "") or "(peer question)",
                                       sender=slots.get("worker_id"), block=slots.get("block"))
@@ -3127,13 +3240,47 @@ class Engine:
     def _relay_architect_answer(self, slots):
         """T10: the architect answered a triaged peer question — relay its reply to the original
         asker (the triage job carries the sender), then advance the architect's queue. Closes the
-        silent dead-end where a peer question was logged and never answered."""
+        silent dead-end where a peer question was logged and never answered.
+
+        T3 (01-24 F-2a/F-2b): when the triaged job carries a `case` (a spec-ownable
+        decision-wall _h_escalate routed here), the relayed answer text IS the
+        content-carrying settle — raise-and-RESOLVE, not raise-and-defer. Released
+        through the SAME close-case/unhold/replay seam every settle uses
+        (_unhold_and_replay) — never a second teardown mechanism, never a new case kind
+        (the case stays kind=='wall' throughout). Inert (plain relay, unchanged) when the
+        job carries no case, or the case already resolved by some other path.
+
+        F3 fix (01-24 review cycle 1): a case-carrying job whose case is no longer live
+        (e.g. the sender retracted its own wall — _h_retract — BEFORE the architect
+        answered) must not deliver a stale "[TRON] Architect: ..." to a worker that has
+        already moved on. Check case-liveness BEFORE the _to_worker send, not only before
+        the unhold/replay below — a plain peer relay (no `case` on the job at all) is
+        untouched, still always delivered."""
         arch = self._architect()
         cur = arch.get("current_job") if arch else None
         target = (cur or {}).get("sender") or slots.get("worker_id")
         answer = slots.get("detail", "")
-        if target and not self.dry:
+        case_id = (cur or {}).get("case")
+        case = self.st.pending_cases.get(case_id) if case_id else None
+        stale = case_id is not None and case is None
+        if target and not self.dry and not stale:
             self._to_worker(target, f"[TRON] Architect: {answer}", "architect.relay")
+        if case is not None and case.get("kind") == "wall" and case.get("decision") is None:
+            block = case.get("block")
+            if block in self.st.blocked:
+                self.st.blocked.remove(block)
+            self._close_case(case_id, case)
+            w = next((x for x in self.st.workers
+                      if x.get("id") == target and x.get("status") == "walled"), None)
+            if w is not None:
+                self._unhold_and_replay(w, block, case)
+            self.log("flow", f"architect-relayed settle: wall {case_id} released "
+                             f"({block or '?'}) with the relayed answer as payload")
+        elif stale:
+            self.log("flow", f"architect-relayed answer for case {case_id} suppressed: "
+                             f"the wall was already resolved by another path (e.g. a "
+                             f"same-sender retract) before the architect answered — no "
+                             f"stale relay")
         self.log("flow", f"relay architect answer -> {target or '?'}")
         self._architect_advance()
         self._emit("pulse")
@@ -3780,24 +3927,42 @@ class Engine:
         return {"text": text, "sender": {"kind": kind, "id": m.get("id")}}
 
     def _settle_regex(self, text):
-        """T3 (D-15-3): deterministic operator settle — a CASE-<n> id plus a settling verb
-        (approve|resume|abandon) anywhere in the text resolves to `operator.decision` slots
-        with zero model calls. Returns None (no match -> classify) when either half is
-        missing; `_h_apply_decision` resolves the case (and its block) by the id itself, so
-        no `block` slot is needed here.
+        """T3/T4 (D-15-3, 01-24 F-2a/F-2c): the ONE settle-verb resolution point — every
+        deterministic settle form parses HERE, once, so a new form is added in exactly one
+        place (the settle-side of the R-04 consolidation; the idle-ladder side is 01-26).
+        A CASE-<n> id plus a settling verb (approve|resume|abandon) anywhere in the text,
+        in either order, resolves to `operator.decision` slots with zero model calls.
 
-        WARNING (01-18 addendum doc rider): both halves match ANYWHERE in the text, in
-        either order, with no prose/negation awareness — this is a regex, not a reading of
-        intent. "don't approve CASE-7" contains both a CASE id and the verb `approve`, so it
-        SETTLES the case as approved; there is no deterministic way to tell a negation from
-        an instruction without a model call this path exists specifically to avoid. Operators
-        must reply with the bare verb + case id (`resume CASE-007`), never a sentence that
-        merely mentions one while meaning the opposite."""
+        Three outcomes:
+          None                no case id, or no verb — falls through to classify, unchanged.
+          {"negated": True}   the verb sits just after a negation word ("don't approve
+                               CASE-7", "do not resume CASE-7") — fail-closed: NEVER the
+                               affirmative handler; the caller re-prompts instead of
+                               guessing (F-2c). The negation scan is a short window
+                               immediately BEFORE the verb, never a global scan — "resume
+                               CASE-7, this is not urgent" still settles.
+          {"case", "decision", "detail"?}
+                               the ordinary settle; `detail` (F-2a) is a DELIBERATELY
+                               marked payload — text after a `:` or `-` separator
+                               immediately following the case-id/verb pair ("resume
+                               CASE-007: use approach B" -> "use approach B"). Anything
+                               trailing WITHOUT that separator ("approve CASE-12 please")
+                               is incidental prose, never mistaken for an answer — no
+                               `detail` key, the exact pre-01-24 shape. A bare
+                               "resume CASE-007" leaves nothing either."""
         m = CASE_ID_RE.search(text or "")
         v = SETTLE_VERB_RE.search(text or "")
         if not m or not v:
             return None
-        return {"case": f"CASE-{int(m.group(1)):03d}", "decision": v.group(1).lower()}
+        window_start = max(0, v.start() - NEGATION_WINDOW)
+        if NEGATION_RE.search((text or "")[window_start:v.start()]):
+            return {"negated": True}
+        tail = (text or "")[max(m.end(), v.end()):].lstrip()
+        payload = tail[1:].strip(" \t\n\r-—,;.") if tail[:1] in (":", "-") else ""
+        out = {"case": f"CASE-{int(m.group(1)):03d}", "decision": v.group(1).lower()}
+        if payload:
+            out["detail"] = payload
+        return out
 
     def _classify(self, msg):
         # A-2 (tron-13 D2): a structured report resolves deterministically — the model is
@@ -3833,6 +3998,14 @@ class Engine:
         # both hit). No match falls through to classify exactly as today.
         if sender.get("kind") == "operator":
             settled = self._settle_regex(raw)
+            if settled and settled.get("negated"):
+                # T4 (01-24 F-2c): fail-closed — never pick the affirmative handler for a
+                # negated settle; re-prompt with the exact accepted forms instead of
+                # silently dropping (a settle-shaped line is never a plain unclassified).
+                self.log("flow", f"negated settle from operator -> re-prompt: {raw[:120]}")
+                self.events.unclassified(raw, "negated settle (fail-closed)", sender=sender)
+                self.emit("escalate.unclassified", {"detail": NEGATED_SETTLE_NOTE})
+                return "drop", {}
             if settled:
                 return "operator.decision", {**settled, **data_slots}
         payload = {"text": raw, "sender": sender}

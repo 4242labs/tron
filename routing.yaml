@@ -42,6 +42,7 @@ tags:
   worker.review_done:       { trigger: "review:<type>:done" }
   worker.await_confirm:     { trigger: "worker:await:<block>" }   # pause mid-block for go-ahead; ALWAYS reaches the operator (D7/R-AWAIT)
   worker.branch:            { side: record_branch }   # the worker reports the branch it NAMED (it owns the name; TRON never guesses — 01-05 T2)
+  worker.retract:           { side: retract_own_wall }   # 01-24 T2: a sender retracting its OWN still-undecided wall — auto-dismiss, zero operator page; a third-party or already-settled wall is an honest no-op
   worker.progress:          { side: none }
   worker.question_peer:     { side: triage_peer }       # peer/design question -> the architect sorts it (answer-and-relay or escalate); never a silent dead-end (01-08 T10)
   worker.question_tron:     { side: answer_from_context }
