@@ -8,12 +8,23 @@
 # Structured channel (A-2, tron-13): a gate-ladder reply carries its verb as data —
 # the engine resolves it deterministically, no judgment call; free text still
 # classifies as before:
-#   report.sh "<worker-id>" --tag <done|recorded|wall|branch|review-done|clean> \
+#   report.sh "<worker-id>" --tag <done|recorded|wall|branch|review-done|clean|retract> \
 #             [--block <id>] [--branch <name>] [--type <reviewer-type>] "<message>"
+#
+# T1 (01-24 F-1a): flags come BEFORE the message, never after — a trailing `--tag wall`
+# on what was meant as a plain positional message (typically a branch declaration) is
+# the exact fat-finger that opens a false wall, so it is a HARD ERROR here, never
+# silently swallowed into the message text. The canonical branch declaration needs no
+# `--tag` at all: `report.sh "<worker-id>" --branch <name> "<message>"`.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INBOX="$TRON_DIR/worker-inbox.jsonl"
+
+usage() {
+  echo "usage: report.sh <worker-id> [--tag <done|recorded|wall|branch|review-done|clean|retract>] [--block <id>] [--branch <name>] [--type <reviewer-type>] \"<message>\"" >&2
+  echo "flags must come BEFORE the message, never after." >&2
+}
 
 WID="${1:-unknown}"
 shift || true
@@ -25,6 +36,19 @@ while [ $# -gt 1 ]; do
     --branch) BRANCH="$2"; shift 2 ;;
     --type)   RTYPE="$2";  shift 2 ;;
     *) break ;;
+  esac
+done
+# T1 (01-24 F-1a): once the flag prefix ends, NOTHING left may look like a flag — a
+# stray `--tag wall` (or any other recognized flag) appearing after the message has
+# started reads identically to a real one to anything downstream. Reject it here,
+# at the worker, before it ever becomes free text the engine has to guess at.
+for arg in "$@"; do
+  case "$arg" in
+    --tag|--block|--branch|--type)
+      echo "report: flag '$arg' appears AFTER the message started — flags-after-message is not allowed." >&2
+      usage
+      exit 2
+      ;;
   esac
 done
 MSG="$*"

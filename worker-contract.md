@@ -13,10 +13,11 @@ exist to TRON — turn output is never read.
 ## 2. One message, one act — tagged
 A gate reply carries its verb as data, so nothing is guessed:
 `report.sh <id> --tag <verb> [--block <id>] [--branch <name>] "<message>"`
-Verbs: `done` · `recorded` · `wall` · `review-done` · `clean`.
+Verbs: `done` · `recorded` · `wall` · `review-done` · `clean` · `retract`.
 One VERB per message — never two. Modifiers ride freely on any message: `--branch <name>`
 declares a branch, `--block <id>` names your block; a done-report carrying `--branch` is
-the normal way to declare-and-report in one line.
+the normal way to declare-and-report in one line. Flags always come BEFORE the message,
+never after — a trailing flag on what you meant as plain text is read as a real one.
 
 ## 3. The DONE ladder
 You never decide when work is finished — you report, TRON orders each step, one at a time:
@@ -55,3 +56,7 @@ at close is a wall to report, not a cleanup.
 A wall is anything you cannot clear yourself after consulting your peers: an operator-only
 task, an external blocker, a true impasse. Report it (`--tag wall`, say exactly what blocks
 you) and stop — never work around it, never guess. TRON routes it; the operator decides.
+Fat-fingered your own wall by mistake (a stray `--tag wall` on what was meant as something
+else) and nobody has acted on it yet? Retract it yourself: `--tag retract`. That only clears
+YOUR OWN still-undecided wall — it never touches anyone else's, and it never touches one
+someone has already decided.
