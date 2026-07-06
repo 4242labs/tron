@@ -1,37 +1,53 @@
 #!/usr/bin/env bash
-# Canon trunk-root guard (pre-push) — backstop for the pre-commit guard.
-# Refuses a push that would land a commit on a protected branch without it having gone
-# through another branch (a merge) — i.e. a commit reachable from no other ref, the lens-meta
-# definition of a direct-to-trunk commit. A proper feature-branch merge passes; a deletion passes.
-# Args: $1 remote name, $2 remote url. Stdin: <local ref> <local sha> <remote ref> <remote sha>.
+# Pre-push — block pushes to the integration branch containing commits not
+# reachable from any other ref (local or remote). Direct-on-integration commits
+# leave no other-branch trail; FF-merged commits remain reachable from the
+# (still-present, local or remote) feature branch.
+#
+# Per principles-base.md §14 (Integration branch marker). Reads .repo-class at
+# repo root; reads .integration-branch (default: main) for the protected branch.
+
 set -euo pipefail
 
-PROTECTED="${TRON_PROTECTED_BRANCHES:-main staging}"
-ZERO="0000000000000000000000000000000000000000"
+repo_root="$(git rev-parse --show-toplevel)"
+class_file="${repo_root}/.repo-class"
+[ -f "$class_file" ] || exit 0
+class="$(tr -d '[:space:]' < "$class_file")"
 
-while read -r _local_ref local_sha remote_ref remote_sha; do
-  for pat in $PROTECTED; do
-    case "$remote_ref" in
-      refs/heads/$pat) ;;
-      *) continue ;;
-    esac
-    [ "$local_sha" = "$ZERO" ] && continue          # branch deletion — allowed
-    target="${remote_ref#refs/heads/}"
-    if [ "$remote_sha" = "$ZERO" ]; then
-      range="$local_sha"                            # new protected branch — inspect all of it
-    else
-      range="$remote_sha..$local_sha"
+case "$class" in
+  canon|meta|app) ;;
+  *) exit 0 ;;
+esac
+
+integ_branch="main"
+if [ -f "${repo_root}/.integration-branch" ]; then
+  integ_branch="$(tr -d '[:space:]' < "${repo_root}/.integration-branch")"
+fi
+
+zero="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/${integ_branch}" ] || continue
+  [ "$local_sha" = "$zero" ] && continue   # branch deletion
+
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha"
+  else
+    range="${remote_sha}..${local_sha}"
+  fi
+
+  for c in $(git rev-list "$range"); do
+    others="$(git for-each-ref --contains "$c" refs/heads/ refs/remotes/ --format='%(refname:short)' \
+      | grep -vE "^(${integ_branch}|origin/${integ_branch})$" || true)"
+    if [ -z "$others" ]; then
+      echo "" >&2
+      echo "✘ pre-push blocked — commit $c is on ${integ_branch} but reachable from no other ref." >&2
+      echo "  Likely a direct-to-${integ_branch} commit, or the source branch was deleted before pushing ${integ_branch}." >&2
+      echo "  Fix: push the feature branch first (or restore it), then push ${integ_branch}." >&2
+      echo "" >&2
+      exit 1
     fi
-    # Merge commits are how reviewed work lands on trunk — allow them (--no-merges skips them).
-    # A NON-merge commit on trunk that no other branch contains was authored directly on trunk.
-    for c in $(git rev-list --no-merges "$range" 2>/dev/null || true); do
-      others="$(git branch --contains "$c" 2>/dev/null | sed 's/^[* ]*//' | grep -vx "$target" || true)"
-      if [ -z "$others" ]; then
-        echo "✗ trunk-root guard: refusing direct push to '$target'." >&2
-        echo "  Commit ${c:0:9} was authored on trunk, not merged from a branch. Use a PR instead." >&2
-        exit 1
-      fi
-    done
   done
 done
+
 exit 0

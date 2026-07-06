@@ -78,8 +78,8 @@ three things, all git-tracked and written by your agents via PR:
 - **A pipeline.** A living `pipeline.md` that orders the blocks into phases and tracks each one's status —
   fixed enough to read deterministically, loose enough to stay human-authored.
 
-The 42labs `new-project-template` ships this structure ready-made — adopt it for a new project, or bring
-an existing one up to it before seeding.
+The 42labs project scaffold (`templates/project-scaffold/`, in this repo) ships this structure ready-made —
+adopt it for a new project, or bring an existing one up to it before seeding.
 
 ---
 
