@@ -287,7 +287,7 @@ architect).
 ## 7. Canon pipeline format (what TRON reads)
 
 TRON owns no pipeline. It **reads** the project's git-tracked canon — the format the
-`new-project-template` defines — and parses it deterministically (no LLM):
+project scaffold (`templates/project-scaffold/`) defines — and parses it deterministically (no LLM):
 
 - **Living doc** (`pipeline.md`): `## ` sections (Roadmap, Technical Debt, Ad-hoc Blocks, Backlog),
   `### Phase N: <Title>` headers, and `ID | Task | Status | Notes` tables. The Status cell is **exactly

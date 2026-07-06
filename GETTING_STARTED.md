@@ -53,7 +53,7 @@ tron/
 ```
 
 TRON ships no agents and no pipeline of its own: it reads the project's `agents/*.md` and its git-tracked
-canon pipeline (`pipeline.md` + `blocks/`), which the `new-project-template` defines.
+canon pipeline (`pipeline.md` + `blocks/`), which the project scaffold (`templates/project-scaffold/`) defines.
 
 ## File layout — your project (after `tron seeder`)
 
