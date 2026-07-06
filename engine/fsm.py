@@ -3442,18 +3442,23 @@ class Engine:
         wid = self._worker_id(role, ref)
         rec = jobs.find(wid, idx)
         if rec is not None:
-            if jobs.is_alive(wid, idx) and rec.get("turns", 0) >= 1:
-                hold["active"] = False
-                hold["deaths"] = []
-                hold.pop("canary", None)
-                hold.pop("canary_role", None)
-                hold.pop("canary_probed_at", None)
-                self.log("flow", f"fleet refusal-hold cleared: canary {wid} turned "
-                                 f"healthy -> resume dispatch")
-                self._emit("pulse")
-            elif not jobs.is_alive(wid, idx):
-                hold.pop("canary_probed_at", None)   # the canary died too -> re-probe next cadence
-            return
+            if jobs.is_alive(wid, idx):
+                if rec.get("turns", 0) >= 1:
+                    hold["active"] = False
+                    hold["deaths"] = []
+                    hold.pop("canary", None)
+                    hold.pop("canary_role", None)
+                    hold.pop("canary_probed_at", None)
+                    self.log("flow", f"fleet refusal-hold cleared: canary {wid} turned "
+                                     f"healthy -> resume dispatch")
+                    self._emit("pulse")
+                return
+            # rec is present but the canary is dead (a stale-dead record, or a canary that
+            # ran a turn and then died) -> a spent probe, treated identically to no record
+            # at all: fall through to the shared paced re-probe below. canary_probed_at is
+            # deliberately NOT popped here -- it is the spawn-burn brake (gate_nudge_after
+            # pacing); popping it would re-arm an immediate un-paced re-spawn into a
+            # possibly-still-dead runtime.
         now = self._now_s()
         last = hold.get("canary_probed_at")
         if last is None or now - last >= self._pace("gate_nudge_after", 2):

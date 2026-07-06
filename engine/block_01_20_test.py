@@ -595,18 +595,32 @@ def t3b_fleet_hold_engages_probes_canary_resumes_never_walls():
         ok("T3b tick2: the dead worker's slot was released off the roster",
            not eng.st.workers, f"workers={eng.st.workers}")
 
-        # Tick 3: the hold probes with exactly ONE canary re-spawn, paced like an idle
-        # re-nudge, via the EXISTING _redispatch primitive (never a new spawn mechanism).
-        world["dead"] = {}
-        world["canary_wid"] = eng._worker_id("engineer", hold["canary"])
-        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
-        eng._sweep()
-        ok("T3b tick3: the hold probes with exactly one canary re-spawn",
+        # Tick 2->3 (block 01-23 adaptation): the canary's OWN job record ("ENG-A-02") is
+        # itself present-and-dead at the exact instant of election above (the fleet-wide
+        # fault path this block fixes) -- the corrected sweep no longer deadlocks on a
+        # present-dead record (the old bug: it returned without ever probing); it falls
+        # through to the SAME paced re-dispatch an absent record takes, and since this is
+        # the canary's first-ever probe (canary_probed_at unset) it fires immediately,
+        # unpaced -- identical to the existing no-record-yet rule.
+        ok("T3b tick2 (01-23): a present-dead canary record fires its first-ever probe "
+           "immediately instead of deadlocking forever",
            redispatched == [hold["canary"]], f"redispatched={redispatched}")
 
-        # Tick 4: the canary's first healthy turn resumes fleet dispatch.
-        world["canary_healthy"] = True
+        # Tick 3: the runtime is STILL down (the canary's record stays present-dead,
+        # never cleared) -- a further sweep well inside the same gate_nudge_after span
+        # must NOT spawn a second canary (paced, not per-sweep, into a possibly-still-dead
+        # runtime; canary_probed_at is preserved, never popped, across the dead case).
         clock["t"] += 1
+        eng._sweep()
+        ok("T3b tick3: the re-probe is paced -- a sweep inside gate_nudge_after does not "
+           "spawn a second canary",
+           redispatched == [hold["canary"]], f"redispatched={redispatched}")
+
+        # Tick 4: the runtime recovers -- the canary's first healthy turn resumes fleet
+        # dispatch.
+        world["canary_wid"] = eng._worker_id("engineer", hold["canary"])
+        world["canary_healthy"] = True
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
         eng._sweep()
         hold2 = eng.st.data.get("refusal_hold", {})
         ok("T3b tick4: the first healthy canary turn resumes fleet dispatch",
@@ -704,6 +718,184 @@ def t3b_redispatch_honors_bypass_gate_on_a_gated_block():
     ok("T3b(MAJOR-2) bypass_gate=True reaches the re-spawn on the gated block (the canary "
        "can re-prove the runtime for a held block that gated)",
        spawned == [eng._worker_id("engineer", "A-01")], f"spawned={spawned}")
+
+
+# ══ block 01-23: the fleet-refusal-hold self-releases after a fleet-wide outage ══
+# (the T3b canary probe used to deadlock forever when the elected canary's OWN job
+# record was present-but-dead, rather than absent — a fleet-wide outage leaves exactly
+# that shape, tron-33/34. _sweep_fleet_refusal_canary must fall through to the SAME
+# paced re-dispatch an absent record takes, preserving canary_probed_at so the re-probe
+# stays paced at ~one per gate_nudge_after, never an every-sweep spawn-burn.)
+
+def t3b_dead_record_canary_reprobes_on_cadence():
+    """AC-1: a present-but-dead canary job record (rec is not None, not alive, turns=0)
+    must fall through to the SAME paced re-dispatch an absent record takes, once the
+    gate_nudge_after cadence has elapsed since the last probe — never the unconditional
+    return the bug used to take (the permanent-deadlock fault path, tron-33/34)."""
+    eng = _eng()
+    clock = {"t": 10000.0}
+    eng._now_s = lambda: clock["t"]
+    redispatch = []
+    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    orig = (jobs.find, jobs.is_alive)
+    dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 0}
+    jobs.find = lambda wid, idx=None: dead_rec
+    jobs.is_alive = lambda wid, idx=None: False
+    try:
+        hold = eng._fleet_refusal_hold()
+        hold.update({"active": True, "canary": "A-01", "canary_role": "engineer",
+                     "canary_probed_at": clock["t"] - 1})   # a prior probe already happened
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1   # the cadence elapses
+        eng._sweep_fleet_refusal_canary({})
+        ok("T3b(AC-1) a present-dead canary record falls through to the paced re-dispatch "
+           "instead of returning without re-probing",
+           redispatch == [("A-01", True)], f"rd={redispatch}")
+        ok("T3b(AC-1) the hold stays active while re-probing (never falsely cleared)",
+           hold.get("active") is True, f"hold={hold}")
+    finally:
+        jobs.find, jobs.is_alive = orig
+
+
+def t3b_dead_record_canary_reprobe_is_paced():
+    """AC-2: canary_probed_at is PRESERVED across the dead-record case (never popped), so
+    a sweep inside one gate_nudge_after span of the last probe does not fire a second
+    canary spawn — the existing spawn-burn brake, unmodified, still applies to the
+    dead-record fall-through."""
+    eng = _eng()
+    clock = {"t": 11000.0}
+    eng._now_s = lambda: clock["t"]
+    redispatch = []
+    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    orig = (jobs.find, jobs.is_alive)
+    dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 0}
+    jobs.find = lambda wid, idx=None: dead_rec
+    jobs.is_alive = lambda wid, idx=None: False
+    try:
+        hold = eng._fleet_refusal_hold()
+        hold.update({"active": True, "canary": "A-01", "canary_role": "engineer",
+                     "canary_probed_at": clock["t"]})   # a probe just happened this instant
+        clock["t"] += 1   # well inside gate_nudge_after
+        eng._sweep_fleet_refusal_canary({})
+        ok("T3b(AC-2) a sweep inside one gate_nudge_after span of the last probe does not "
+           "spawn a second canary (paced, not per-sweep, into a possibly-still-dead runtime)",
+           redispatch == [], f"rd={redispatch}")
+        ok("T3b(AC-2) canary_probed_at was preserved across the dead-record case, not popped",
+           hold.get("canary_probed_at") is not None, f"hold={hold}")
+    finally:
+        jobs.find, jobs.is_alive = orig
+
+
+def t3b_fleet_wide_death_then_recovery_autoreleases_hold():
+    """AC-3 end-to-end: two real fleet-wide refusal deaths engage the hold and elect a
+    canary (the existing, unchanged 01-20 engage path); the runtime is STILL down so the
+    elected canary's OWN job record stays present-and-dead across repeated sweeps (the
+    exact tron-33/34 fault path) instead of deadlocking. Once the runtime recovers, the
+    next paced re-probe's canary completes a healthy turn and the hold self-releases
+    end-to-end — active False, canary keys popped, pulse emitted — with zero operator
+    lever."""
+    ctx, _ = build(blocks=[("A-01", "🔄", "none"), ("A-02", "🔄", "none")])
+    eng = Engine(ctx); started(eng)
+    eng.dry = False
+    clock = {"t": 13000.0}
+    eng._now_s = lambda: clock["t"]
+
+    world = {"dead": set(), "canary_wid": None, "canary_healthy": False}
+
+    def _index():
+        out = {}
+        for wid in world["dead"]:
+            out[wid] = {"state": "error", "dir": f"/fake/{wid}", "pid": None, "turns": 0}
+        if world["canary_wid"] and world["canary_healthy"]:
+            out[world["canary_wid"]] = {"state": "idle", "dir": "/fake/canary",
+                                        "pid": 999, "turns": 1}
+        return out
+
+    def _find(wid, idx=None):
+        return (idx if idx is not None else _index()).get(wid)
+
+    def _alive(wid, idx=None):
+        rec = (idx if idx is not None else _index()).get(wid)
+        return bool(rec) and rec.get("state") != "error"
+
+    def _kind(wdir):
+        for wid in world["dead"]:
+            if wdir == f"/fake/{wid}":
+                return "RunnerRefusal"
+        return ""
+
+    orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
+    jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
+    redispatched = []
+    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
+    try:
+        # ticks 1-2: fleet-wide refusal deaths engage the hold; A-02 is elected canary.
+        eng.st.workers[:] = [{"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                             "session_id": "real-1", "status": "working"}]
+        world["dead"] = {"ENG-A-01"}
+        eng._sweep()
+        eng.st.workers[:] = [{"id": "ENG-A-02", "role": "engineer", "block": "A-02",
+                             "session_id": "real-2", "status": "working"}]
+        world["dead"] = {"ENG-A-02"}
+        eng._sweep()
+        hold = eng.st.data.get("refusal_hold", {})
+        ok("T3b(AC-3) setup: the hold engaged with A-02 elected as canary",
+           hold.get("active") is True and hold.get("canary") == "A-02", f"hold={hold}")
+
+        # the canary's own job record stays a PRESENT dead record across further sweeps
+        # (the fault this block fixes) instead of vanishing -- the runtime is still down.
+        n_after_election = len(redispatched)
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._sweep()
+        ok("T3b(AC-3) a present-dead canary re-probes instead of deadlocking forever -- "
+           "the hold stays active",
+           eng.st.data.get("refusal_hold", {}).get("active") is True
+           and len(redispatched) > n_after_election,
+           f"hold={eng.st.data.get('refusal_hold')} redispatched={redispatched}")
+
+        # the runtime recovers: the NEXT paced re-probe's canary completes a healthy turn.
+        world["canary_wid"] = eng._worker_id("engineer", "A-02")
+        world["canary_healthy"] = True
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._tq = []
+        eng._sweep()
+        hold2 = eng.st.data.get("refusal_hold", {})
+        ok("T3b(AC-3) end-to-end: fleet-wide death -> canary death -> recovery -> healthy "
+           "canary turn self-releases the hold with zero operator lever",
+           hold2.get("active") is False and "canary" not in hold2
+           and "canary_role" not in hold2 and "canary_probed_at" not in hold2,
+           f"hold={hold2}")
+        ok("T3b(AC-3) a pulse is emitted on release",
+           any(t == "pulse" for t, _ in eng._tq), f"tq={eng._tq}")
+    finally:
+        jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = orig
+
+
+def t3b_ran_then_died_canary_does_not_release():
+    """AC-4: a canary that completed a turn and then died (present record, turns>=1, not
+    alive) must NOT falsely clear the hold — the release condition stays gated on BOTH
+    is_alive AND turns>=1, so it falls to re-probe exactly like a never-turned dead
+    canary, never a false release."""
+    eng = _eng()
+    clock = {"t": 12000.0}
+    eng._now_s = lambda: clock["t"]
+    redispatch = []
+    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    orig = (jobs.find, jobs.is_alive)
+    dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 3}
+    jobs.find = lambda wid, idx=None: dead_rec
+    jobs.is_alive = lambda wid, idx=None: False
+    try:
+        hold = eng._fleet_refusal_hold()
+        hold.update({"active": True, "canary": "A-01", "canary_role": "engineer",
+                     "canary_probed_at": clock["t"] - 1})
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._sweep_fleet_refusal_canary({})
+        ok("T3b(AC-4) a canary that ran a turn and then died does not falsely clear the hold",
+           hold.get("active") is True, f"hold={hold}")
+        ok("T3b(AC-4) it falls to re-probe instead, identically to a never-turned dead canary",
+           redispatch == [("A-01", True)], f"rd={redispatch}")
+    finally:
+        jobs.find, jobs.is_alive = orig
 
 
 # ══ T4: settling an architect-kind case acts (idempotent against T1/T5) ══
