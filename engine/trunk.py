@@ -18,8 +18,10 @@ import json
 import shutil
 import subprocess
 import tarfile
+import tempfile
 
 _TIMEOUT = 20
+_TEST_TIMEOUT = 300     # T2 (01-28): a real declared suite gets real headroom, unlike plumbing calls
 
 
 def _run(args, cwd=None, timeout=_TIMEOUT):
@@ -548,60 +550,143 @@ def merge_base(repo_root, ref_a, ref_b, dry=False):
     return out.strip() if rc == 0 else ""
 
 
-def run_block_tests(repo_root, base, merged_sha, dry=False):
-    """T2 (01-25, R-03b) + review fix (F-3 reopened): the engine's OWN observed signal at the
-    trunk-stage trust point — the worker's report is a claim, this runs it. Discovers the
-    block's own test files over the FULL `base..merged_sha` range, never merged_sha's own
-    single-commit diff alone: under `merge_ff_only` a multi-commit branch lands as a literal
-    fast-forward, so merged_sha's OWN diff (`git show` against its immediate parent) is only
-    its LAST commit — an earlier commit in the same landed range that added the block's real
-    feature + test file went unseen, and a trivially-green trailing commit's own diff made the
-    signal flip GREEN having never run the feature's test (the exact F-3 shape this block
-    exists to close). `base` must be captured by the CALLER at merge time (trunk before the
-    ff) — recomputing `merge-base(main, branch)` here, after the fact, cannot recover it: a
-    fast-forward collapses branch and trunk onto the identical commit, so that merge-base
-    would just return merged_sha back (a self-ancestor), the same one-commit blind spot this
-    fixes.
+def validate_trunk(repo_root, merged_sha, test_command, test_env=None,
+                    ci_check_name=None, dry=False):
+    """Block 01-28 (T1-T4): the trunk-stage TRUSTED-VERDICT model, replacing the old
+    post-merge test RE-RUN seam (`run_block_tests`, retired — F-3/wave-1's false-wall
+    source: it computed an empty `base..merged_sha` range on a fast-forward landing,
+    base==merged_sha, and only ever discovered `*_test.py`, so any non-Python project
+    could never validate). Per ADR §A (post-wave-1 enhancements): trust the RUNNER, not
+    the worker; a worker's own run is dev feedback only, never a gate.
 
-    Reviewer fix (F-3 relocated, AC-5): base=='' or base==merged_sha means the range is
-    UNKNOWN, not narrow — on the out-of-band arms (self_merge, out-of-gate branch_merged,
-    remote-PR-merged) the caller's own best-effort `merge_base(main, branch)` collapses to
-    merged_sha (or fails to resolve) exactly when that external merge was itself a bare
-    fast-forward. Falling back to merged_sha's single-commit diff there silently re-opens the
-    same blind spot this function exists to close: an unrelated already-green trailing commit
-    reads as the whole block's signal while the real (possibly broken) test never runs. There
-    is no pre-image to reconstruct here — the out-of-band arms genuinely cannot recover it —
-    so this fails CLOSED instead: NOT-OK, holding the gate at trunk (the existing
-    repeat-report escalation backstop handles a persistent hold), mirroring AC-5's "absent
-    signal never flips passed." The PRIMARY engine ff arm is unaffected: its base is a real
-    pre-merge sha (trunk's HEAD read before the ff), never equal to merged_sha for a landed
-    block, and a genuine 1-commit block still has base == the parent commit, not merged_sha.
+    Returns (status, detail) with status one of:
+      "pass"        — a genuinely observed green signal (CI's, or the engine's own run).
+      "fail"        — a genuinely observed RED signal — holds the gate, no routing (T3:
+                      a real failure is not the same thing as "can't confirm").
+      "unconfirmed" — nothing trustworthy could be read at all (no merged sha, no
+                      test.command declared, an unresolvable/uncheckoutable commit, a
+                      launch failure, a timeout, or — CI mode — no commit-exact/completed/
+                      correctly-named check-run). T3: HOLDS and routes to the architect
+                      first, never a wall/failure page, never a false pass either.
 
-    Executes each discovered test file directly — never the worker's worktree, never a
-    say-so. No test file found in the range is a FAIL, same as a failing run: a validated
-    block always ran something observable. Returns (ok, detail)."""
+    No `base`/range of any kind is used anywhere in this function — T1's fix for the
+    ff-collapse defect is structural, not a patched recompute: the old design needed a
+    pre-image to diff over merely to DISCOVER which files were tests; this design runs
+    the ONE declared command against the merged commit's full tree, so there is no range
+    left to collapse. (The dead `g["merge_base"]` bookkeeping this fed — including the
+    post-hoc `merge_base(main, branch)` recompute that returned the merged sha itself on
+    an out-of-band fast-forward, fsm.py's old branch_merged/self_merge arms — is removed
+    at the call site, not patched.)
+
+    Mode selection: `ci_check_name` present -> read CI's verdict for `merged_sha`
+    (T4), no engine re-run. Otherwise -> run `test_command` once, in a clean checkout
+    (T2). Neither `test_command` nor `ci_check_name` declared -> unconfirmed (never a
+    silent free pass, never a wall)."""
     if dry:
-        return True, "dry"
+        return "pass", "dry"
     if not repo_root or not merged_sha:
-        return False, "no merged sha to validate"
-    if not base or base == merged_sha:
-        return False, ("validation range unresolved (base collapsed) — cannot verify tests ran "
-                        f"({str(merged_sha)[:7]})")
-    rc, out, _ = _run(["git", "-C", repo_root, "diff", "--name-only", f"{base}..{merged_sha}"])
-    span = f"{str(base)[:7]}..{str(merged_sha)[:7]}"
+        return "unconfirmed", "no merged sha to validate — cannot confirm"
+    if ci_check_name:
+        return ci_verdict(repo_root, merged_sha, ci_check_name, dry)
+    if not test_command:
+        return ("unconfirmed", "no test.command declared (project.yaml `test:`) — "
+                "cannot confirm what to validate")
+    return _run_declared_command(repo_root, merged_sha, test_command, test_env)
+
+
+def _run_declared_command(repo_root, sha, command, env=None):
+    """T2: the single authoritative run — `command` executed ONCE, in a clean, detached
+    `git worktree` at `sha` that the worker never controls (never the worker's own
+    worktree, never a say-so). `env` (project.yaml `test.env`, a flat {str: str} dict) is
+    LAYERED onto the clean checkout's inherited shell environment, never replacing it —
+    the representation this block settled on over a schema-only field: the command still
+    needs the ordinary shell/PATH/HOME to run at all, `test.env` only overrides specific
+    keys on top (e.g. NODE_ENV). Any failure to even materialize/launch the check (bad
+    sha, worktree add failure, launch OSError, timeout) is UNCONFIRMED, never a red — an
+    engine/environment fault must never wear the block's clothes as a genuine test
+    failure. Only a real, completed, non-zero exit is "fail". Returns (status, detail)."""
+    rc, _, _ = _run(["git", "-C", repo_root, "cat-file", "-e", str(sha)])
     if rc != 0:
-        return False, f"{span}: diff unreadable"
-    tests = sorted({f.strip() for f in out.splitlines() if f.strip().endswith("_test.py")})
-    if not tests:
-        return False, f"no test file in the merged range ({span})"
-    for f in tests:
-        path = os.path.join(repo_root, f)
-        if not os.path.exists(path):
-            return False, f"{f}: missing on trunk"
-        rc, _, err = _run(["python3", path], cwd=repo_root, timeout=120)
+        return "unconfirmed", f"{str(sha)[:7]}: unresolvable in this checkout — cannot confirm"
+    tmp = tempfile.mkdtemp(prefix="tron-trunkval-")
+    try:
+        rc, _, err = _run(["git", "-C", repo_root, "worktree", "add", "--detach", "-q",
+                           tmp, str(sha)], timeout=60)
         if rc != 0:
-            return False, f"{f}: failed ({err.strip()[:150]})"
-    return True, f"{len(tests)} test file(s) green ({span})"
+            return "unconfirmed", f"clean checkout of {str(sha)[:7]} failed: {err.strip()[:200]}"
+        run_env = os.environ.copy()
+        run_env.update({str(k): str(v) for k, v in (env or {}).items()})
+        try:
+            r = subprocess.run(command, shell=True, cwd=tmp, env=run_env,
+                               capture_output=True, text=True, timeout=_TEST_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return ("unconfirmed",
+                    f"test.command timed out after {_TEST_TIMEOUT}s @ {str(sha)[:7]} — cannot confirm")
+        except OSError as e:
+            return "unconfirmed", f"test.command failed to launch: {type(e).__name__}: {e}"
+        if r.returncode == 0:
+            return "pass", f"test.command green @ {str(sha)[:7]}"
+        tail = (r.stderr or r.stdout or "").strip()[-300:]
+        return "fail", f"test.command exit {r.returncode} @ {str(sha)[:7]}: {tail}"
+    finally:
+        # Always tear down — never leave the trust-point's own checkout as residue for the
+        # session-end worktree sweep (trunk.list_worktrees) to have to name.
+        _run(["git", "-C", repo_root, "worktree", "remove", "--force", tmp], timeout=30)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def ci_check_runs(repo_root, sha, dry=False):
+    """Best-effort raw read of every GH check-run recorded against `sha` (any commit, not
+    just a PR head — this is the POST-merge trunk commit, no open PR to key off). `[]` on
+    any failure (gh absent, no network, bad json) or dry — never raises, and callers must
+    treat `[]` as unknown, never a free pass. Each item carries at least `name`,
+    `head_sha`, `status`, `conclusion` (GH's own check-runs shape)."""
+    if dry or not repo_root or not sha:
+        return []
+    rc, out, _ = _run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs",
+                       "--jq", ".check_runs"], cwd=repo_root, timeout=30)
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        runs = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    return runs if isinstance(runs, list) else []
+
+
+def ci_verdict(repo_root, merged_sha, check_name, dry=False):
+    """T4: read CI's verdict for `merged_sha` — never re-run. Trusted ONLY when ALL three
+    hold, exactly per the ADR's open decision (commit-exact / non-stale / real declared
+    suite), otherwise unconfirmed (never a free pass on an absent/ambiguous read, never a
+    false wall on a still-running check):
+      commit-exact  — the check-run's own `head_sha` equals `merged_sha` exactly; a run
+                      bound to an ancestor/descendant/PR-head commit is never substituted.
+      non-stale     — `status == "completed"`; pending/queued/in_progress never trusted.
+      real suite    — `name == check_name` (project.yaml `ci.check_name`, the ONE
+                      declared identifier for the job that runs `test.command`) — never a
+                      bare rollup guess off an unrelated check that happens to be green.
+    Returns (status, detail)."""
+    if dry:
+        return "pass", "dry"
+    if not repo_root or not merged_sha:
+        return "unconfirmed", "no merged sha to read a CI verdict for — cannot confirm"
+    if not check_name:
+        return ("unconfirmed", "no ci.check_name declared (project.yaml `ci:`) — cannot confirm "
+                "which check-run is the real declared suite")
+    runs = ci_check_runs(repo_root, merged_sha, dry)
+    matches = [r for r in runs
+              if r.get("name") == check_name and r.get("head_sha") == merged_sha]
+    if not matches:
+        return ("unconfirmed", f"no '{check_name}' check-run found commit-exact to "
+                f"{str(merged_sha)[:7]} — cannot confirm")
+    run = matches[0]
+    if run.get("status") != "completed":
+        return ("unconfirmed", f"'{check_name}' @ {str(merged_sha)[:7]} not completed yet "
+                f"({run.get('status')}) — cannot confirm")
+    conclusion = run.get("conclusion")
+    if conclusion == "success":
+        return "pass", f"'{check_name}' green @ {str(merged_sha)[:7]} (CI-trusted, no engine re-run)"
+    return "fail", f"'{check_name}' @ {str(merged_sha)[:7]} concluded {conclusion}"
 
 
 def replica_clean(repo_root, branch, main_branch="main", dry=False):
