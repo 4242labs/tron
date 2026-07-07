@@ -8,7 +8,7 @@
 # Structured channel (A-2, tron-13): a gate-ladder reply carries its verb as data —
 # the engine resolves it deterministically, no judgment call; free text still
 # classifies as before:
-#   report.sh "<worker-id>" --tag <done|recorded|wall|branch|review-done|clean|retract> \
+#   report.sh "<worker-id>" --tag <done|recorded|wall|branch|review-done|clean> \
 #             [--block <id>] [--branch <name>] [--type <reviewer-type>] \
 #             [--kind <scope|blueprint|design|...>] "<message>"
 #
@@ -29,7 +29,7 @@ TRON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 INBOX="$TRON_DIR/worker-inbox.jsonl"
 
 usage() {
-  echo "usage: report.sh <worker-id> [--tag <done|recorded|wall|branch|review-done|clean|retract>] [--block <id>] [--branch <name>] [--type <reviewer-type>] [--kind <scope|blueprint|design|...>] \"<message>\"" >&2
+  echo "usage: report.sh <worker-id> [--tag <done|recorded|wall|branch|review-done|clean>] [--block <id>] [--branch <name>] [--type <reviewer-type>] [--kind <scope|blueprint|design|...>] \"<message>\"" >&2
   echo "flags must come BEFORE the message, never after." >&2
 }
 

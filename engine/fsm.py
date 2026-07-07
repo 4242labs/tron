@@ -121,7 +121,7 @@ NEGATED_SETTLE_NOTE = ("settle read as negated (e.g. \"don't approve CASE-7\") �
                        "guessed from prose; reply with the bare verb + case id only: "
                        "'resume CASE-007' / 'approve CASE-007' / 'abandon CASE-007'")
 # T2 (01-26, R-05): _gate_giveup's seven codes each become the case's OWN `kind` (not
-# the generic 'wall' every one shared before) — naming only, hold/settle/retract stay
+# the generic 'wall' every one shared before) — naming only, hold/settle stay
 # identical. `gate-step-cap` (an 8th _gate_giveup site, ~866) is deliberately unsplit.
 # WALL_KINDS: every site that compared literal kind=='wall' checks membership instead.
 # `gate-close-idle-cap` (01-27, F-4): the close-stage idle-cap's own code — a silent
@@ -1305,74 +1305,6 @@ class Engine:
         self.log("flow", f"operator:decision:{block} -> {decision}")
         self._emit("pulse")
 
-    def _h_retract(self, sender):
-        """T2 (01-24 F-1b): a walled sender's OWN retract auto-dismisses its still-undecided
-        wall — close the case, un-hold the worker, replay its queued verbs, through the
-        SAME close-case/unhold/replay path a settle drives (_unhold_and_replay) — never a
-        second teardown mechanism, before any operator page fires.
-
-        Sender-scoped ONLY (F-1's explicit exclusion): the case's worker_id must be the
-        retracting sender itself — a third-party wall (raised about a different worker, or
-        engine-raised) never auto-clears. Undecided ONLY: by the time an operator/architect
-        settle lands, _h_apply_decision has always already closed the case it acted on, so
-        'already settled' and 'no wall of mine is open' collapse to the same honest no-op
-        here — never a silent drop (D-15-3's law extended to this new verb).
-
-        F1 fix (01-24 review cycle 1): `worker.wall` is a DEFERRED trigger — `_ingest`
-        resolves it to `wall:raised:<block>` via `_emit`, which only QUEUES it into
-        `self._tq`; it is not acted on until end-of-tick `_drain_triggers` runs `_h_escalate`.
-        `worker.retract`, in contrast, is an IMMEDIATE side-handler — it runs the INSTANT the
-        message is ingested. So a same-tick "wall then retract" from the SAME sender (the
-        exact fat-finger F-1 exists to contain) would otherwise reach this point BEFORE the
-        wall's case exists and before the worker is even held: the pending_cases lookup below
-        finds nothing, reports a false "nothing to retract", and then the still-queued wall
-        trigger drains anyway at end-of-tick -> _h_escalate holds the worker and pages the
-        operator despite the sender's own same-tick retraction. Cancel the sender's own
-        still-queued wall trigger FIRST — pop it out of self._tq before it ever opens — so
-        _h_escalate never runs for it at all: no case, no hold, no page.
-
-        T5 (01-26, FU-01-24a): match PROVENANCE (`_own_wall`, stamped only where `_ingest`
-        resolves the sender's OWN worker.wall report), never worker_id alone — the latter
-        was correct only via implicit tick-ordering; this hardens it so an engine-raised
-        wall:raised: sharing this worker_id can never be cancelled by a retract that never
-        asked about it."""
-        sid = (sender or {}).get("id")
-        if sid:
-            for i, (trig, tslots) in enumerate(self._tq):
-                if (trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid
-                        and (tslots or {}).get("_own_wall")):
-                    self._tq.pop(i)
-                    self.events.event("retract", actor=sid, block=(tslots or {}).get("block"),
-                                      cid=None, detail="same-tick queued wall cancelled before it opened")
-                    self.log("flow", f"retract[{sid}] -> cancelled its own still-queued wall "
-                                     f"trigger before it ever opened (same-tick self-clear, "
-                                     f"F-1)")
-                    self._emit("pulse")
-                    return
-        w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
-        case_id, case = None, None
-        for cid, c in self.st.pending_cases.items():
-            # T2 (01-26): WALL_KINDS — an engine-raised case now carries its own specific
-            # kind, but a retract must still clear it exactly as it cleared 'wall' before.
-            if (c.get("kind") in WALL_KINDS and c.get("worker_id") == sid
-                    and c.get("decision") is None):
-                case_id, case = cid, c
-                break
-        if not (case and w is not None and w.get("status") == "walled"):
-            self.log("flow", f"retract from {sid or '?'}: no undecided wall of its own to clear")
-            if sid and not self.dry:
-                self._to_worker(sid, "Nothing to retract — no undecided wall of yours is "
-                                     "open (already settled, or not yours).", "retract.noop")
-            return
-        block = case.get("block")
-        if block in self.st.blocked:
-            self.st.blocked.remove(block)
-        self._close_case(case_id, case)
-        self._unhold_and_replay(w, block, case)
-        self.events.event("retract", actor=sid, block=block, cid=case_id)
-        self.log("flow", f"retract[{sid}] -> wall {case_id} auto-dismissed, un-held, replayed")
-        self._emit("pulse")
-
     def _resolve_case(self, case_id, block):
         """Find the parked case the reply settles — by correlation id (preferred) or by block."""
         if case_id and case_id in self.st.pending_cases:
@@ -2534,7 +2466,7 @@ class Engine:
         T2 (01-26, R-05): `code` rides the trigger's slots too — _h_escalate stamps it as
         the resulting case's own `kind` (one of GATE_GIVEUP_SPLIT_CODES), instead of the
         generic 'wall' every one of these seven shared before. Naming only: the hold/
-        settle/retract mechanics are unchanged (WALL_KINDS covers every one of them)."""
+        settle mechanics are unchanged (WALL_KINDS covers every one of them)."""
         self.st.gate.pop(block, None)
         self.events.failure("gate-stuck", code, action, detail, block=block,
                             inputs={"stall_attempts": g.get("stall_attempts"),
@@ -3110,11 +3042,6 @@ class Engine:
         "wall":        ("worker.wall", {}),
         "review-done": ("worker.review_done", {}),
         "clean":       ("worker.done", {"clean_confirm": True}),
-        # T2 (01-24 F-1b): the ONE new verb this block authorizes — a sender retracting
-        # its own still-undecided wall. No admission row (sender-scoped resolution,
-        # never a block/stage gate) and no block ref required — _h_retract resolves the
-        # sender's own live wall case by sender id alone.
-        "retract":     ("worker.retract", {}),
     }
 
     def _structured(self, msg):
@@ -3317,11 +3244,7 @@ class Engine:
         # abandon (the worker record itself goes with it, _force_release_block).
         sid = (sender or {}).get("id")
         hw = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
-        # T2 (01-24 F-1b): a sender's own `retract` must reach its handler even while
-        # walled — the hold below exists to PRESERVE other verbs until the wall resolves;
-        # retract IS the resolution, so queuing it here would strand it behind the very
-        # hold it lifts.
-        if hw is not None and hw.get("status") == "walled" and tag != "worker.retract":
+        if hw is not None and hw.get("status") == "walled":
             hw.setdefault("held_verbs", []).append({"tag": tag, "slots": slots})
             self.log("flow", f"{sid} is walled -> verb '{tag}' queued "
                              f"({len(hw['held_verbs'])} pending)")
@@ -3336,12 +3259,6 @@ class Engine:
         if slots is None:
             return
         if "trigger" in action:
-            if tag == "worker.wall":
-                # T5 (01-26, FU-01-24a): provenance marker — this trigger genuinely
-                # originated from the sender's OWN report (never an engine-raised
-                # escalation sharing its worker_id). _h_retract's same-tick cancel keys
-                # on this, not worker_id alone.
-                slots = {**slots, "_own_wall": True}
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
             self._side(action["side"], slots, sender)
@@ -3357,8 +3274,6 @@ class Engine:
             self.log("side", f"question_tron: {slots.get('detail', '')}")
         elif handler == "record_branch":
             self._record_branch(slots)
-        elif handler == "retract_own_wall":               # T2 (01-24 F-1b): sender-scoped auto-dismiss
-            self._h_retract(sender)
         elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
             self._triage_to_architect(slots.get("detail", "") or "(peer question)",
                                       sender=slots.get("worker_id"), block=slots.get("block"))
@@ -3397,11 +3312,11 @@ class Engine:
         job carries no case, or the case already resolved by some other path.
 
         F3 fix (01-24 review cycle 1): a case-carrying job whose case is no longer live
-        (e.g. the sender retracted its own wall — _h_retract — BEFORE the architect
-        answered) must not deliver a stale "[TRON] Architect: ..." to a worker that has
-        already moved on. Check case-liveness BEFORE the _to_worker send, not only before
-        the unhold/replay below — a plain peer relay (no `case` on the job at all) is
-        untouched, still always delivered."""
+        (e.g. some other path already closed the wall BEFORE the architect answered) must
+        not deliver a stale "[TRON] Architect: ..." to a worker that has already moved on.
+        Check case-liveness BEFORE the _to_worker send, not only before the unhold/replay
+        below — a plain peer relay (no `case` on the job at all) is untouched, still always
+        delivered."""
         arch = self._architect()
         cur = arch.get("current_job") if arch else None
         target = (cur or {}).get("sender") or slots.get("worker_id")
@@ -3424,9 +3339,9 @@ class Engine:
                              f"({block or '?'}) with the relayed answer as payload")
         elif stale:
             self.log("flow", f"architect-relayed answer for case {case_id} suppressed: "
-                             f"the wall was already resolved by another path (e.g. a "
-                             f"same-sender retract) before the architect answered — no "
-                             f"stale relay")
+                             f"the wall was already resolved by another path (e.g. an "
+                             f"operator settle closing the case) before the architect "
+                             f"answered — no stale relay")
         self.log("flow", f"relay architect answer -> {target or '?'}")
         self._architect_advance()
         self._emit("pulse")
