@@ -22,6 +22,10 @@
      settle ("don't approve CASE-7") never matches the affirmative handler — fail-
      closed, re-prompts with the accepted forms instead of guessing; a bare
      "resume CASE-007" is unaffected (no payload, same behavior as before T3).
+  T5 (01-26 AC-8, folds FU-01-24a/b) the same-tick retract's provenance guard: a wall
+     from sender A and a retract from sender B are unrelated (B's retract never touches
+     A's queued wall); two walls from one sender + one retract cancels only the FIRST
+     still-queued one, never a blanket cancel.
 
 Run: python3 engine/block_01_24_test.py   (exit 0 = pass). No tokens, no network.
 """
@@ -39,7 +43,7 @@ sys.path.insert(0, HERE)
 
 os.environ["TRON_DRY"] = "1"
 
-from fsm import Engine, SPEC_OWNABLE_KINDS  # noqa: E402
+from fsm import Engine, SPEC_OWNABLE_KINDS, WALL_KINDS  # noqa: E402
 from sentry_test import build, started      # noqa: E402
 
 _results = []
@@ -375,6 +379,78 @@ def ac2_same_tick_wall_then_retract_self_clears_fully():
        f"tw={tw}")
 
 
+def ac8_a_wall_b_retract_leaves_a_intact():
+    """T5/AC-8 (01-26, FU-01-24b): a same-tick wall from sender A and a retract from
+    sender B are UNRELATED — B's retract must never touch A's still-queued wall trigger
+    (the provenance guard, FU-01-24a, scopes the same-tick cancel to worker_id AND the
+    _own_wall marker; worker_id alone was already sender-scoped, but this proves the
+    two-sender shape explicitly, pipeline-level, through the real _ingest + _tq +
+    _drain_triggers seam)."""
+    ctx, _ = build(blocks=[("A-01", "🔄", "none"), ("B-01", "🔄", "none")])
+    eng = Engine(ctx); started(eng)
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working"})
+    eng.st.workers.append({"id": "ENG-B-01", "role": "engineer", "block": "B-01",
+                           "session_id": "dry", "status": "working"})
+    sent = _capture(eng)
+    eng.dry = False
+    try:
+        eng._tq = []
+        eng._ingest("worker.wall", {"block": "A-01", "detail": "A's genuine wall"},
+                   {"kind": "worker", "id": "ENG-A-01"})
+        # B, same tick, retracts — it never raised a wall of its own.
+        eng._ingest("worker.retract", {}, {"kind": "worker", "id": "ENG-B-01"})
+        eng._drain_triggers()
+    finally:
+        eng.dry = True
+    a = next(x for x in eng.st.workers if x["id"] == "ENG-A-01")
+    b = next(x for x in eng.st.workers if x["id"] == "ENG-B-01")
+    ok("AC-8 A's wall opened normally — B's retract never cancelled it",
+       a.get("status") == "walled", f"a={a}")
+    ok("AC-8 A's wall case is live", any(
+        c.get("kind") in WALL_KINDS and c.get("worker_id") == "ENG-A-01"
+        and c.get("decision") is None for c in eng.st.pending_cases.values()),
+       f"cases={eng.st.pending_cases}")
+    ok("AC-8 B was never held (it had nothing of its own to wall on)",
+       b.get("status") != "walled", f"b={b}")
+    ok("AC-8 the operator WAS paged for A's genuine wall (never swallowed by B's retract)",
+       any(tid == "escalate.wall" for tid, _ in sent), f"sent={sent}")
+
+
+def ac8_two_walls_one_sender_one_retract_cancels_only_the_matching_one():
+    """T5/AC-8 (01-26, FU-01-24b): a sender that (mistakenly) queues TWO walls in the
+    same tick, then retracts once, self-clears only the FIRST still-queued one (the
+    fat-finger F-1 shape this mechanism exists to contain) — the second survives to
+    open normally at drain time. A single retract is never a blanket cancel of every
+    wall a sender ever queued this tick."""
+    eng = _eng()
+    wid = "ENG-A-01"
+    sent = _capture(eng)
+    eng.dry = False
+    try:
+        eng._tq = []
+        eng._ingest("worker.wall", {"block": "A-01", "detail": "first fat-fingered wall"},
+                   {"kind": "worker", "id": wid})
+        eng._ingest("worker.wall", {"block": "A-01", "detail": "second, genuine wall"},
+                   {"kind": "worker", "id": wid})
+        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
+        eng._drain_triggers()
+    finally:
+        eng.dry = True
+    w = next(x for x in eng.st.workers if x["id"] == wid)
+    ok("AC-8 the worker still ends up walled (the second wall survived the retract)",
+       w.get("status") == "walled", f"w={w}")
+    live = [c for c in eng.st.pending_cases.values()
+           if c.get("kind") in WALL_KINDS and c.get("worker_id") == wid
+           and c.get("decision") is None]
+    ok("AC-8 exactly ONE live wall case remains (only the first was cancelled)",
+       len(live) == 1, f"cases={eng.st.pending_cases}")
+    ok("AC-8 the surviving case is the SECOND wall's detail, not the retracted first one",
+       live and live[0].get("detail") == "second, genuine wall", f"live={live}")
+    ok("AC-8 the operator was paged once (for the surviving wall)",
+       sum(1 for tid, _ in sent if tid == "escalate.wall") == 1, f"sent={sent}")
+
+
 # ══════════════════════════════════════════════════════════════════════════════════
 # T3 (AC-3/AC-4): content-carrying settle + spec-ownable routing
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -649,7 +725,8 @@ def ac5_all_settle_forms_resolve_through_one_point():
 
 def main():
     for fn in sorted(k for k in globals() if k.startswith("ac1_") or k.startswith("ac2_")
-                     or k.startswith("ac3_") or k.startswith("ac4_") or k.startswith("ac5_")):
+                     or k.startswith("ac3_") or k.startswith("ac4_") or k.startswith("ac5_")
+                     or k.startswith("ac8_")):
         globals()[fn]()
     bad = [(n, d) for n, c, d in _results if not c]
     for n, c, d in _results:

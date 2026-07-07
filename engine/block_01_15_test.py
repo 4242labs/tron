@@ -41,7 +41,7 @@ os.environ["TRON_DRY"] = "1"
 import util             # noqa: E402
 import jobs             # noqa: E402
 import trunk            # noqa: E402
-from fsm import Engine  # noqa: E402
+from fsm import Engine, WALL_KINDS  # noqa: E402
 from sentry_test import build, started, events  # noqa: E402
 
 _results = []
@@ -267,7 +267,13 @@ def t_engine_raised_hold_restores_on_resume():
        w.get("status") == "walled" and w.get("held_status") == "working", f"w={w}")
     ok("T4 the escalation (the OTHER legitimate gate-pop owner) does clear the gate",
        "A-01" not in eng.st.gate)
-    cid = next(cid for cid, c in eng.st.pending_cases.items() if c.get("kind") == "wall")
+    # T2 (01-26, R-05): the case-kind split — a _gate_giveup escalation now carries ITS
+    # OWN code as the case kind (not the old generic 'wall'), while still behaving as a
+    # wall for hold/settle purposes (WALL_KINDS covers it).
+    cid, case = next((cid, c) for cid, c in eng.st.pending_cases.items()
+                     if c.get("kind") in WALL_KINDS)
+    ok("T2 (01-26) the case names its own code, not the generic 'wall' bucket",
+       case.get("kind") == "gate-idle-cap", f"case={case}")
     eng._h_apply_decision({"case": cid, "decision": "resume"})
     ok("T4 resume restores the pre-hold status via the shared _unhold_worker primitive",
        w.get("status") == "working" and "held_status" not in w, f"w={w}")

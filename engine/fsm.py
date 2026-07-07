@@ -120,6 +120,14 @@ NOT_RELAYED_NOTE = ("not relayed — workers hear gate orders and settle-driven 
 NEGATED_SETTLE_NOTE = ("settle read as negated (e.g. \"don't approve CASE-7\") — never "
                        "guessed from prose; reply with the bare verb + case id only: "
                        "'resume CASE-007' / 'approve CASE-007' / 'abandon CASE-007'")
+# T2 (01-26, R-05): _gate_giveup's seven codes each become the case's OWN `kind` (not
+# the generic 'wall' every one shared before) — naming only, hold/settle/retract stay
+# identical. `gate-step-cap` (an 8th _gate_giveup site, ~866) is deliberately unsplit.
+# WALL_KINDS: every site that compared literal kind=='wall' checks membership instead.
+GATE_GIVEUP_SPLIT_CODES = ("gate-contradiction", "gate-bypass", "gate-idle-cap",
+                           "gate-close-dirty", "gate-orphaned", "gate-record-bypass",
+                           "record-bypass")
+WALL_KINDS = frozenset(("wall",) + GATE_GIVEUP_SPLIT_CODES)
 
 
 class Engine:
@@ -1042,7 +1050,10 @@ class Engine:
             # _gate_giveup (escalation). Popping it here left a live CLOSE gate's
             # clean-confirmation with nothing to advance against (g is None ->
             # the done-handler's `if g and g.get("stage") == "close"` silently no-ops).
-        case_id = self._open_case(block, "wall", freed, detail)   # correlation id (02-10) for the reply
+        # T2 (01-26, R-05): a _gate_giveup-raised trigger's own `code` becomes this case's
+        # kind (a genuine worker-raised wall, no code, keeps kind=='wall').
+        case_kind = m.get("code") if m.get("code") in GATE_GIVEUP_SPLIT_CODES else "wall"
+        case_id = self._open_case(block, case_kind, freed, detail)   # correlation id (02-10) for the reply
         self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
                           tag="worker.wall", detail=detail)
         # T3 (01-24 F-2b): route by the wall's DECLARED kind, never prose — a spec-ownable
@@ -1315,11 +1326,18 @@ class Engine:
         trigger drains anyway at end-of-tick -> _h_escalate holds the worker and pages the
         operator despite the sender's own same-tick retraction. Cancel the sender's own
         still-queued wall trigger FIRST — pop it out of self._tq before it ever opens — so
-        _h_escalate never runs for it at all: no case, no hold, no page."""
+        _h_escalate never runs for it at all: no case, no hold, no page.
+
+        T5 (01-26, FU-01-24a): match PROVENANCE (`_own_wall`, stamped only where `_ingest`
+        resolves the sender's OWN worker.wall report), never worker_id alone — the latter
+        was correct only via implicit tick-ordering; this hardens it so an engine-raised
+        wall:raised: sharing this worker_id can never be cancelled by a retract that never
+        asked about it."""
         sid = (sender or {}).get("id")
         if sid:
             for i, (trig, tslots) in enumerate(self._tq):
-                if trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid:
+                if (trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid
+                        and (tslots or {}).get("_own_wall")):
                     self._tq.pop(i)
                     self.events.event("retract", actor=sid, block=(tslots or {}).get("block"),
                                       cid=None, detail="same-tick queued wall cancelled before it opened")
@@ -1331,7 +1349,10 @@ class Engine:
         w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
         case_id, case = None, None
         for cid, c in self.st.pending_cases.items():
-            if c.get("kind") == "wall" and c.get("worker_id") == sid and c.get("decision") is None:
+            # T2 (01-26): WALL_KINDS — an engine-raised case now carries its own specific
+            # kind, but a retract must still clear it exactly as it cleared 'wall' before.
+            if (c.get("kind") in WALL_KINDS and c.get("worker_id") == sid
+                    and c.get("decision") is None):
                 case_id, case = cid, c
                 break
         if not (case and w is not None and w.get("status") == "walled"):
@@ -1414,6 +1435,47 @@ class Engine:
         """A knob expressed as a multiplier of the wake ceiling -> a wall-clock span (S-1)."""
         ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
         return float(self.knobs.get(mult_knob, default)) * ceiling
+
+    def _pace_ladder(self, state, since_key, nudged_key=None, *, idle, cap_span, on_cap,
+                     nudge_span=None, on_nudge=None, repeat_nudge=False):
+        """T1 (01-26, R-04): the ONE since/nudge/cap wall-clock law (S-1) — was 7 copies of
+        this skeleton (gate-stage, close, review-landing, review-attest, architect-job,
+        wall-invariant, gate-orphan). `idle` is resolved by the CALLER, never here (never a
+        message, Q1): five of the seven read a pid/file liveness fact (jobs.runner_idle);
+        the wall-invariant sweep and the workerless-gate clock instead key on
+        case-decision / roster-presence state (there is no runner left to poll). Every
+        incident exemption folds in at the call site, never here — this helper owns only
+        the arithmetic. False pops both timers ('clear'). cap_span seconds
+        idle -> on_cap(idle_s) fires once, pops ('cap'). nudge_span=None: repair-only, no
+        nudge tier. repeat_nudge=False: nudge ONCE per episode (F8: on_nudge's falsy
+        return means SUPPRESSED, must not consume the budget). True: re-nudge every
+        nudge_span while idle, no budget. Returns 'clear'|'cap'|'nudge'|'wait'."""
+        if not idle:
+            state.pop(since_key, None)
+            state.pop(nudged_key, None)
+            return "clear"
+        now = self._now_s()
+        since = state.setdefault(since_key, now)
+        idle_s = now - since
+        if idle_s >= cap_span:
+            state.pop(since_key, None)
+            state.pop(nudged_key, None)
+            on_cap(idle_s)
+            return "cap"
+        if nudge_span is None:
+            return "wait"
+        last = state.get(nudged_key)
+        due = (now - last >= nudge_span if last is not None else True) if repeat_nudge \
+            else (idle_s >= nudge_span and last is None)
+        if due:
+            sent = on_nudge()
+            if repeat_nudge:
+                state[nudged_key] = now
+                return "nudge"
+            elif sent:
+                state[nudged_key] = now
+                return "nudge"
+        return "wait"
 
     def _drive_gates(self):
         if self._trunk_fault:
@@ -1746,50 +1808,48 @@ class Engine:
             else:
                 stage, msg = "merge", "gate.merge"
 
-        # 01-11 FX-2 + S-1 (one pacing law): idle-at-gate is a WALL-CLOCK span of the runner's
-        # own `state: idle` — never a tick count (event bursts and event-starved timers both lie
-        # about time; R-1/W7b). A busy worker (runner `working`) never accrues; `ci-wait` is
-        # excluded — the PR machinery owns that wait. Nudge once per idle episode at
-        # gate_nudge_after x ceiling; give up at gate_idle_cap x ceiling.
+        # 01-11 FX-2 + S-1 (via _pace_ladder — T1 01-26): idle-at-gate is the runner's own
+        # `state: idle`, wall-clock — never a tick count (R-1/W7b). `ci-wait` excluded, the
+        # PR machinery owns that wait.
         if stage == g.get("stage") and not renudge and stage != "ci-wait":
             # T3 (01-18, N3): a wall raised mid-gate HOLDS its worker (D-15-2) and its runner
             # idles by design (parked awaiting the operator, never a stall to accrue against)
-            # — the same exemption class the liveness sweep already applies to a walled worker
-            # (~2704, self._sweep). Without it the gate's own idle cap fired ~3x the ceiling
-            # later and popped the gate 01-15 deliberately preserved for the wall, plus a
-            # duplicate wall the blocked-guard only mostly swallows. Roster status is the
-            # authority (not the runner's on-disk idle record, which is honestly idle here).
+            # — the same exemption class the liveness sweep already applies to a walled
+            # worker (_sweep_wall_invariant). Without it the gate's own idle cap fired ~3x
+            # the ceiling later and popped the gate 01-15 deliberately preserved for the
+            # wall, plus a duplicate wall the blocked-guard only mostly swallows. Roster
+            # status is the authority (not the runner's on-disk idle record, which is
+            # honestly idle here).
             bw = next((x for x in self.st.workers if x.get("id") == wid), None)
-            if not jobs.runner_idle(wid) or (bw and bw.get("status") == "walled"):
-                g.pop("idle_since", None)
-                g.pop("nudged_at", None)
-            else:
-                now = self._now_s()
-                since = g.setdefault("idle_since", now)
-                idle_s = now - since
-                if idle_s >= self._pace("gate_idle_cap", 3):
-                    detail = f"gate stalled at '{stage}' — worker idle {int(idle_s)}s"
-                    if stage == "trunk" and not trunk.branch_merged(
-                            self.paths["root"], branch,
-                            self.paths.get("main_branch", "main"), self.dry):
-                        # R-3: a held trunk whose predicates now contradict it (revert /
-                        # force-push) must read as a trunk regression, not a worker stall.
-                        detail += ("; predicate contradiction: the block branch is no longer "
-                                   "on trunk (revert or force-push?)")
-                    self._gate_giveup(block, g, wid, detail,
-                                      "gate-idle-cap", "check worker liveness; resume or reassign")
-                    return
-                if (idle_s >= self._pace("gate_nudge_after", 2)
-                        and not g.get("nudged_at") and wid):
-                    # T2 (01-19, R2-1): route through the ONE stage-order composer — it
-                    # decides WHAT (gate.local vs branch-gap vs the T1 rebase line), this
-                    # site only decides WHEN. F8: a skipped send (walled, or an undelivered
-                    # copy of this exact kind still outstanding) must never consume the idle
-                    # episode's nudge budget — `nudged_at` is set only on an actual send, so
-                    # the re-check happens next tick instead of going silently overdue.
-                    if self._send_gate_order(block, g, stage, wid, force=False):
-                        g["nudged_at"] = now
-                        self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
+            genuinely_idle = jobs.runner_idle(wid) and not (bw and bw.get("status") == "walled")
+
+            def _cap(idle_s):
+                detail = f"gate stalled at '{stage}' — worker idle {int(idle_s)}s"
+                if stage == "trunk" and not trunk.branch_merged(
+                        self.paths["root"], branch,
+                        self.paths.get("main_branch", "main"), self.dry):
+                    # R-3: a contradicted predicate is a trunk regression, not a stall.
+                    detail += ("; predicate contradiction: the block branch is no longer "
+                               "on trunk (revert or force-push?)")
+                self._gate_giveup(block, g, wid, detail,
+                                  "gate-idle-cap", "check worker liveness; resume or reassign")
+
+            def _nudge():
+                # T2 (01-19, R2-1): the ONE stage-order composer decides WHAT; F8: a
+                # suppressed send must never consume the nudge budget.
+                if not wid:
+                    return False
+                sent = self._send_gate_order(block, g, stage, wid, force=False)
+                if sent:
+                    self.log("flow", f"gate[{block}] idle at '{stage}' -> re-nudge")
+                return sent
+
+            outcome = self._pace_ladder(
+                g, "idle_since", "nudged_at", idle=genuinely_idle,
+                cap_span=self._pace("gate_idle_cap", 3), on_cap=_cap,
+                nudge_span=self._pace("gate_nudge_after", 2), on_nudge=_nudge)
+            if outcome == "cap":
+                return
         else:
             g.pop("idle_since", None)
             g.pop("nudged_at", None)
@@ -2078,43 +2138,36 @@ class Engine:
         if self._worker_id_for_block(block) is None:
             self._confirm_close(block, g)
             return
-        # tron-07 W6b + S-1: close pacing is the same wall-clock law as the gate's — a worker
-        # mid-close-out (runner `working`) never accrues (per-tick accrual once capped a working
-        # engineer out of its own paperwork in 74s and force-released with no cleanliness check).
-        # An idle close re-nudges once per ceiling span; at gate_close_cap x ceiling of
-        # continuous idle it force-releases.
+        # tron-07 W6b + S-1: close pacing is the same wall-clock law as the gate's — a
+        # worker mid-close-out (runner `working`) never accrues (per-tick accrual once
+        # capped a working engineer out of its own paperwork in 74s and force-released
+        # with no cleanliness check).
         # T3 (01-18, N3, the AC close-site scenario): a plain wall raised during close-out
         # HOLDS this same bound worker (D-15-2) — its runner idles by design, parked on the
-        # operator, never a stall to accrue. Before this fix a walled worker still passed
-        # `not jobs.runner_idle(wid)` (True, it IS idle) and accrued past this guard, then at
-        # cap `_force_release_block` + `gate.pop` force-released a HELD worker out from under
-        # its own live wall case — no cleanliness check, a pending case left with no worker,
-        # no gate, and the block still parked. Exempt it exactly like the gate site above.
+        # operator, never a stall to accrue. Before this exemption a walled worker still
+        # passed `not jobs.runner_idle(wid)` (True, it IS idle) and accrued past this
+        # guard, then at cap force-released a HELD worker out from under its own live wall
+        # case — no cleanliness check, a pending case left with no worker, no gate, and the
+        # block still parked. Exempt it exactly like the gate site above.
         bw = next((x for x in self.st.workers if x.get("id") == wid), None) if wid else None
-        if wid and (not jobs.runner_idle(wid) or (bw and bw.get("status") == "walled")):
-            g.pop("close_idle_since", None)
-            g.pop("close_nudged_at", None)
-            return
-        now = self._now_s()
-        since = g.setdefault("close_idle_since", now)
-        # DUAL USE (01-18 addendum): `gate_close_cap` reads as a wake_ceiling_sec MULTIPLIER
-        # here (via _pace — a wall-clock idle span) but as a plain ATTEMPTS COUNT at
-        # _confirm_close's `close_nudges` check below — the SAME knob, two different units.
-        # Retuning it moves both.
-        if now - since >= self._pace("gate_close_cap", 3):
+        genuinely_idle = bool(wid) and jobs.runner_idle(wid) and not (bw and bw.get("status") == "walled")
+
+        def _cap(idle_s):
             self._force_release_block(block)
             self.st.gate.pop(block, None)
             self.log("flow", f"gate[{block}] close cap -> force release")
-            # tron-07 W6c: a freed slot without a pulse leaves the SWITCHBOARD asleep — the
-            # due reviewer never dispatches and session-end never evaluates. Every
-            # slot-freeing path pulses.
-            self._emit("pulse")
-            return
-        last = g.get("close_nudged_at")
-        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
-        if wid and (last is None or now - last >= ceiling):
-            g["close_nudged_at"] = now
-            self.emit("close.worker", {"worker_id": wid}, worker_id=wid)
+            self._emit("pulse")   # tron-07 W6c: a freed slot without a pulse stalls the SWITCHBOARD
+
+        # DUAL USE (01-18 addendum): `gate_close_cap` is a wake_ceiling_sec MULTIPLIER here
+        # but a plain ATTEMPTS COUNT at _confirm_close's `close_nudges` below — same knob,
+        # two units. Re-nudges every ceiling span while idle (repeat_nudge, no one-shot
+        # budget — unlike the gate-stage ladder above).
+        self._pace_ladder(g, "close_idle_since", "close_nudged_at", idle=genuinely_idle,
+                          cap_span=self._pace("gate_close_cap", 3), on_cap=_cap,
+                          nudge_span=float(self.knobs.get("wake_ceiling_sec", 30)),
+                          on_nudge=lambda: self.emit("close.worker", {"worker_id": wid},
+                                                     worker_id=wid),
+                          repeat_nudge=True)
 
     # ── the unified paperwork lander (F-1/S-3+R-6, tron-13 D1) ──
     def _paperwork_rules(self, role, block=None):
@@ -2263,21 +2316,16 @@ class Engine:
             self._finish_review(typ, g.get("block"))
             return
         wid = rev.get("id")
-        if wid and not jobs.runner_idle(wid):
-            g.pop("landing_idle_since", None)
-            g.pop("landing_nudged_at", None)
-            return
-        now = self._now_s()
-        since = g.setdefault("landing_idle_since", now)
-        if now - since >= self._pace("gate_close_cap", 3):
+
+        def _cap(idle_s):
             self._fail_landing(rev, "reviewer", detail)
             self._finish_review(typ, g.get("block"))
-            return
-        last = g.get("landing_nudged_at")
-        ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
-        if wid and (last is None or now - last >= ceiling):
-            g["landing_nudged_at"] = now
-            self._land_nudge(wid, detail)
+
+        self._pace_ladder(g, "landing_idle_since", "landing_nudged_at",
+                          idle=bool(wid) and jobs.runner_idle(wid),
+                          cap_span=self._pace("gate_close_cap", 3), on_cap=_cap,
+                          nudge_span=float(self.knobs.get("wake_ceiling_sec", 30)),
+                          on_nudge=lambda: self._land_nudge(wid, detail), repeat_nudge=True)
 
     def _drive_review_attest(self, gkey, g):
         """01-13 (tron-14 F9): the DONE-REVIEW gate at `review` (attest coverage) was the
@@ -2296,14 +2344,8 @@ class Engine:
         if g.get("attest_case"):
             return                                   # parked on the operator; hold quietly
         wid = rev.get("id")
-        if wid and not jobs.runner_idle(wid):
-            g.pop("attest_idle_since", None)
-            g.pop("attest_nudged_at", None)
-            return
-        now = self._now_s()
-        since = g.setdefault("attest_idle_since", now)
-        idle_s = now - since
-        if idle_s >= self._pace("gate_idle_cap", 3):
+
+        def _cap(idle_s):
             cid = self._open_case(gkey, "review", wid,
                                   f"review:{typ} stalled at attest — reviewer idle "
                                   f"{int(idle_s)}s; its hand-back may never have reached "
@@ -2316,12 +2358,16 @@ class Engine:
                                         "detail": f"review:{typ} stalled at attest "
                                                   f"(reviewer idle, report likely "
                                                   f"off-channel)", "case": cid})
-            return
-        if idle_s >= self._pace("gate_nudge_after", 2) and not g.get("attest_nudged_at"):
-            g["attest_nudged_at"] = now
-            if wid:
-                self.emit("gate.review", {"worker_id": wid}, worker_id=wid)
+
+        def _nudge():
+            self.emit("gate.review", {"worker_id": wid}, worker_id=wid)  # wid: idle implies it
             self.log("flow", f"{gkey} idle at attest -> re-send the coverage order")
+            return True
+
+        self._pace_ladder(g, "attest_idle_since", "attest_nudged_at",
+                          idle=bool(wid) and jobs.runner_idle(wid),
+                          cap_span=self._pace("gate_idle_cap", 3), on_cap=_cap,
+                          nudge_span=self._pace("gate_nudge_after", 2), on_nudge=_nudge)
 
     def _confirm_close(self, block, g):
         """The worker confirmed a clean exit -> land its parked paperwork, verify, then
@@ -2470,14 +2516,18 @@ class Engine:
                 self._release_worker(w, notify=False, reason="force-release")
 
     def _gate_giveup(self, block, g, wid, detail, code, action):
-        """No-silent-stuck: drop the gate + escalate to the operator (forensic record)."""
+        """No-silent-stuck: drop the gate + escalate to the operator (forensic record).
+        T2 (01-26, R-05): `code` rides the trigger's slots too — _h_escalate stamps it as
+        the resulting case's own `kind` (one of GATE_GIVEUP_SPLIT_CODES), instead of the
+        generic 'wall' every one of these seven shared before. Naming only: the hold/
+        settle/retract mechanics are unchanged (WALL_KINDS covers every one of them)."""
         self.st.gate.pop(block, None)
         self.events.failure("gate-stuck", code, action, detail, block=block,
                             inputs={"stall_attempts": g.get("stall_attempts"),
                                     "idle_since": g.get("idle_since")},
                             node="DONE gate", next_action="escalate")
         self._emit("wall:raised:" + block,
-                   {"block": block, "worker_id": wid, "detail": detail})
+                   {"block": block, "worker_id": wid, "detail": detail, "code": code})
 
     def _worker_id_for_block(self, block):
         w = next((w for w in self.st.workers
@@ -2705,27 +2755,29 @@ class Engine:
                 consumed = (jobs.read_hwm(self.ctx.worker_dir(arch.get("id")))
                            if arch.get("id") else 0)
                 if consumed < wake_seq:
-                    return
+                    return               # frozen: processing our own wake, anchor untouched
                 arch.pop("engine_wake_seq", None)
             arch.pop("job_idle_since", None)
             arch.pop("job_nudged_at", None)
             return
         if arch.get("job_case"):
             return                                   # parked on the operator; hold quietly
-        now = self._now_s()
-        since = arch.setdefault("job_idle_since", now)
-        idle_s = now - since
-        if idle_s >= self._pace("gate_idle_cap", 3):
-            self._open_architect_stall_case(
-                arch, f"idle {int(idle_s)}s with no completion report")
-            return
-        if idle_s >= self._pace("gate_nudge_after", 2) and not arch.get("job_nudged_at"):
-            arch["job_nudged_at"] = now
+
+        def _nudge():
             self._emit_arch_job(job, arch.get("id"))
             self._mark_engine_wake(arch)   # T6(b): this re-delivery must not itself pop the anchor
             if job.get("kind") == "log":
                 self._mark_log_dispatch(arch)   # T2 (01-22): settle against THIS re-delivery
             self.log("flow", f"architect idle on '{job.get('kind')}' -> re-deliver the order")
+            return True
+
+        # T1 (01-26): idle=True — the runner_idle branch above already returned otherwise.
+        self._pace_ladder(
+            arch, "job_idle_since", "job_nudged_at", idle=True,
+            cap_span=self._pace("gate_idle_cap", 3),
+            on_cap=lambda idle_s: self._open_architect_stall_case(
+                arch, f"idle {int(idle_s)}s with no completion report"),
+            nudge_span=self._pace("gate_nudge_after", 2), on_nudge=_nudge)
 
     def _open_architect_stall_case(self, arch, reason):
         """The ONE architect-idle-cap case opener (originally inline in
@@ -3270,6 +3322,12 @@ class Engine:
         if slots is None:
             return
         if "trigger" in action:
+            if tag == "worker.wall":
+                # T5 (01-26, FU-01-24a): provenance marker — this trigger genuinely
+                # originated from the sender's OWN report (never an engine-raised
+                # escalation sharing its worker_id). _h_retract's same-tick cancel keys
+                # on this, not worker_id alone.
+                slots = {**slots, "_own_wall": True}
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
             self._side(action["side"], slots, sender)
@@ -3339,7 +3397,7 @@ class Engine:
         stale = case_id is not None and case is None
         if target and not self.dry and not stale:
             self._to_worker(target, f"[TRON] Architect: {answer}", "architect.relay")
-        if case is not None and case.get("kind") == "wall" and case.get("decision") is None:
+        if case is not None and case.get("kind") in WALL_KINDS and case.get("decision") is None:
             block = case.get("block")
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
@@ -3521,39 +3579,40 @@ class Engine:
         block = w.get("block")
         wid = w.get("id")
         matches = [c for c in self.st.pending_cases.values()
-                  if c.get("kind") == "wall"
+                  if c.get("kind") in WALL_KINDS
                   and (c.get("worker_id") == wid or (block and c.get("block") == block))]
         case = next((c for c in matches if c.get("decision") is None), None)
         if case is None and matches:
             case = matches[0]                  # no live match — fall back to a settled one
-        if case is not None and case.get("decision") is None:
-            w.pop("wall_bad_since", None)      # a live pending case is the normal wall state
-            return
-        since = w.setdefault("wall_bad_since", self._now_s())
-        if self._now_s() - since < ping_min * 60:
-            return
-        w.pop("wall_bad_since", None)
-        if case is not None:
-            # (a): the case settled but nothing un-held this worker. Close the case too
-            # (parity with an ordinary `resume` settle, which always closes what it acts
-            # on) — a decided case has nothing left for any settle to do with it.
-            # T2 (01-18, F2+N7) + T3 (01-19, F2): mirror an operator `resume`'s semantics
-            # exactly — via the ONE shared un-hold-and-replay helper the resume arm calls
-            # (the same factoring discipline _unhold_worker itself got in 01-18 T2). This
-            # seam is the treadmill's second door: tron-26's CASE-012 replayed a stale wall
-            # echo through HERE, post-safe-park, after 005–011 came through resume — a fold
-            # implemented only at the resume arm would have left this one re-raising. The
-            # already-settled `case` object is the discriminator this un-hold acted on.
-            self._close_case(None, case)
-            self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
-            self._unhold_and_replay(w, block, case)
-            self._emit("pulse")
-        else:
-            # (b): no case at all — this worker is unreachable. Re-raise one.
-            detail = w.pop("wall_detail", None) or (
-                f"{wid} is walled with no pending case"
-                + (f" for {block}" if block else "") + " — invariant repair")
-            self._reraise_wall(block, wid, detail)
+
+        def _repair(idle_s):
+            if case is not None:
+                # (a): the case settled but nothing un-held this worker. Close the case too
+                # (parity with an ordinary `resume` settle, which always closes what it acts
+                # on) — a decided case has nothing left for any settle to do with it.
+                # T2 (01-18, F2+N7) + T3 (01-19, F2): mirror an operator `resume`'s semantics
+                # exactly — via the ONE shared un-hold-and-replay helper the resume arm calls
+                # (the same factoring discipline _unhold_worker itself got in 01-18 T2). This
+                # seam is the treadmill's second door: tron-26's CASE-012 replayed a stale wall
+                # echo through HERE, post-safe-park, after 005–011 came through resume — a fold
+                # implemented only at the resume arm would have left this one re-raising. The
+                # already-settled `case` object is the discriminator this un-hold acted on.
+                self._close_case(None, case)
+                self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
+                self._unhold_and_replay(w, block, case)
+                self._emit("pulse")
+            else:
+                # (b): no case at all — this worker is unreachable. Re-raise one.
+                detail = w.pop("wall_detail", None) or (
+                    f"{wid} is walled with no pending case"
+                    + (f" for {block}" if block else "") + " — invariant repair")
+                self._reraise_wall(block, wid, detail)
+
+        # T1 (01-26): repair-only (no nudge tier); ping_min*60 — the gate-orphan clock's
+        # sibling, a preserved exemption, never wake_ceiling.
+        self._pace_ladder(w, "wall_bad_since",
+                          idle=case is None or case.get("decision") is not None,
+                          cap_span=ping_min * 60, on_cap=_repair)
 
     def _reraise_wall(self, block, wid, detail):
         """T3(b): repair a caseless wall the same way every OTHER wall parks — a fresh
@@ -3808,34 +3867,39 @@ class Engine:
                         # could never fire (the exact trap the comment above names, one
                         # layer down; observed 20+ silent minutes on both tron-19 and
                         # tron-20). Fire on EITHER clock: a stale record (the dead/frozen
-                        # runner arm, unchanged), or one full silence window of
-                        # continuously OBSERVED inconsistency (idle + bound + gateless) on
-                        # the engine's own wall clock — which no idle-poll can refresh.
-                        since = w.setdefault("orphan_since", self._now_s())
-                        due = ((delta is not None and delta > ping * 60)
-                               or self._now_s() - since >= ping * 60)
-                        if due and done:
-                            # arm (a), tron-20: the block is ✅ with nothing left to gate —
-                            # nothing remains for this worker at all. Release it (the
-                            # ordinary event-logged chokepoint) and free the slot; an
-                            # operator case here is pure noise — there is no decision to
-                            # make (supersedes the 01-15 escalate-on-done arm, whose wall
-                            # needed a manual `tron recover` anyway).
-                            self._release_worker(w, notify=False, reason="force-release")
-                            self.log("flow", f"sweep: {w.get('id')} idle on done+gateless "
-                                             f"{blk} -> released (slot freed)")
-                            self._emit("pulse")
-                        elif due:
-                            # arm (b), tron-19: idle + bound + open block + no gate is a
-                            # MUTUAL WAIT (the runner awaits a mailbox message; the engine
-                            # awaits the worker's report) — never a silent wait state.
-                            self._gate_giveup(
-                                blk, {}, w.get("id"),
-                                f"{w.get('id')} idle, bound to {blk}, but no gate exists "
-                                f"for it (mutual wait — the runner idles awaiting a "
-                                f"message)",
-                                "gate-orphaned",
-                                "check the worker/block binding; resume or reassign")
+                        # runner arm, unchanged — an already-expired span, cap_span=0 below),
+                        # or one full silence window of continuously OBSERVED inconsistency
+                        # (idle + bound + gateless) on the engine's own wall clock — which
+                        # no idle-poll can refresh.
+                        delta_stale = delta is not None and delta > ping * 60
+
+                        def _giveup(idle_s):
+                            if done:
+                                # arm (a), tron-20: the block is ✅ with nothing left to
+                                # gate — nothing remains for this worker at all. Release it
+                                # (the ordinary event-logged chokepoint) and free the slot;
+                                # an operator case here is pure noise — there is no decision
+                                # to make (supersedes the 01-15 escalate-on-done arm, whose
+                                # wall needed a manual `tron recover` anyway).
+                                self._release_worker(w, notify=False, reason="force-release")
+                                self.log("flow", f"sweep: {w.get('id')} idle on done+gateless "
+                                                 f"{blk} -> released (slot freed)")
+                                self._emit("pulse")
+                            else:
+                                # arm (b), tron-19: idle + bound + open block + no gate is a
+                                # MUTUAL WAIT (the runner awaits a mailbox message; the
+                                # engine awaits the worker's report) — never a silent wait.
+                                self._gate_giveup(
+                                    blk, {}, w.get("id"),
+                                    f"{w.get('id')} idle, bound to {blk}, but no gate exists "
+                                    f"for it (mutual wait — the runner idles awaiting a "
+                                    f"message)",
+                                    "gate-orphaned",
+                                    "check the worker/block binding; resume or reassign")
+
+                        self._pace_ladder(w, "orphan_since", idle=True,
+                                         cap_span=0 if delta_stale else ping * 60,
+                                         on_cap=_giveup)
                         continue
                     w.pop("orphan_since", None)   # a live gate owns this worker's pacing
                 continue
@@ -3858,16 +3922,14 @@ class Engine:
         # the gate's own clock (there's no runner left to read activity from). Never fires
         # under a blank trunk read (T3) — a fault tick touches no gate state at all.
         if not self._trunk_fault:
-            now = self._now_s()
             for block, g in list(self.st.gate.items()):
                 if str(block).startswith("review:") or g.get("violation_pending"):
                     continue
-                if self._worker_id_for_block(block) is not None:
-                    g.pop("orphan_since", None)
-                    continue
-                since = g.setdefault("orphan_since", now)
-                if now - since >= ping * 60:
-                    self._resolve_workerless_gate(block, g)
+
+                self._pace_ladder(
+                    g, "orphan_since", idle=self._worker_id_for_block(block) is None,
+                    cap_span=ping * 60,
+                    on_cap=lambda idle_s, block=block, g=g: self._resolve_workerless_gate(block, g))
         # T6 (01-18 addendum, N2): the wall-pairing law's THIRD key. 01-17 repaired the
         # worker-keyed half (_sweep_wall_invariant above) and the gate-keyed half (the
         # workerless-gate net just above); a block in st.blocked with NO undecided case,
