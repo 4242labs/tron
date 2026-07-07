@@ -50,9 +50,13 @@ no live sim runs here, ever). That run is the historical CASE-004->012 wall trea
 (9 consecutive `PAGE reason=wall` records on ONE block/row inside ~80 minutes, the exact
 tron-26 incident 01-19/01-24's fixes target) plus a genuine `gate-contradiction`
 escalation and a `gate-step-cap` ("stuck at local after 3 attempts") escalation on a
-later block — between them they exercise every code path this block (01-26) touched:
-the idle-cap ladder consolidation (T1), the case-kind split (T2), and the
-treadmill-proofing invariant T5 hardens further. Embedded as literals (not a runtime
+later block. The A/B differential (`t_ab_*`) locks the two behaviors 01-26 changes that
+these recorded streams actually reach: the case-kind split (T2) and the treadmill
+collapse-to-one-case (T5). It does NOT exercise T1's idle-cap/nudge wall-clock arithmetic —
+every recorded scenario walls the worker before any timer accrues, so the consolidated
+`_pace_ladder` short-circuits on its `if not idle` branch; T1's pacing arithmetic stays
+covered by the pre-existing per-call-site tests (`block_01_1X_test.py`, 13 of which catch a
+`_pace_ladder` cap/nudge regression — independently verified). Embedded as literals (not a runtime
 file read) so this fixture is fully deterministic and never depends on tron-meta being
 present on disk (a fresh tron-app checkout, CI, etc.).
 
