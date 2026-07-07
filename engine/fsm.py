@@ -124,9 +124,12 @@ NEGATED_SETTLE_NOTE = ("settle read as negated (e.g. \"don't approve CASE-7\") �
 # the generic 'wall' every one shared before) — naming only, hold/settle/retract stay
 # identical. `gate-step-cap` (an 8th _gate_giveup site, ~866) is deliberately unsplit.
 # WALL_KINDS: every site that compared literal kind=='wall' checks membership instead.
+# `gate-close-idle-cap` (01-27, F-4): the close-stage idle-cap's own code — a silent
+# stuck-close force-release now pages instead, distinct from `gate-close-dirty` (a
+# CONFIRMED paperwork/replica defect, not an idle timeout).
 GATE_GIVEUP_SPLIT_CODES = ("gate-contradiction", "gate-bypass", "gate-idle-cap",
                            "gate-close-dirty", "gate-orphaned", "gate-record-bypass",
-                           "record-bypass")
+                           "record-bypass", "gate-close-idle-cap")
 WALL_KINDS = frozenset(("wall",) + GATE_GIVEUP_SPLIT_CODES)
 
 
@@ -2152,11 +2155,22 @@ class Engine:
         bw = next((x for x in self.st.workers if x.get("id") == wid), None) if wid else None
         genuinely_idle = bool(wid) and jobs.runner_idle(wid) and not (bw and bw.get("status") == "walled")
 
+        # F-4 (01-27, 02-05 review): this idle path used to `_force_release_block`
+        # straight out — a SILENT paperwork discard (no events.failure, no wall) unlike
+        # the sibling attempts-count cap below (~2426/2443, `gate-close-dirty`), which
+        # already escalates. No-silent-stuck applies here too: a stuck close-out must
+        # PAGE, never vanish. Routed through the SAME `_gate_giveup` escalation machinery
+        # (NET-ZERO — no new knob/stage), with its own named code (consistent with
+        # 01-26's WALL_KINDS split) rather than reusing `gate-close-dirty` — that code
+        # names a CONFIRMED paperwork/replica defect; this one is a silent idle timeout,
+        # a different cause (mirrors `gate-idle-cap`'s gate-stage idle cap, at close).
         def _cap(idle_s):
-            self._force_release_block(block)
-            self.st.gate.pop(block, None)
-            self.log("flow", f"gate[{block}] close cap -> force release")
-            self._emit("pulse")   # tron-07 W6c: a freed slot without a pulse stalls the SWITCHBOARD
+            self._gate_giveup(
+                block, g, wid,
+                f"gate[{block}] stuck at close — worker idle {int(idle_s)}s past the "
+                f"close cap with no clean confirmation",
+                "gate-close-idle-cap",
+                "check worker liveness; resume or reassign")
 
         # DUAL USE (01-18 addendum): `gate_close_cap` is a wake_ceiling_sec MULTIPLIER here
         # but a plain ATTEMPTS COUNT at _confirm_close's `close_nudges` below — same knob,

@@ -188,7 +188,9 @@ def t_close_stage_discipline():
         eng._confirm_close = orig_cc
 
     # W6b + S-1: a worker mid-close-out (runner working) never accrues; an idle close
-    # force-releases only after gate_close_cap x ceiling of continuous WALL-CLOCK idle.
+    # escalates (F-4, 01-27: routed through _gate_giveup — a NAMED wall, never the old
+    # silent force-release; see block_01_27_test.py for the full AC-6 escalation proof)
+    # only after gate_close_cap x ceiling of continuous WALL-CLOCK idle.
     eng3 = _eng()
     eng3.st.row("A-01")["status"] = "done"
     g3 = eng3.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
@@ -200,18 +202,23 @@ def t_close_stage_discipline():
         for _ in range(5):
             clock["t"] += eng3._pace("gate_close_cap", 3)
             eng3._drive_close("A-01", g3, "ENG-A-01")
-        ok("W6b working runner never accrues close idle (no force-release)",
+        ok("W6b working runner never accrues close idle (no escalation)",
            g3.get("close_idle_since") is None and "A-01" in eng3.st.gate, f"g={g3}")
         jobs.runner_idle = lambda wid, idx=None: True     # idle -> wall-clock to the cap
         eng3._tq = []
         eng3._drive_close("A-01", g3, "ENG-A-01")          # anchor close_idle_since
         clock["t"] += eng3._pace("gate_close_cap", 3) + 1
         eng3._drive_close("A-01", eng3.st.gate["A-01"], "ENG-A-01")
-        ok("W6b idle close force-releases past the wall-clock cap",
+        ok("W6b idle close escalates past the wall-clock cap (gate dropped)",
            "A-01" not in eng3.st.gate)
-        # W6c: the force-release pulses the SWITCHBOARD (reviewer dispatch / session end).
-        ok("W6c force-release pulses the switchboard",
-           any(t == "pulse" for t, _ in eng3._tq), f"tq={eng3._tq}")
+        # F-4 (01-27): a stuck close-out now PAGES a named wall — never a silent
+        # force-release. W6c's old direct pulse is gone (nothing is released here
+        # anymore; _h_escalate — not this cap — owns the pulse, once the wall drains).
+        ok("F-4 the stuck close raises a NAMED wall with its own distinct case-kind "
+           "(never the generic 'wall')",
+           any(t == "wall:raised:A-01" and s.get("code") == "gate-close-idle-cap"
+               for t, s in eng3._tq),
+           f"tq={eng3._tq}")
     finally:
         jobs.runner_idle = orig_idle
 

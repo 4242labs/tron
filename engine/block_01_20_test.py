@@ -898,6 +898,133 @@ def t3b_ran_then_died_canary_does_not_release():
         jobs.find, jobs.is_alive = orig
 
 
+# ══ block 01-27 T1: the fault-injection drill, discharging 01-23 AC-6 as a repeatable
+# in-suite test (never a wait-for-a-real-outage manual). Unlike the staggered-roster
+# t3b_fleet_wide_death_then_recovery_autoreleases_hold above (each death landed via a
+# separate roster swap), this kills BOTH live engineers in the SAME sweep — a genuine
+# fleet-wide mid-run kill, canary included — then restores the runtime and drives the
+# REAL _switchboard to prove dispatch actually resumes (BLOCKER-1 style), not merely
+# that the hold's own bookkeeping cleared. ══
+
+def t3b_fleet_wide_outage_drill_canary_included_self_release_clean_finish():
+    """01-27 T1/AC-1/AC-2: fleet-wide runtime kill mid-run (both live engineers die in
+    ONE sweep, the elected canary among them) -> the hold engages; the canary's own job
+    record stays PRESENT-but-dead (tron-33/34's exact shape, never merely absent) and
+    re-probes on the paced cadence, never per-sweep; once the runtime recovers the hold
+    self-releases the instant the canary's probe turns healthy; the real _switchboard
+    (not a stub) then dispatches the still-pending fleet, proving a clean finish. At NO
+    point does any operator-facing case/wall open -- zero operator touch throughout."""
+    ctx, _ = build(blocks=[("A-01", "🔄", "none"), ("A-02", "🔄", "none")])
+    eng = Engine(ctx); started(eng)
+    eng.dry = False
+    clock = {"t": 50000.0}
+    eng._now_s = lambda: clock["t"]
+    eng.st.workers[:] = [
+        {"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+         "session_id": "real-1", "status": "working"},
+        {"id": "ENG-A-02", "role": "engineer", "block": "A-02",
+         "session_id": "real-2", "status": "working"},
+    ]
+
+    world = {"dead": {"ENG-A-01", "ENG-A-02"}, "healthy": set()}
+
+    def _index():
+        out = {}
+        for wid in world["dead"]:
+            out[wid] = {"state": "error", "dir": f"/fake/{wid}", "pid": None, "turns": 0}
+        for wid in world["healthy"]:
+            out[wid] = {"state": "idle", "dir": f"/fake/{wid}", "pid": 999, "turns": 1}
+        return out
+
+    def _find(wid, idx=None):
+        return (idx if idx is not None else _index()).get(wid)
+
+    def _alive(wid, idx=None):
+        rec = (idx if idx is not None else _index()).get(wid)
+        return bool(rec) and rec.get("state") != "error"
+
+    def _kind(wdir):
+        for wid in world["dead"]:
+            if wdir == f"/fake/{wid}":
+                return "RunnerRefusal"
+        return ""
+
+    orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
+    jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
+    redispatched = []
+    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
+    try:
+        # Tick 1: the worker runtime dies FLEET-WIDE, mid-run -- both engineers dead in
+        # the SAME sweep (never staggered across separate roster swaps).
+        eng._sweep()
+        hold = eng.st.data.get("refusal_hold", {})
+        ok("T1(AC-1) a fleet-wide mid-run kill (both live engineers, one sweep) engages "
+           "the hold",
+           hold.get("active") is True, f"hold={hold}")
+        ok("T1(AC-1/AC-2) the elected canary is one of the fleet-wide dead (the canary "
+           "is INCLUDED in the kill, never a survivor elected after the fact)",
+           hold.get("canary") in ("A-01", "A-02"), f"hold={hold}")
+        ok("T1 zero operator touch at engage -- held blocks never wall (no pending case "
+           "opened)",
+           not eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+
+        canary_block = hold.get("canary")
+        other_block = "A-02" if canary_block == "A-01" else "A-01"
+        n0 = len(redispatched)
+
+        # Tick 2, clock UNADVANCED: the canary's OWN job record is PRESENT-but-dead
+        # (tron-33/34's exact shape) -- must NOT spawn a second probe before its paced
+        # cadence elapses (no every-sweep spawn-burn into a still-dead runtime).
+        eng._sweep()
+        ok("T1(AC-2) a present-dead canary record is not re-probed before its cadence "
+           "elapses (paced, not per-sweep)",
+           len(redispatched) == n0, f"redispatched={redispatched}")
+
+        # Tick 3: the pace cadence has elapsed -- the stale-dead canary record re-probes.
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._sweep()
+        ok("T1(AC-2) the stale-dead canary record re-probes on the paced cadence -- the "
+           "01-23 fix is exercised, not just present",
+           len(redispatched) > n0 and eng.st.data["refusal_hold"].get("active") is True,
+           f"redispatched={redispatched} hold={eng.st.data.get('refusal_hold')}")
+
+        # The runtime recovers: the canary turns healthy.
+        world["dead"] = set()
+        world["healthy"] = {eng._worker_id("engineer", canary_block)}
+        clock["t"] += eng._pace("gate_nudge_after", 2) + 1
+        eng._tq = []
+        eng._sweep()
+        hold2 = eng.st.data.get("refusal_hold", {})
+        ok("T1(AC-1) the hold self-releases the instant the canary's probe turns "
+           "healthy -- zero operator touch",
+           hold2.get("active") is False and "canary" not in hold2, f"hold={hold2}")
+        ok("T1 a pulse is emitted on release (dispatch may resume)",
+           any(t == "pulse" for t, _ in eng._tq), f"tq={eng._tq}")
+
+        # Clean finish (BLOCKER-1 style, never a stubbed _redispatch): drive the REAL
+        # _switchboard and prove the still-pending fleet actually dispatches -- the run
+        # continues, not just the hold's own bookkeeping.
+        dispatched = []
+        slots = {"n": 2}
+        eng.st.run_control = None
+        eng._free_slots = lambda: slots["n"]
+        pending = [other_block]
+        eng._select_work = lambda: ("block", pending.pop(0)) if pending else None
+        eng._dispatch_engineer = lambda ref: (dispatched.append(ref),
+                                              slots.__setitem__("n", slots["n"] - 1))
+        eng._in_scope_rows = lambda: []
+        eng._all_settled = lambda: False
+        eng._switchboard()
+        ok("T1 clean finish -- with the hold clear, the REAL _switchboard dispatches the "
+           "other fleet-wide-held block (not just the canary's own probe)",
+           dispatched == [other_block], f"dispatched={dispatched}")
+        ok("T1 clean finish -- no operator touch across the ENTIRE drill (no wall/case "
+           "ever opened, zero operator lever)",
+           not eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+    finally:
+        jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = orig
+
+
 # ══ T4: settling an architect-kind case acts (idempotent against T1/T5) ══
 
 def t4_approve_rearms_the_ladder_and_redelivers_once():
