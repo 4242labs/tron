@@ -177,6 +177,12 @@ class Ctx:
         # Default: the meta dir holding the pipeline.
         paperwork = (project or {}).get("paperwork_paths") or [
             (os.path.dirname(pipeline_rel) or "meta") + "/"]
+        # Block 01-28 (T2/T4): the declared trunk-validation command/env, and the optional
+        # CI check-run name the DONE-TRUNK gate may trust instead of re-running. Both live
+        # under project.yaml top-level keys (`test:`, `ci:`) — contracts/schema/project.schema.yaml
+        # is the source of truth; absent either -> None/{} (never a guessed default).
+        test_cfg = (project or {}).get("test") or {}
+        ci_cfg = (project or {}).get("ci") or {}
         return {
             "root": root,
             "main_branch": repo.get("main_branch", "main"),
@@ -188,4 +194,7 @@ class Ctx:
             "blocks_rel": ((project or {}).get("blocks_dir") or "meta/blocks/").rstrip("/") + "/",
             "archive": under("archive_dir", "meta/blocks/archive/"),
             "paperwork": [str(p) for p in paperwork],
+            "test_command": test_cfg.get("command"),
+            "test_env": test_cfg.get("env") or {},
+            "ci_check_name": ci_cfg.get("check_name"),
         }
