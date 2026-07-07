@@ -1440,9 +1440,12 @@ class Engine:
                      nudge_span=None, on_nudge=None, repeat_nudge=False):
         """T1 (01-26, R-04): the ONE since/nudge/cap wall-clock law (S-1) — was 7 copies of
         this skeleton (gate-stage, close, review-landing, review-attest, architect-job,
-        wall-invariant, gate-orphan). `idle` is resolved by the CALLER off a pid/file fact
-        (never a message, Q1) with every incident exemption folded in there, never here —
-        this owns only the arithmetic. False pops both timers ('clear'). cap_span seconds
+        wall-invariant, gate-orphan). `idle` is resolved by the CALLER, never here (never a
+        message, Q1): five of the seven read a pid/file liveness fact (jobs.runner_idle);
+        the wall-invariant sweep and the workerless-gate clock instead key on
+        case-decision / roster-presence state (there is no runner left to poll). Every
+        incident exemption folds in at the call site, never here — this helper owns only
+        the arithmetic. False pops both timers ('clear'). cap_span seconds
         idle -> on_cap(idle_s) fires once, pops ('cap'). nudge_span=None: repair-only, no
         nudge tier. repeat_nudge=False: nudge ONCE per episode (F8: on_nudge's falsy
         return means SUPPRESSED, must not consume the budget). True: re-nudge every
@@ -1809,9 +1812,14 @@ class Engine:
         # `state: idle`, wall-clock — never a tick count (R-1/W7b). `ci-wait` excluded, the
         # PR machinery owns that wait.
         if stage == g.get("stage") and not renudge and stage != "ci-wait":
-            # T3 (01-18, N3): a wall raised mid-gate HOLDS its worker (D-15-2) and its
-            # runner idles by design — exempt it (same class the liveness sweep applies to
-            # a walled worker) or the idle cap fires on a worker already parked correctly.
+            # T3 (01-18, N3): a wall raised mid-gate HOLDS its worker (D-15-2) and its runner
+            # idles by design (parked awaiting the operator, never a stall to accrue against)
+            # — the same exemption class the liveness sweep already applies to a walled
+            # worker (_sweep_wall_invariant). Without it the gate's own idle cap fired ~3x
+            # the ceiling later and popped the gate 01-15 deliberately preserved for the
+            # wall, plus a duplicate wall the blocked-guard only mostly swallows. Roster
+            # status is the authority (not the runner's on-disk idle record, which is
+            # honestly idle here).
             bw = next((x for x in self.st.workers if x.get("id") == wid), None)
             genuinely_idle = jobs.runner_idle(wid) and not (bw and bw.get("status") == "walled")
 
@@ -2130,10 +2138,17 @@ class Engine:
         if self._worker_id_for_block(block) is None:
             self._confirm_close(block, g)
             return
-        # tron-07 W6b + S-1: a worker mid-close-out (runner `working`) never accrues; a
-        # plain wall raised during close-out HOLDS this same bound worker (D-15-2, T3
-        # 01-18 N3) and is exempt too — a force-release must never strand a live wall case
-        # with no worker and no gate left to settle it.
+        # tron-07 W6b + S-1: close pacing is the same wall-clock law as the gate's — a
+        # worker mid-close-out (runner `working`) never accrues (per-tick accrual once
+        # capped a working engineer out of its own paperwork in 74s and force-released
+        # with no cleanliness check).
+        # T3 (01-18, N3, the AC close-site scenario): a plain wall raised during close-out
+        # HOLDS this same bound worker (D-15-2) — its runner idles by design, parked on the
+        # operator, never a stall to accrue. Before this exemption a walled worker still
+        # passed `not jobs.runner_idle(wid)` (True, it IS idle) and accrued past this
+        # guard, then at cap force-released a HELD worker out from under its own live wall
+        # case — no cleanliness check, a pending case left with no worker, no gate, and the
+        # block still parked. Exempt it exactly like the gate site above.
         bw = next((x for x in self.st.workers if x.get("id") == wid), None) if wid else None
         genuinely_idle = bool(wid) and jobs.runner_idle(wid) and not (bw and bw.get("status") == "walled")
 
