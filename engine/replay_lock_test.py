@@ -19,7 +19,7 @@ past-defect stream produces the SAME outcome pre- and post-consolidation"):
   2. `t_ab_*` — the genuine A/B BEHAVIOR DIFFERENTIAL. Each of the SAME recorded
      scenarios is run through BOTH engine versions IN-PROCESS: the post-consolidation
      `fsm.Engine` (this checkout) and the pre-consolidation `Engine` loaded fresh from
-     `git show origin/main:engine/fsm.py` (origin/main is exactly 01-26's parent commit,
+     `git show 28224cb:engine/fsm.py` (28224cb is exactly 01-26's parent commit,
      28224cb — the fsm.py as it stood immediately before this block's T1/T2/T5 touched
      it). The pre-version is written to a throwaway file and loaded via `importlib`
      under a DISTINCT module name (`fsm_pre_01_26`), never replacing `fsm` in
@@ -35,9 +35,9 @@ past-defect stream produces the SAME outcome pre- and post-consolidation"):
      exact narrow divergence rather than pretending it doesn't exist. `gate-step-cap`,
      deliberately left unsplit, IS asserted byte-identical (kind=='wall' in both).
 
-  `git show origin/main:...` reads a LOCAL git object already fetched into this repo's
+  `git show 28224cb:...` reads a LOCAL git object already fetched into this repo's
   ODB (no network at test time — same "no tokens, no network" guarantee as every other
-  block_NN_test.py). If that read ever fails (origin/main ref missing, no git present),
+  block_NN_test.py). If that read ever fails (28224cb ref missing, no git present),
   the affected t_ab_* case fails LOUDLY (via main()'s per-test capture below) rather
   than silently skipping the differential.
 
@@ -88,7 +88,7 @@ def ok(name, cond, detail=""):
     _results.append((name, bool(cond), detail))
 
 
-# ── load the pre-consolidation engine (origin/main:engine/fsm.py — 01-26's own parent
+# ── load the pre-consolidation engine (28224cb:engine/fsm.py — 01-26's own parent
 # commit) as an independent module, so t_ab_* can drive it side by side with the
 # post-consolidation `fsm.Engine` above ──
 _PRE_MODULE_NAME = "fsm_pre_01_26"
@@ -101,7 +101,7 @@ def _pre_engine_module():
     if _pre_module_cache:
         return _pre_module_cache[0]
     blob = subprocess.run(
-        ["git", "-C", ROOT, "show", "origin/main:engine/fsm.py"],
+        ["git", "-C", ROOT, "show", "28224cb:engine/fsm.py"],
         capture_output=True, text=True, check=True).stdout
     tmpdir = tempfile.mkdtemp(prefix="tron-fsm-pre-01-26-")
     path = os.path.join(tmpdir, _PRE_MODULE_NAME + ".py")
@@ -296,7 +296,7 @@ def _replay_gate_step_cap(engine_cls):
 
 def t_ab_treadmill_identical_pre_post():
     """The genuine A/B differential (AC-4): the recorded 9-case treadmill stream run
-    through BOTH the pre-01-26 engine (origin/main:engine/fsm.py, loaded fresh) and the
+    through BOTH the pre-01-26 engine (28224cb:engine/fsm.py, loaded fresh) and the
     post-01-26 engine (this checkout) must collapse to the exact same outcome — one
     case, one page, one hold. No T2 kind divergence is possible here (a plain
     worker.wall never reaches _gate_giveup), so this one is byte-identical, no carve-out."""
