@@ -40,24 +40,28 @@ These are canon — true on every project. They are not knobs.
 
 ---
 
-## Per-session knob (TRON asks at start; no default)
+## Per-session knobs (TRON asks at start; each shows a recommended default where one applies)
 
-TRON asks for this at the start of every session and will not proceed until it's answered. Live
-value lands in the MANIFEST (`manifest.yaml`).
+TRON asks for these at the start of every session and will not proceed until they're answered.
+Live values land in the MANIFEST (`manifest.yaml`); the model answer also writes straight into
+`knobs.yaml`'s `worker_model` map.
 
 | Knob | Notes |
 |:--|:--|
 | `worker_count` | Size of the worker pool — **engineers + reviewers share it**. The architect is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
+| `worker_model.architect` | The model the persistent architect runs on. TRON offers a recommended default (a strong tier, e.g. Opus — or the project's own `agents[].model` if declared) to confirm or override. |
+| `worker_model.other` | The model every non-architect role runs on — engineers and reviewers **share this one tier**. TRON offers a recommended default (a fast tier, e.g. Sonnet) to confirm or override. |
 
-## Required config (no default; set once in `knobs.yaml` before seeding)
+## Fail-closed, per role (no baked default anywhere in the engine)
 
-TRON asks at seed time and refuses to spawn any worker until this is set — never asked again at
-session start (it's not a per-session choice), and never inherited from the host runtime's own
-saved default.
-
-| Knob | Notes |
-|:--|:--|
-| `worker_model` | The exact model every spawned worker runs on — an explicit, declared, project-owned input. **No baked default anywhere in the engine.** Unset → the spawn path refuses outright rather than silently run a worker on the host CLI's own ambient default (the root cause of an unattributed credit drain this knob closes). |
+`worker_model` is a MAP with two keys, `architect` and `other`, each an explicit, declared,
+project-owned input resolved **independently**. Unlike `worker_count` (which just re-prompts on a
+bad answer), a role whose key ends up null/absent is **never** silently given a default: that
+role's spawn path refuses outright rather than run a worker on the host CLI's own ambient default
+(the root cause of an unattributed credit drain this knob closes — 01-21, made per-role by 01-30).
+This holds identically for a **headless** caller that bypasses the interactive bootup prompt
+entirely (calls `eng.start()` directly): the model must already be resolved in `knobs.yaml` before
+that call, or the spawn for that role refuses the same way.
 
 ## Fixed knobs (set once; edit `knobs.yaml` to change)
 

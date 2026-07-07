@@ -345,11 +345,12 @@ def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
     call — fsm._spawn retires a predecessor's dir (retire_stale_dir) before its first
     mailbox write, so a NEW worker under a reused id never inherits a stale mailbox.
 
-    01-21 T1: `model` is the declared, project-configured worker model (fsm._spawn passes
-    knobs.yaml's `worker_model`). FAIL-CLOSED: if neither `model` nor TRON_WORKER_MODEL
-    resolves to a value, this refuses to spawn at all — a worker must never launch on the
-    host CLI's own ambient default (raises WorkerModelUnconfigured, BEFORE any process is
-    started)."""
+    01-21 T1: `model` is the declared, project-configured worker model (fsm._spawn resolves
+    it per-role from knobs.yaml's `worker_model` map since 01-30 — see fsm._model_for_role
+    — and passes the resolved value here; this function itself stays role-agnostic, just a
+    single resolved string). FAIL-CLOSED: if neither `model` nor TRON_WORKER_MODEL resolves
+    to a value, this refuses to spawn at all — a worker must never launch on the host CLI's
+    own ambient default (raises WorkerModelUnconfigured, BEFORE any process is started)."""
     resolved_model = model if model is not None else _env_model()
     if not resolved_model:
         raise WorkerModelUnconfigured(

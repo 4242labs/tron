@@ -5,11 +5,8 @@
      fat-finger that reads a stray trailing `--tag wall` onto a routine positional
      message) is a hard error AT THE WORKER, never reaching the engine as a wall; the
      canonical branch-declare form (`--branch <name> "<message>"`, no `--tag` needed)
-     still succeeds, and structured `--tag wall` / `--tag retract` (flags BEFORE the
-     message) still succeed.
-  T2 (AC-2) a walled sender's own `retract` of its still-undecided wall auto-dismisses
-     it — case closed, worker un-held, queued verbs replayed — zero operator page;
-     a third-party or already-settled wall is an honest no-op, never a silent drop.
+     still succeeds, and structured `--tag wall` (flags BEFORE the message) still
+     succeeds.
   T3 (AC-3/AC-4) a settle can carry a payload: the answer text reaches the walled
      worker on release (raise-and-resolve), delivered through the same worker-inbox
      path every settle-driven notice uses. A spec-ownable decision-wall (kind ∈
@@ -22,10 +19,14 @@
      settle ("don't approve CASE-7") never matches the affirmative handler — fail-
      closed, re-prompts with the accepted forms instead of guessing; a bare
      "resume CASE-007" is unaffected (no payload, same behavior as before T3).
-  T5 (01-26 AC-8, folds FU-01-24a/b) the same-tick retract's provenance guard: a wall
-     from sender A and a retract from sender B are unrelated (B's retract never touches
-     A's queued wall); two walls from one sender + one retract cancels only the FIRST
-     still-queued one, never a blanket cancel.
+
+  T2/T5 (the worker-`retract` verb and its `_own_wall` provenance guard) were cut in
+  block 01-29 (zero recorded use, ADR §C) — their tests (ac1_retract_*, ac2_*,
+  ac8_*, ac4_retract_before_architect_answers_suppresses_the_stale_relay) were removed
+  with them. F-1 (the same-tick wall+retract fat-finger race) no longer exists as a
+  reachable shape once retract itself is gone; the real F-1 protection is the engine-
+  observed `_sweep_wall_invariant` (fsm.py), untouched by 01-29 and proven in
+  block_01_29_test.py.
 
 Run: python3 engine/block_01_24_test.py   (exit 0 = pass). No tokens, no network.
 """
@@ -43,7 +44,7 @@ sys.path.insert(0, HERE)
 
 os.environ["TRON_DRY"] = "1"
 
-from fsm import Engine, SPEC_OWNABLE_KINDS, WALL_KINDS  # noqa: E402
+from fsm import Engine, SPEC_OWNABLE_KINDS  # noqa: E402
 from sentry_test import build, started      # noqa: E402
 
 _results = []
@@ -75,9 +76,8 @@ def _wall(eng, block, wid, detail="flaky ci", kind=None):
     `worker.wall` resolves to the DEFERRED trigger `wall:raised:<block>` — `_ingest`
     only queues it into `self._tq` via `_emit`; `_h_escalate` does not run until
     `_drain_triggers` drains the queue at end-of-tick. Driving it via `_ingest` +
-    `_drain_triggers` (never a direct `_h_escalate(...)` call) is what makes the F-1
-    same-tick wall+retract race even reachable by a test — a direct call bypasses the
-    exact queue/drain seam the bug lives in.
+    `_drain_triggers` (never a direct `_h_escalate(...)` call) exercises the real
+    queue/drain seam, never a shortcut around it.
 
     Returns the parked case id."""
     eng._tq = []
@@ -112,11 +112,6 @@ def _capture_to_worker(eng):
     sent = []
     eng._to_worker = lambda wid, text, kind: sent.append((wid, text, kind))
     return sent
-
-
-def _queue_walls(eng, wid, specs):
-    for tag, slots in specs:
-        eng._ingest(tag, slots, {"kind": "worker", "id": wid})
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -189,19 +184,6 @@ def ac1_structured_tag_before_message_still_works():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def ac1_retract_verb_accepted_flags_before_message():
-    d, script = _report_sandbox()
-    try:
-        r = _run_report(script, "ENG-A", "--tag", "retract", "retracting my last wall")
-        ok("AC-1 the new retract verb is accepted (flags before message)",
-           r.returncode == 0, f"rc={r.returncode} stderr={r.stderr!r}")
-        lines = _inbox_lines(d)
-        ok("AC-1 retract is recorded correctly",
-           len(lines) == 1 and lines[0].get("tag") == "retract", f"lines={lines}")
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
-
-
 def ac1_flag_looking_token_inside_the_quoted_message_is_never_flagged():
     # A message that merely MENTIONS "--tag wall" inside its own (single, quoted) text
     # is not a flags-after-message shape — it's one argument, never split by report.sh.
@@ -258,197 +240,6 @@ def ac1_kind_after_the_message_is_rejected_same_hard_error_as_every_other_flag()
            _inbox_lines(d) == [], f"inbox={_inbox_lines(d)}")
     finally:
         shutil.rmtree(d, ignore_errors=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════════
-# T2 (AC-2): retract — sender-scoped auto-dismiss
-# ══════════════════════════════════════════════════════════════════════════════════
-
-def ac2_own_undecided_wall_auto_dismisses_zero_operator_page():
-    eng = _eng()
-    wid = "ENG-A-01"
-    cid = _wall(eng, "A-01", wid, detail="fat-fingered wall")
-    _queue_walls(eng, wid, [("worker.done", {"block": "A-01", "_raw": "done A-01 — local: ev"})])
-    sent = _capture(eng)
-    replayed = []
-    orig_ingest = eng._ingest
-
-    def spy(tag, slots, sender):
-        replayed.append(tag)
-        return orig_ingest(tag, slots, sender)
-    eng._ingest = spy
-    eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
-    ok("AC-2 the case is closed", cid not in eng.st.pending_cases,
-       f"cases={eng.st.pending_cases}")
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("AC-2 the worker is un-held", w.get("status") != "walled", f"w={w}")
-    ok("AC-2 the block is back in the dispatch pool", "A-01" not in eng.st.blocked,
-       f"blocked={eng.st.blocked}")
-    ok("AC-2 its queued verb replayed", "worker.done" in replayed, f"replayed={replayed}")
-    ok("AC-2 zero operator page (no escalate.wall / tg.escalate from the retract)",
-       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
-
-
-def ac2_third_party_retract_is_an_honest_no_op():
-    eng = _eng()
-    wid = "ENG-A-01"
-    cid = _wall(eng, "A-01", wid, detail="a real wall")
-    tw = _capture_to_worker(eng)
-    eng.dry = False
-    try:
-        # A DIFFERENT, non-walled sender attempts to retract — not its own wall.
-        eng.st.workers.append({"id": "ENG-OTHER", "role": "engineer", "block": "A-02",
-                               "session_id": "dry", "status": "working"})
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": "ENG-OTHER"})
-    finally:
-        eng.dry = True
-    ok("AC-2 a third-party retract does NOT clear the wall",
-       cid in eng.st.pending_cases and eng.st.pending_cases[cid].get("decision") is None,
-       f"cases={eng.st.pending_cases}")
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("AC-2 the actually-walled worker stays walled", w.get("status") == "walled", f"w={w}")
-    ok("AC-2 the third party gets an honest notice (never a silent drop)",
-       any(wid_ == "ENG-OTHER" and "nothing to retract" in txt.lower()
-           for wid_, txt, _ in tw), f"tw={tw}")
-
-
-def ac2_already_settled_retract_is_an_honest_no_op():
-    eng = _eng()
-    wid = "ENG-A-01"
-    cid = _wall(eng, "A-01", wid, detail="a real wall")
-    # Real pipeline: operator:decision:<block> is itself a DEFERRED trigger — settle
-    # through _ingest + _drain_triggers, never a direct _h_apply_decision(...) call.
-    eng._ingest("operator.decision", {"case": cid, "decision": "resume", "block": "A-01"},
-               {"kind": "operator"})
-    eng._drain_triggers()
-    ok("setup: the settle already closed the case", cid not in eng.st.pending_cases)
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("setup: the settle already un-held the worker", w.get("status") != "walled")
-    tw = _capture_to_worker(eng)
-    eng.dry = False
-    try:
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
-    finally:
-        eng.dry = True
-    ok("AC-2 a retract after the decision already landed is a no-op, not a crash",
-       not eng.st.pending_cases, f"cases={eng.st.pending_cases}")
-    ok("AC-2 the honest notice fires for an already-settled retract too",
-       any(wid_ == wid and "nothing to retract" in txt.lower() for wid_, txt, _ in tw),
-       f"tw={tw}")
-
-
-def ac2_same_tick_wall_then_retract_self_clears_fully():
-    """F1 (BLOCKER, review cycle 1): `worker.wall` resolves to the DEFERRED trigger
-    `wall:raised:<block>` — `_ingest` only QUEUES it into `self._tq` via `_emit`;
-    `_h_escalate` does not run until end-of-tick `_drain_triggers` drains the queue.
-    `worker.retract` is an IMMEDIATE side-handler that runs the instant it is ingested.
-    So a worker fat-fingering `--tag wall` then `--tag retract` in the SAME tick must
-    fully self-clear — no case ever opens, the worker is never held, and zero operator
-    page fires — proven here by driving BOTH messages through the real _ingest + _tq +
-    _drain_triggers seam, in one tick, never touching _h_escalate/_h_retract directly
-    (the exact bypass that let this bug hide behind 52/52 green before)."""
-    eng = _eng()
-    wid = "ENG-A-01"
-    sent = _capture(eng)
-    tw = _capture_to_worker(eng)
-    eng.dry = False
-    try:
-        eng._tq = []
-        # Message 1: the fat-fingered wall — its trigger only QUEUES; _h_escalate has
-        # not run yet.
-        eng._ingest("worker.wall", {"block": "A-01", "detail": "fat-fingered wall"},
-                   {"kind": "worker", "id": wid})
-        # Message 2, SAME tick: the sender catches its own mistake immediately.
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
-        # End-of-tick drain — mirrors tick()'s own _drain_triggers() call.
-        eng._drain_triggers()
-    finally:
-        eng.dry = True
-    ok("F1 no wall case ever opens (the queued wall was cancelled before _h_escalate ran)",
-       not any(c.get("kind") == "wall" for c in eng.st.pending_cases.values()),
-       f"cases={eng.st.pending_cases}")
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("F1 the worker is never left walled", w.get("status") != "walled", f"w={w}")
-    ok("F1 the block never lands in the blocked pool", "A-01" not in eng.st.blocked,
-       f"blocked={eng.st.blocked}")
-    ok("F1 ZERO operator page (no escalate.wall / tg.escalate)",
-       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
-    ok("F1 no false 'nothing to retract' notice either — the same-tick retract genuinely "
-       "acted, it did not fall through to the honest-no-op arm",
-       not any(wid_ == wid and "nothing to retract" in txt.lower() for wid_, txt, _ in tw),
-       f"tw={tw}")
-
-
-def ac8_a_wall_b_retract_leaves_a_intact():
-    """T5/AC-8 (01-26, FU-01-24b): a same-tick wall from sender A and a retract from
-    sender B are UNRELATED — B's retract must never touch A's still-queued wall trigger
-    (the provenance guard, FU-01-24a, scopes the same-tick cancel to worker_id AND the
-    _own_wall marker; worker_id alone was already sender-scoped, but this proves the
-    two-sender shape explicitly, pipeline-level, through the real _ingest + _tq +
-    _drain_triggers seam)."""
-    ctx, _ = build(blocks=[("A-01", "🔄", "none"), ("B-01", "🔄", "none")])
-    eng = Engine(ctx); started(eng)
-    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
-                           "session_id": "dry", "status": "working"})
-    eng.st.workers.append({"id": "ENG-B-01", "role": "engineer", "block": "B-01",
-                           "session_id": "dry", "status": "working"})
-    sent = _capture(eng)
-    eng.dry = False
-    try:
-        eng._tq = []
-        eng._ingest("worker.wall", {"block": "A-01", "detail": "A's genuine wall"},
-                   {"kind": "worker", "id": "ENG-A-01"})
-        # B, same tick, retracts — it never raised a wall of its own.
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": "ENG-B-01"})
-        eng._drain_triggers()
-    finally:
-        eng.dry = True
-    a = next(x for x in eng.st.workers if x["id"] == "ENG-A-01")
-    b = next(x for x in eng.st.workers if x["id"] == "ENG-B-01")
-    ok("AC-8 A's wall opened normally — B's retract never cancelled it",
-       a.get("status") == "walled", f"a={a}")
-    ok("AC-8 A's wall case is live", any(
-        c.get("kind") in WALL_KINDS and c.get("worker_id") == "ENG-A-01"
-        and c.get("decision") is None for c in eng.st.pending_cases.values()),
-       f"cases={eng.st.pending_cases}")
-    ok("AC-8 B was never held (it had nothing of its own to wall on)",
-       b.get("status") != "walled", f"b={b}")
-    ok("AC-8 the operator WAS paged for A's genuine wall (never swallowed by B's retract)",
-       any(tid == "escalate.wall" for tid, _ in sent), f"sent={sent}")
-
-
-def ac8_two_walls_one_sender_one_retract_cancels_only_the_matching_one():
-    """T5/AC-8 (01-26, FU-01-24b): a sender that (mistakenly) queues TWO walls in the
-    same tick, then retracts once, self-clears only the FIRST still-queued one (the
-    fat-finger F-1 shape this mechanism exists to contain) — the second survives to
-    open normally at drain time. A single retract is never a blanket cancel of every
-    wall a sender ever queued this tick."""
-    eng = _eng()
-    wid = "ENG-A-01"
-    sent = _capture(eng)
-    eng.dry = False
-    try:
-        eng._tq = []
-        eng._ingest("worker.wall", {"block": "A-01", "detail": "first fat-fingered wall"},
-                   {"kind": "worker", "id": wid})
-        eng._ingest("worker.wall", {"block": "A-01", "detail": "second, genuine wall"},
-                   {"kind": "worker", "id": wid})
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
-        eng._drain_triggers()
-    finally:
-        eng.dry = True
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("AC-8 the worker still ends up walled (the second wall survived the retract)",
-       w.get("status") == "walled", f"w={w}")
-    live = [c for c in eng.st.pending_cases.values()
-           if c.get("kind") in WALL_KINDS and c.get("worker_id") == wid
-           and c.get("decision") is None]
-    ok("AC-8 exactly ONE live wall case remains (only the first was cancelled)",
-       len(live) == 1, f"cases={eng.st.pending_cases}")
-    ok("AC-8 the surviving case is the SECOND wall's detail, not the retracted first one",
-       live and live[0].get("detail") == "second, genuine wall", f"live={live}")
-    ok("AC-8 the operator was paged once (for the surviving wall)",
-       sum(1 for tid, _ in sent if tid == "escalate.wall") == 1, f"sent={sent}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -625,39 +416,6 @@ def ac4_kind_declared_via_the_structured_report_path_routes_to_the_architect():
     ok("F2 the architect IS dispatched, carrying the wall's case id",
        (arch.get("current_job") or {}).get("kind") == "triage"
        and (arch.get("current_job") or {}).get("case") is not None, f"arch={arch}")
-
-
-def ac4_retract_before_architect_answers_suppresses_the_stale_relay():
-    """F3 (MAJOR, review cycle 1): a spec-ownable wall routes to the architect; the
-    sender retracts its OWN still-undecided wall BEFORE the architect answers — real
-    pipeline (_ingest + _drain_triggers), never a direct _h_retract call. _h_retract
-    correctly closes the case and un-holds the worker, but the architect's triage job
-    (current_job) is left stale, still naming the now-gone case. When the architect's
-    answer THEN arrives — also via the real _ingest -> sender-truth -> architect.relay
-    seam (_arch_answers), never a direct _relay_architect_answer call — it must NOT
-    deliver a stale "[TRON] Architect: ..." to a worker that already moved on."""
-    eng = _eng()
-    wid = "ENG-A-01"
-    arch = _arch_idle(eng)
-    cid = _wall(eng, "A-01", wid, detail="which schema — v1 or v2?", kind="scope")
-    ok("setup: routed to the architect", (arch.get("current_job") or {}).get("case") == cid)
-    tw = _capture_to_worker(eng)
-    eng.dry = False
-    try:
-        eng._ingest("worker.retract", {}, {"kind": "worker", "id": wid})
-        ok("setup: the retract closed the wall case before the architect answered",
-           cid not in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
-        w = next(x for x in eng.st.workers if x["id"] == wid)
-        ok("setup: the retract un-held the worker", w.get("status") != "walled", f"w={w}")
-        # The architect, unaware its case is gone, answers anyway.
-        _arch_answers(eng, arch, "use schema v2 — v1 is deprecated")
-    finally:
-        eng.dry = True
-    ok("F3 the stale architect answer is NEVER delivered to the worker that retracted",
-       not any(wid_ == wid and "use schema v2" in txt for wid_, txt, _ in tw), f"tw={tw}")
-    ok("F3 no stale [TRON] Architect relay reaches that worker at all",
-       not any(wid_ == wid and txt.startswith("[TRON] Architect:") for wid_, txt, _ in tw),
-       f"tw={tw}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════

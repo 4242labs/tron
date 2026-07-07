@@ -13,7 +13,7 @@ exist to TRON — turn output is never read.
 ## 2. One message, one act — tagged
 A gate reply carries its verb as data, so nothing is guessed:
 `report.sh <id> --tag <verb> [--block <id>] [--branch <name>] [--kind <scope|blueprint|design>] "<message>"`
-Verbs: `done` · `recorded` · `wall` · `review-done` · `clean` · `retract`.
+Verbs: `done` · `recorded` · `wall` · `review-done` · `clean`.
 One VERB per message — never two. Modifiers ride freely on any message: `--branch <name>`
 declares a branch, `--block <id>` names your block; a done-report carrying `--branch` is
 the normal way to declare-and-report in one line. `--kind` is only meaningful on a
@@ -62,7 +62,3 @@ interpretation, the blueprint, a design call) — something the architect owns, 
 operator — declare it: `--tag wall --kind scope` (or `blueprint` / `design`). That routes
 you to the architect first, who answers directly; a wall with no `--kind`, or one that is
 genuinely the operator's call (policy, an external blocker), pages the operator as before.
-Fat-fingered your own wall by mistake (a stray `--tag wall` on what was meant as something
-else) and nobody has acted on it yet? Retract it yourself: `--tag retract`. That only clears
-YOUR OWN still-undecided wall — it never touches anyone else's, and it never touches one
-someone has already decided.

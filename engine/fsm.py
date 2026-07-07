@@ -121,7 +121,7 @@ NEGATED_SETTLE_NOTE = ("settle read as negated (e.g. \"don't approve CASE-7\") �
                        "guessed from prose; reply with the bare verb + case id only: "
                        "'resume CASE-007' / 'approve CASE-007' / 'abandon CASE-007'")
 # T2 (01-26, R-05): _gate_giveup's seven codes each become the case's OWN `kind` (not
-# the generic 'wall' every one shared before) — naming only, hold/settle/retract stay
+# the generic 'wall' every one shared before) — naming only, hold/settle stay
 # identical. `gate-step-cap` (an 8th _gate_giveup site, ~866) is deliberately unsplit.
 # WALL_KINDS: every site that compared literal kind=='wall' checks membership instead.
 # `gate-close-idle-cap` (01-27, F-4): the close-stage idle-cap's own code — a silent
@@ -735,6 +735,22 @@ class Engine:
         self.emit("terminal.review", {"count": thresh})
         self.log("flow", f"cadence:{typ} -> review:{typ}")
 
+    def _model_for_role(self, role):
+        """01-30 T2: per-role model resolution — the single global `worker_model` string
+        01-21 introduced is now a knobs.yaml MAP with two keys: `architect` (the persistent
+        architect only) and `other` (every non-architect role — engineer, reviewer, ...).
+        Each resolves INDEPENDENTLY and FAIL-CLOSED: an unset/blank entry for the resolving
+        role returns None here (never silently borrows the other key's value, never a
+        baked-in fallback) — jobs.spawn_runner then refuses outright
+        (WorkerModelUnconfigured) before any process spawns, exactly the 01-21 credit-drain
+        guard, now scoped per role instead of one global switch. A malformed/legacy shape
+        (e.g. still a bare string) is treated the same as unset, never guessed at."""
+        wm = self.knobs.get("worker_model")
+        if not isinstance(wm, dict):
+            return None
+        key = "architect" if role == "architect" else "other"
+        return wm.get(key) or None
+
     def _spawn(self, wid, template_id, role, block=None, rtype=None):
         """Identity-only spawn (01-07 two-step): fill PMT-SPAWN's slots and bring the worker
         online — no assignment. The persona prompt is delivered as the worker's FIRST mailbox
@@ -755,11 +771,12 @@ class Engine:
             # turn 1: the persona/onboarding, via the mailbox — through emit() (S-4/W4:
             # every worker send goes through the one slot-injecting sender).
             self.emit(template_id, slots, worker_id=wid)
-            # 01-21 T1: the worker model is a declared, project-configured input — read
-            # from knobs.yaml (never the host CLI's own ambient default) and threaded
-            # explicitly. jobs.spawn_runner fails closed if this resolves to nothing.
+            # 01-21 T1 (per-role since 01-30 T2): the worker model is a declared,
+            # project-configured input — read from knobs.yaml (never the host CLI's own
+            # ambient default) and threaded explicitly, resolved for THIS spawn's role.
+            # jobs.spawn_runner fails closed if this resolves to nothing.
             jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=self.paths["root"],
-                              model=self.knobs.get("worker_model"))
+                              model=self._model_for_role(role))
         except Exception as e:
             self.events.failure(                          # forensic record (AC-2/AC-6)
                 "dispatch-fail", "spawn-failed", "spawn a worker process",
@@ -1305,74 +1322,6 @@ class Engine:
         self.log("flow", f"operator:decision:{block} -> {decision}")
         self._emit("pulse")
 
-    def _h_retract(self, sender):
-        """T2 (01-24 F-1b): a walled sender's OWN retract auto-dismisses its still-undecided
-        wall — close the case, un-hold the worker, replay its queued verbs, through the
-        SAME close-case/unhold/replay path a settle drives (_unhold_and_replay) — never a
-        second teardown mechanism, before any operator page fires.
-
-        Sender-scoped ONLY (F-1's explicit exclusion): the case's worker_id must be the
-        retracting sender itself — a third-party wall (raised about a different worker, or
-        engine-raised) never auto-clears. Undecided ONLY: by the time an operator/architect
-        settle lands, _h_apply_decision has always already closed the case it acted on, so
-        'already settled' and 'no wall of mine is open' collapse to the same honest no-op
-        here — never a silent drop (D-15-3's law extended to this new verb).
-
-        F1 fix (01-24 review cycle 1): `worker.wall` is a DEFERRED trigger — `_ingest`
-        resolves it to `wall:raised:<block>` via `_emit`, which only QUEUES it into
-        `self._tq`; it is not acted on until end-of-tick `_drain_triggers` runs `_h_escalate`.
-        `worker.retract`, in contrast, is an IMMEDIATE side-handler — it runs the INSTANT the
-        message is ingested. So a same-tick "wall then retract" from the SAME sender (the
-        exact fat-finger F-1 exists to contain) would otherwise reach this point BEFORE the
-        wall's case exists and before the worker is even held: the pending_cases lookup below
-        finds nothing, reports a false "nothing to retract", and then the still-queued wall
-        trigger drains anyway at end-of-tick -> _h_escalate holds the worker and pages the
-        operator despite the sender's own same-tick retraction. Cancel the sender's own
-        still-queued wall trigger FIRST — pop it out of self._tq before it ever opens — so
-        _h_escalate never runs for it at all: no case, no hold, no page.
-
-        T5 (01-26, FU-01-24a): match PROVENANCE (`_own_wall`, stamped only where `_ingest`
-        resolves the sender's OWN worker.wall report), never worker_id alone — the latter
-        was correct only via implicit tick-ordering; this hardens it so an engine-raised
-        wall:raised: sharing this worker_id can never be cancelled by a retract that never
-        asked about it."""
-        sid = (sender or {}).get("id")
-        if sid:
-            for i, (trig, tslots) in enumerate(self._tq):
-                if (trig.startswith("wall:raised:") and (tslots or {}).get("worker_id") == sid
-                        and (tslots or {}).get("_own_wall")):
-                    self._tq.pop(i)
-                    self.events.event("retract", actor=sid, block=(tslots or {}).get("block"),
-                                      cid=None, detail="same-tick queued wall cancelled before it opened")
-                    self.log("flow", f"retract[{sid}] -> cancelled its own still-queued wall "
-                                     f"trigger before it ever opened (same-tick self-clear, "
-                                     f"F-1)")
-                    self._emit("pulse")
-                    return
-        w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
-        case_id, case = None, None
-        for cid, c in self.st.pending_cases.items():
-            # T2 (01-26): WALL_KINDS — an engine-raised case now carries its own specific
-            # kind, but a retract must still clear it exactly as it cleared 'wall' before.
-            if (c.get("kind") in WALL_KINDS and c.get("worker_id") == sid
-                    and c.get("decision") is None):
-                case_id, case = cid, c
-                break
-        if not (case and w is not None and w.get("status") == "walled"):
-            self.log("flow", f"retract from {sid or '?'}: no undecided wall of its own to clear")
-            if sid and not self.dry:
-                self._to_worker(sid, "Nothing to retract — no undecided wall of yours is "
-                                     "open (already settled, or not yours).", "retract.noop")
-            return
-        block = case.get("block")
-        if block in self.st.blocked:
-            self.st.blocked.remove(block)
-        self._close_case(case_id, case)
-        self._unhold_and_replay(w, block, case)
-        self.events.event("retract", actor=sid, block=block, cid=case_id)
-        self.log("flow", f"retract[{sid}] -> wall {case_id} auto-dismissed, un-held, replayed")
-        self._emit("pulse")
-
     def _resolve_case(self, case_id, block):
         """Find the parked case the reply settles — by correlation id (preferred) or by block."""
         if case_id and case_id in self.st.pending_cases:
@@ -1533,19 +1482,40 @@ class Engine:
 
         if on_report and g.get("stage") == "trunk":
             # 01-11 FX-3: the worker's trunk-stage evidence report is the TRIGGER, never the
-            # proof. T2 (01-25, R-03b): the flip to record now requires an ENGINE-OBSERVED
-            # signal — the block's own landed test file(s), run here, not the worker's word
-            # (fixes fsm.py:1372-1375's on-report trust, the F-3 seam). Absent/failing ->
-            # hold at trunk (no advance); the existing no-advance-on-repeat-report counter
-            # (_h_worker_done) escalates on its own if the worker keeps re-reporting a
-            # signal that never goes green — no new cap needed.
-            okv, vdetail = trunk.run_block_tests(
-                self.paths["root"], g.get("merge_base"), g.get("merged_sha"), self.dry)
-            if okv:
+            # proof. Block 01-28 (T1-T4, retiring 01-25's `run_block_tests` seam — the
+            # wave-1 false-wall source): the flip to record now requires a TRUSTED
+            # VERDICT — CI's own verdict for the merged commit when a check name is
+            # declared (T4, no engine re-run), else the engine's OWN run of the project's
+            # declared `test.command` once in a clean checkout (T2) — never the worker's
+            # word, and never a hardcoded `*_test.py`/`python3` guess. Three outcomes
+            # (T3): "pass" advances; "fail" (a genuinely OBSERVED red) holds quietly at
+            # trunk, same as before — the existing no-advance-on-repeat-report counter
+            # (_h_worker_done) escalates on its own if it never goes green; "unconfirmed"
+            # (no merged sha / no test.command or ci.check_name declared / an
+            # unresolvable or uncheckoutable commit / a stale or mismatched CI read) also
+            # HOLDS but additionally routes to the architect first — "can't confirm" must
+            # never read as "failed" and must never wall the block (the ff-collapsed-range
+            # false-wall this whole block exists to close). Routed once per unconfirmed
+            # episode (`validation_unconfirmed`), not every tick.
+            status, vdetail = trunk.validate_trunk(
+                self.paths["root"], g.get("merged_sha"),
+                self.paths.get("test_command"), self.paths.get("test_env"),
+                self.paths.get("ci_check_name"), self.dry)
+            if status == "pass":
                 stage, msg = "record", "gate.record"
+                g.pop("validation_unconfirmed", None)
+            elif status == "fail":
+                stage, msg = "trunk", None
+                g.pop("validation_unconfirmed", None)
+                self.log("flow", f"gate[{block}] trunk-stage validation failed: {vdetail}")
             else:
                 stage, msg = "trunk", None
-                self.log("flow", f"gate[{block}] trunk-stage report rejected: {vdetail}")
+                self.log("flow", f"gate[{block}] trunk-stage validation unconfirmed: {vdetail}")
+                if not g.get("validation_unconfirmed"):
+                    g["validation_unconfirmed"] = True
+                    self._triage_to_architect(
+                        f"trunk[{block}]: validation unconfirmed — {vdetail}",
+                        sender=wid, block=block)
         elif g.get("stage") in ("trunk", "record"):
             # A-5 (tron-13, generalizes tron-07 W1 + R-3): the DONE ladder is MONOTONIC past
             # the merge. The git predicates below go stale the moment the worker parks
@@ -1612,17 +1582,14 @@ class Engine:
                         return
                     stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
                     g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)  # A-5 predicate anchor
-                    # Best-effort test-discovery base (T2 01-25 review fix): this merge
-                    # already happened out-of-gate, before this tick — there is no "before"
-                    # moment left to capture, so recompute merge-base against the still-live
-                    # branch name. Valid as long as the out-of-gate merge wasn't itself a bare
-                    # ff (branch tip == trunk tip, same collapse run_block_tests falls back
-                    # on) — an accepted residual of an already out-of-band act, not this
-                    # fix's target (the engine's OWN ff paths, above and in the redrive, are
-                    # the ones proven fixed).
-                    g["merge_base"] = trunk.merge_base(
-                        self.paths["root"], self.paths.get("main_branch", "main"),
-                        branch, self.dry)
+                    # Block 01-28 (T1, Defect A): the old code recomputed a best-effort
+                    # `merge_base(main, branch)` here purely to feed run_block_tests' file
+                    # discovery — on a bare out-of-gate ff that collapses to merged_sha
+                    # itself (base==merged_sha), this was exactly the ff-collapsed-range
+                    # false-wall this block closes. The new trusted-verdict model
+                    # (trunk.validate_trunk) runs the declared command against merged_sha
+                    # directly and needs no base/range at all — nothing to compute here,
+                    # nothing left to collapse.
                     g.pop("merge_in_flight", None)       # T1: landed -> in-flight window closed
                     g.pop("rebase_pending", None)        # T1 (01-19): on trunk -> nothing left to rebase
                 else:
@@ -1641,12 +1608,9 @@ class Engine:
                         if g.get("self_merge"):
                             stage, msg = "trunk", "gate.trunk"        # operator merged it themselves
                             g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
-                            # Best-effort base (T2 01-25 review fix) — same out-of-band
-                            # caveat as the branch_merged arm above: the operator's own merge
-                            # already happened before this tick.
-                            g["merge_base"] = trunk.merge_base(
-                                self.paths["root"], self.paths.get("main_branch", "main"),
-                                branch, self.dry)
+                            # Block 01-28 (T1): no base/range needed — same as the
+                            # branch_merged arm above, trunk.validate_trunk runs the
+                            # declared command against merged_sha directly.
                             g.pop("rebase_pending", None)  # T1 (01-19): landed by the operator
                         elif on_report or g.get("approved_merge"):
                             # A-3: the grant binds the exact sha the operator saw at park. A tip
@@ -1682,18 +1646,12 @@ class Engine:
                                     g.pop("merge_in_flight", None)   # T1: the old order's authority ends here
                             if self._merge_gated(block, g, wid):
                                 return                                # ASK: parked on the operator, hold
-                            # T2 (01-25 review fix): capture trunk's PRE-merge HEAD as the
-                            # block's test-discovery base BEFORE the ff — post-merge, branch
-                            # tip and trunk tip collapse onto the identical commit under
-                            # ff-only, so recomputing "merge-base(main, branch)" AFTER this
-                            # point would just return merged_sha itself (a self-ancestor),
-                            # never the block's true fork point (the run_block_tests
-                            # one-commit blind spot this closes). This pre-image stays a
-                            # valid ancestor of whatever merged_sha ends up being (trunk only
-                            # ratchets forward) even through merge_ff_only's own internal
-                            # rebase-retry (T1, trunk.py) — over-inclusive at worst (a
-                            # concurrent block's commits also in range), never under.
-                            pre_merge_base = trunk.head_sha(self.paths["root"], self.dry)
+                            # Block 01-28 (T1): the trusted-verdict model (trunk.validate_trunk)
+                            # runs the declared command against merged_sha directly — no
+                            # base/range needed, so no pre-merge HEAD capture is required
+                            # here any more (the 01-25 review fix this comment used to
+                            # describe fed exactly that base into the now-retired
+                            # run_block_tests seam).
                             ok, err = trunk.merge_ff_only(
                                 self.paths["root"], branch,
                                 self.paths.get("main_branch", "main"), self.dry)
@@ -1714,7 +1672,6 @@ class Engine:
                                 # patch-id/re-pin check) and is never reused for this anchor.
                                 g["merged_sha"] = trunk.tip_sha(
                                     self.paths["root"], branch, self.dry)
-                                g["merge_base"] = pre_merge_base
                                 # tron-07 W2: one approval = one EXECUTED merge. Consume the
                                 # grant here (not on the order) so a non-ff retry — the same
                                 # unexecuted merge — keeps it, but nothing after execution can
@@ -1788,14 +1745,10 @@ class Engine:
                 # A-5: best-effort anchor — a remote-merged branch may be unresolvable locally;
                 # an empty sha just skips the ancestry predicate (quiet hold, R-3 detail at cap).
                 g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
-                # Best-effort test-discovery base (T2 01-25 review fix): a remote PR merge is
-                # typically a distinct merge/squash commit (not a bare ff), so merge-base
-                # against the branch name still resolves the real fork point here; '' (branch
-                # already pruned, or an unresolvable local view) falls back to
-                # run_block_tests' legacy single-commit diff.
-                g["merge_base"] = trunk.merge_base(
-                    self.paths["root"], self.paths.get("main_branch", "main"),
-                    branch, self.dry)
+                # Block 01-28 (T1/T4): no base/range needed either way — a remote PR merge
+                # validates via trunk.validate_trunk, which reads CI's verdict for
+                # merged_sha directly (ci.check_name declared) or runs the declared
+                # command against it (no CI trust configured); neither path diffs a range.
                 g.pop("merge_in_flight", None)   # T1: landed (PR merged/closed) -> flight over
         elif pr.get("checks") == "failing":
             stage, msg = "ci", "gate.merge"              # CI red -> re-nudge the merge step (get CI green)
@@ -1933,13 +1886,9 @@ class Engine:
         if not ok:
             self.log("flow", f"gate[{block}] record-redrive non-ff: {err.strip()}")
             return None
-        # T2 (01-25 review fix): the OLD merged_sha (`merged`, read at entry, before this
-        # overwrite) is exactly the redrive's test-discovery base — the previously-pinned
-        # tip the descendant commit(s) landed on top of. Precise, no merge-base recompute
-        # needed (and none would help post-ff anyway, for the same reason as the primary
-        # merge site above): `merged` is verified an ancestor of `cur_tip` (`is_descendant`,
-        # above), so `merged..new merged_sha` is exactly this redrive's own delta.
-        g["merge_base"] = merged
+        # Block 01-28 (T1): no base/range bookkeeping needed — trunk.validate_trunk
+        # re-validates the NEW merged_sha directly (declared command or CI verdict),
+        # never a diff over `merged..new merged_sha`.
         g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
         g.pop("approved_merge", None)
         g.pop("merge_in_flight", None)
@@ -2534,7 +2483,7 @@ class Engine:
         T2 (01-26, R-05): `code` rides the trigger's slots too — _h_escalate stamps it as
         the resulting case's own `kind` (one of GATE_GIVEUP_SPLIT_CODES), instead of the
         generic 'wall' every one of these seven shared before. Naming only: the hold/
-        settle/retract mechanics are unchanged (WALL_KINDS covers every one of them)."""
+        settle mechanics are unchanged (WALL_KINDS covers every one of them)."""
         self.st.gate.pop(block, None)
         self.events.failure("gate-stuck", code, action, detail, block=block,
                             inputs={"stall_attempts": g.get("stall_attempts"),
@@ -3110,11 +3059,6 @@ class Engine:
         "wall":        ("worker.wall", {}),
         "review-done": ("worker.review_done", {}),
         "clean":       ("worker.done", {"clean_confirm": True}),
-        # T2 (01-24 F-1b): the ONE new verb this block authorizes — a sender retracting
-        # its own still-undecided wall. No admission row (sender-scoped resolution,
-        # never a block/stage gate) and no block ref required — _h_retract resolves the
-        # sender's own live wall case by sender id alone.
-        "retract":     ("worker.retract", {}),
     }
 
     def _structured(self, msg):
@@ -3317,11 +3261,7 @@ class Engine:
         # abandon (the worker record itself goes with it, _force_release_block).
         sid = (sender or {}).get("id")
         hw = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
-        # T2 (01-24 F-1b): a sender's own `retract` must reach its handler even while
-        # walled — the hold below exists to PRESERVE other verbs until the wall resolves;
-        # retract IS the resolution, so queuing it here would strand it behind the very
-        # hold it lifts.
-        if hw is not None and hw.get("status") == "walled" and tag != "worker.retract":
+        if hw is not None and hw.get("status") == "walled":
             hw.setdefault("held_verbs", []).append({"tag": tag, "slots": slots})
             self.log("flow", f"{sid} is walled -> verb '{tag}' queued "
                              f"({len(hw['held_verbs'])} pending)")
@@ -3336,12 +3276,6 @@ class Engine:
         if slots is None:
             return
         if "trigger" in action:
-            if tag == "worker.wall":
-                # T5 (01-26, FU-01-24a): provenance marker — this trigger genuinely
-                # originated from the sender's OWN report (never an engine-raised
-                # escalation sharing its worker_id). _h_retract's same-tick cancel keys
-                # on this, not worker_id alone.
-                slots = {**slots, "_own_wall": True}
             self._emit(self._fill_trigger(action["trigger"], slots), slots)
         elif "side" in action:
             self._side(action["side"], slots, sender)
@@ -3357,8 +3291,6 @@ class Engine:
             self.log("side", f"question_tron: {slots.get('detail', '')}")
         elif handler == "record_branch":
             self._record_branch(slots)
-        elif handler == "retract_own_wall":               # T2 (01-24 F-1b): sender-scoped auto-dismiss
-            self._h_retract(sender)
         elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
             self._triage_to_architect(slots.get("detail", "") or "(peer question)",
                                       sender=slots.get("worker_id"), block=slots.get("block"))
@@ -3397,11 +3329,11 @@ class Engine:
         job carries no case, or the case already resolved by some other path.
 
         F3 fix (01-24 review cycle 1): a case-carrying job whose case is no longer live
-        (e.g. the sender retracted its own wall — _h_retract — BEFORE the architect
-        answered) must not deliver a stale "[TRON] Architect: ..." to a worker that has
-        already moved on. Check case-liveness BEFORE the _to_worker send, not only before
-        the unhold/replay below — a plain peer relay (no `case` on the job at all) is
-        untouched, still always delivered."""
+        (e.g. some other path already closed the wall BEFORE the architect answered) must
+        not deliver a stale "[TRON] Architect: ..." to a worker that has already moved on.
+        Check case-liveness BEFORE the _to_worker send, not only before the unhold/replay
+        below — a plain peer relay (no `case` on the job at all) is untouched, still always
+        delivered."""
         arch = self._architect()
         cur = arch.get("current_job") if arch else None
         target = (cur or {}).get("sender") or slots.get("worker_id")
@@ -3424,9 +3356,9 @@ class Engine:
                              f"({block or '?'}) with the relayed answer as payload")
         elif stale:
             self.log("flow", f"architect-relayed answer for case {case_id} suppressed: "
-                             f"the wall was already resolved by another path (e.g. a "
-                             f"same-sender retract) before the architect answered — no "
-                             f"stale relay")
+                             f"the wall was already resolved by another path (e.g. an "
+                             f"operator settle closing the case) before the architect "
+                             f"answered — no stale relay")
         self.log("flow", f"relay architect answer -> {target or '?'}")
         self._architect_advance()
         self._emit("pulse")

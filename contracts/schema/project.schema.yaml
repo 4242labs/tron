@@ -28,6 +28,13 @@ archive_dir:   <path>       # REQUIRED. e.g. meta/blocks/archive/
 agents:                     # OPTIONAL (seeder-populated by scanning pointers.agents)
   - role: <name>            # e.g. engineer | architect | reviewer | <custom>
     file: <path>            # e.g. meta/agents/engineer.md
+    model: <str>            # OPTIONAL (block 01-30). A per-role RECOMMENDED default the bootup
+                            # model question (console.py) offers for confirm/override — NEVER
+                            # itself the fail-closed resolution path. That is knobs.yaml's
+                            # per-role `worker_model` map (architect / other), read by
+                            # fsm._spawn — this field only seeds what the prompt suggests.
+                            # Absent -> the engine's own built-in suggestion is shown instead
+                            # (architect: a strong tier; every other role: a fast tier).
 
 # ── Detected repo facts (auto; only matter to workflows that use them) ──
 repo:                       # OPTIONAL block; present when a git workflow is used
@@ -58,10 +65,36 @@ protected_branches:         # OPTIONAL
   - repo: <repo-name>
     branch: <branch>
 
+# ── Declared test command (block 01-28: the trunk-stage trusted-verdict model) ──
+# The engine's SOLE source of truth for "run the tests" — replaces the old hardcoded
+# `*_test.py` / `python3` discovery, which only ever found Python. No test-command field
+# existed before this; unrelated to `ci: {}` / `local_validation_gaps` below. Absent ->
+# the engine cannot confirm validation at all: the DONE-TRUNK gate HOLDS and routes to
+# the architect first (never a false pass, never a wall — see T3). 02-10 populates this
+# same key in the scaffold's seeded project.yaml.
+test:                       # OPTIONAL
+  command: <str>            # REQUIRED within `test:` when present. The EXACT shell command the
+                            # engine runs ONCE, in a clean checkout of the merged commit that the
+                            # worker never controls (a detached `git worktree` at the merged sha) —
+                            # the single authoritative run. Any language: `pytest -q`, `npm test`,
+                            # `go test ./...`. A worker's own local run is dev feedback only, never
+                            # this gate.
+  env: {}                   # OPTIONAL. key: value string pairs LAYERED onto the clean checkout's
+                            # inherited shell environment (never replacing it) before `command` runs
+                            # — e.g. {NODE_ENV: test}. Never secrets: this file is git-tracked; real
+                            # secrets live in <agents>/tron/.env, which this field does not touch.
+
 # ── Free-form operator context (any may be empty) ──────────────────
 operator_only_tasks: []     # tasks TRON escalates, never dispatches (DNS, dashboards, billing…)
 local_validation_gaps: []   # work engineers do but can't fully verify (mobile, paid 3rd-party UAT…)
-ci: {}                      # runner / duration / stall-threshold override
+ci:                          # runner / duration / stall-threshold override
+  check_name: <str>         # OPTIONAL (block 01-28 T4). The EXACT GH check-run name that runs
+                            # `test.command` on trunk pushes. When set, the DONE-TRUNK gate trusts
+                            # THAT check-run's verdict for the merged commit instead of re-running —
+                            # only when it is commit-exact (its head_sha == the merged sha),
+                            # non-stale (status == completed, never a pending/queued read), and this
+                            # exact declared name (never a bare rollup guess). Absent -> no CI-verdict
+                            # trust; the engine always runs `test.command` itself in a clean checkout.
 deploy: {}                  # success check for the canon DoD deploy gate; inherited by blocks,
                             # overridable per block via the block's `Deploy:` field
 notes: <str>                # OPTIONAL free text (monorepo boundaries, migration rules…)

@@ -11,10 +11,17 @@
 knobs:                             # REQUIRED
   worker_count: <n>                # REQUIRED key; value may be null -> asked at every session start.
                                    # The worker pool (engineers + reviewers); architect EXCLUDED.
-  worker_model: <str>              # REQUIRED key (01-21); the exact model every spawned worker
-                                   # runs on. NO baked default anywhere in the engine — set once by
-                                   # the seeder/operator. Null/absent -> the spawn path refuses
-                                   # outright rather than fall back to a host-CLI ambient default.
+  worker_model:                    # REQUIRED key (01-21; per-role since 01-30) — a MAP, not a
+                                   # single string. Two keys, each REQUIRED and independently
+                                   # fail-closed:
+    architect: <str>               #   the persistent architect's model (recommended: a strong tier).
+    other: <str>                   #   every non-architect role's model (engineer, reviewer, ...;
+                                   #   recommended: a fast tier). NO baked default anywhere in the
+                                   #   engine for either key — set by the seeder/operator or the
+                                   #   bootup model question (console.py). Null/absent on the
+                                   #   resolving role's key -> that role's spawn path refuses
+                                   #   outright rather than fall back to a host-CLI ambient default,
+                                   #   and never silently borrows the other key's value.
   architect_count: 1               # persistent architect queue drainers (throughput knob)
   git: on | off                    # whether the build commits via git (R8)
   silence_ping_min: 6              # worker silent this long (min) -> heartbeat ping; multiple of wake cadence

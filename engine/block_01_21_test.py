@@ -175,10 +175,14 @@ def t1_hostcli_adapter_argv_carries_model():
 
 
 def t1_fsm_spawn_threads_knobs_worker_model_into_spawn_runner():
+    # NOTE (01-30): worker_model is now a per-role MAP ({"architect": ..., "other": ...}),
+    # not a single global string — see block_01_30_test.py for the full per-role coverage
+    # (AC-4). This case keeps proving the original 01-21 intent: fsm._spawn resolves from
+    # knobs.yaml (project config) and threads it explicitly, never an ambient default.
     ctx, _ = build()
     eng = Engine(ctx); started(eng)
     eng.dry = False
-    eng.knobs["worker_model"] = "project-pinned-model"
+    eng.knobs["worker_model"] = {"architect": "arch-pinned-model", "other": "project-pinned-model"}
     captured = {}
     orig = jobs.spawn_runner
 
