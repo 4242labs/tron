@@ -136,7 +136,7 @@ def run():
         land(repo, "A-02")
         quiet_tick(ctx)
         ok("A-02 lands ✅ -> CLOSE; cadence reviewer comes due (PULL)",
-           pipe(ctx)["A-02"] == "done" and workers(ctx, "reviewer"))
+           pipe(ctx)["A-02"] == "done" and workers(ctx, "reviewer-code"))
         report(ctx, "clean A-02: worktree gone, branch gone, local synced", "worker.done", {"block": "A-02"})   # release ENG-A-02
 
         # Reviewer DONE-REVIEW gate (T5): the first hand-back challenges full coverage (held);
@@ -144,11 +144,11 @@ def run():
         report(ctx, "code review done", "worker.review_done", {"type": "code"})
         st = util.load_yaml(ctx.state)
         ok("review_done opens DONE-REVIEW gate (reviewer HELD to attest coverage)",
-           "review:code" in st.get("gate", {}) and bool(workers(ctx, "reviewer")))
+           "review:code" in st.get("gate", {}) and bool(workers(ctx, "reviewer-code")))
         report(ctx, "code review fully covered", "worker.review_done", {"type": "code"})
         st = util.load_yaml(ctx.state)
         ok("review attested -> reviewer released + architect remediation queued",
-           not workers(ctx, "reviewer"))
+           not workers(ctx, "reviewer-code"))
 
         ended = report(ctx, "log review done", "architect.logged", {"block": "adhoc", "adhoc": []})
         final = pipe(ctx)

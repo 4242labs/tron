@@ -3,25 +3,20 @@
 # SWITCHBOARD, encoded in the engine) and is NOT composed per project — there are
 # no `steps`/`primitives` here. The seeder (B1) writes only the knobs below.
 # Lives at <agents>/tron/knobs.yaml. Tracked + PR'd.
-# Re-read every session start. Validated by blueprint-lint (contracts §9, L10–L15, L25).
+# Re-read every session start. Validated by blueprint-lint (contracts §9, L10–L15).
 #
 # The seeder writes THIS. It never writes routing.yaml or the event table (canon).
+#
+# NOTE (ADR-0002 D4, 01-33): the per-role worker model and the persistent-spec-owner flag
+# both moved to `meta/tron/roles.yaml` (per-role `model:` / `persistent:`), fail-closed
+# validated at Engine construction — see roles.schema (contracts §9). Neither the
+# `worker_model` map nor the `session:` block ship here anymore.
 
 # ── Knobs (the per-project tunables the engine reads by name) ──
 knobs:                             # REQUIRED
   worker_count: <n>                # REQUIRED key; value may be null -> asked at every session start.
-                                   # The worker pool (engineers + reviewers); architect EXCLUDED.
-  worker_model:                    # REQUIRED key (01-21; per-role since 01-30) — a MAP, not a
-                                   # single string. Two keys, each REQUIRED and independently
-                                   # fail-closed:
-    architect: <str>               #   the persistent architect's model (recommended: a strong tier).
-    other: <str>                   #   every non-architect role's model (engineer, reviewer, ...;
-                                   #   recommended: a fast tier). NO baked default anywhere in the
-                                   #   engine for either key — set by the seeder/operator or the
-                                   #   bootup model question (console.py). Null/absent on the
-                                   #   resolving role's key -> that role's spawn path refuses
-                                   #   outright rather than fall back to a host-CLI ambient default,
-                                   #   and never silently borrows the other key's value.
+                                   # The worker pool (every BUILD-/REVIEW-bound role); the
+                                   # persistent TRIAGE/spec_owner role EXCLUDED.
   architect_count: 1               # persistent architect queue drainers (throughput knob)
   git: on | off                    # whether the build commits via git (R8)
   silence_ping_min: 6              # worker silent this long (min) -> heartbeat ping; multiple of wake cadence
@@ -48,10 +43,6 @@ peer_consults:                     # OPTIONAL list; empty by default
   - worker: <role>                 # e.g. engineer
     may_consult: <role>            # e.g. architect
     for: <str>                     # e.g. "technical/design questions"
-
-# ── Session lifecycle ──
-session:                           # REQUIRED
-  persistent_architect: true | false   # R1: spawn one architect at start, alive until session-end
 
 # ── Embedded default is authored in knobs.yaml (B2), not here. ──
 # This file is the SHAPE; the canon default instance ships in knobs.yaml.

@@ -190,7 +190,7 @@ class Ctx:
 
         repo.root is the trunk checkout; pipeline/blocks/archive are relative to it.
         Returns {root, pipeline, pipeline_rel, blocks, blocks_rel, archive, paperwork,
-        main_branch, staging, remote}."""
+        main_branch, staging, remote, roles_path}."""
         repo = (project or {}).get("repo") or {}
         root = os.path.expanduser(repo.get("root") or self.dir)
 
@@ -220,6 +220,9 @@ class Ctx:
             "blocks_rel": ((project or {}).get("blocks_dir") or "meta/blocks/").rstrip("/") + "/",
             "archive": under("archive_dir", "meta/blocks/archive/"),
             "paperwork": [str(p) for p in paperwork],
+            # ADR-0002 D4: the project-authored fleet config (roles.yaml) — engine ships
+            # none of it. Same override convention as pipeline_path/blocks_dir above.
+            "roles_path": under("roles_path", "meta/tron/roles.yaml"),
             "test_command": test_cfg.get("command"),
             "test_env": test_cfg.get("env") or {},
             "ci_check_name": ci_cfg.get("check_name"),

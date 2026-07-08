@@ -38,8 +38,9 @@ ADAPTER = os.environ.get("TRON_WORKER_ADAPTER", "host-cli")
 
 # The worker MODEL (01-21 T1) — an explicit, engine-owned, FAIL-CLOSED input. Unlike RUNTIME/
 # ADAPTER above, this carries NO baked default: a run's worker model must be a declared,
-# reproducible input (knobs.yaml `worker_model`, threaded by fsm._spawn from the project's
-# own config) or the run must not start at all — never the host CLI's own ambient saved-
+# reproducible input (roles.yaml's per-role `model:`, resolved by fsm._model_for_role and
+# threaded by fsm._spawn from the project's own config — ADR-0002 D4, 01-33) or the run
+# must not start at all — never the host CLI's own ambient saved-
 # default model (the credit-drain root cause: 3 orphaned workers found running on an
 # undeclared, potentially expensive tier). TRON_WORKER_MODEL exists purely as the same kind
 # of override knob RUNTIME/ADAPTER already have (useful standalone/tests). Read DYNAMICALLY
@@ -55,9 +56,9 @@ def _env_model():
 class WorkerModelUnconfigured(RuntimeError):
     """Raised by spawn_runner (01-21 T1/AC-2) when no worker model resolves from any source.
     Fail-closed: a worker must never launch on the host CLI's own ambient default. The real
-    source is the project's declared config (knobs.yaml `worker_model`, resolved by
-    fsm._spawn); this is the last-line-of-defense guard against a future call site that
-    forgets to thread it."""
+    source is the project's declared config (roles.yaml's per-role `model:`, resolved by
+    fsm._model_for_role and threaded by fsm._spawn — ADR-0002 D4, 01-33); this is the
+    last-line-of-defense guard against a future call site that forgets to thread it."""
 
 # Per-worker file names (single source of truth — worker_runner.py imports these).
 MAILBOX = "tron-inbox.jsonl"
@@ -346,17 +347,18 @@ def spawn_runner(worker_id, worker_dir, session_id, cwd=None,
     mailbox write, so a NEW worker under a reused id never inherits a stale mailbox.
 
     01-21 T1: `model` is the declared, project-configured worker model (fsm._spawn resolves
-    it per-role from knobs.yaml's `worker_model` map since 01-30 — see fsm._model_for_role
-    — and passes the resolved value here; this function itself stays role-agnostic, just a
-    single resolved string). FAIL-CLOSED: if neither `model` nor TRON_WORKER_MODEL resolves
-    to a value, this refuses to spawn at all — a worker must never launch on the host CLI's
-    own ambient default (raises WorkerModelUnconfigured, BEFORE any process is started)."""
+    it per-role straight from roles.yaml's `model:` field since ADR-0002 D4/01-33 — see
+    fsm._model_for_role — and passes the resolved value here; this function itself stays
+    role-agnostic, just a single resolved string). FAIL-CLOSED: if neither `model` nor
+    TRON_WORKER_MODEL resolves to a value, this refuses to spawn at all — a worker must
+    never launch on the host CLI's own ambient default (raises WorkerModelUnconfigured,
+    BEFORE any process is started)."""
     resolved_model = model if model is not None else _env_model()
     if not resolved_model:
         raise WorkerModelUnconfigured(
-            "no worker model configured — set `worker_model` in knobs.yaml (project "
-            "config) or TRON_WORKER_MODEL; refusing to launch a worker on the host "
-            "CLI's own ambient default model")
+            "no worker model configured — set `model:` on the role in roles.yaml "
+            "(project config) or TRON_WORKER_MODEL; refusing to launch a worker on the "
+            "host CLI's own ambient default model")
     os.makedirs(worker_dir, exist_ok=True)
     stop = os.path.join(worker_dir, STOP)
     if os.path.exists(stop):        # a prior release sentinel must not kill a fresh runner

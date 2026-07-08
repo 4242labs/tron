@@ -449,7 +449,7 @@ def t_sweep_dead_runner_no_record_releases_and_redispatches():
     eng.st.live_config["worker_count"] = 1
     eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
                            "session_id": "s1", "status": "idle"})
-    eng._spawn = lambda wid, tpl, role, block=None, rtype=None: ("s-new", "short")
+    eng._spawn = lambda wid, role, block=None: ("s-new", "short")
     ok("setup: the zombie starves dispatch", eng._free_slots() == 0)
     eng._tq = []
     eng._sweep()          # the empty workers dir IS the missing record — no monkeypatch

@@ -156,9 +156,8 @@ A PMT may surface through a **node** *or* through a **message** (R-PMT.2) — th
 ### Prompts an agent — carries a PMT
 | Node / milestone | Origin | PMT id | Today's `messages.yaml` ref |
 |:--|:--|:--|:--|
-| Spawn any worker — identity-only (C1/C4/C5/C6) | ND-03 → AGENT SPAWN | `PMT-SPAWN` | `spawn.engineer` · `spawn.reviewer` · `spawn.architect` |
-| Assign engineer — on `online` (C4) | AGENT INBOX | `PMT-ASSIGN` | `assign.engineer` |
-| Assign reviewer — on `online` (C5) | AGENT INBOX | `PMT-ASSIGN` | `assign.reviewer` |
+| Spawn any worker — identity-only (C1/C4/C5/C6) | ND-03 → AGENT SPAWN | `PMT-SPAWN` | `spawn.worker` (role-generic since ADR-0002 D4/01-33 — `{role}` rides as slot data, never the template id, so an injected project role needs no new entry) |
+| Assign any worker — on `online` (C4/C5) | AGENT INBOX | `PMT-ASSIGN` | `assign.worker` (role-generic, same rationale) |
 | Architect scope a block (C6) | AGENT INBOX | `PMT-SCOPE` | `arch.forward` |
 | Architect reconcile a block (C6) | AGENT INBOX | `PMT-RECONCILE` | `arch.reconcile` |
 | Architect remediation from a review (C6) | AGENT INBOX | `PMT-SCOPE-REMEDIATION` | `arch.remediation` |

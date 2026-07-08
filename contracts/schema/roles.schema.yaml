@@ -1,0 +1,70 @@
+# meta/tron/roles.yaml — schema (B0, ADR-0002 Decision 4)
+# The project-authored fleet: capability-class binding, personas, models, dispatch
+# selectors, paperwork scopes, spec_owner/persistent/close_fallback flags. TRON ships NO
+# personas and hardcodes no role name — every worker identity is a lookup against this
+# file. Lives at <repo.root>/<project.roles_path | meta/tron/roles.yaml>. Project-authored,
+# git-tracked, PR'd like any other canon file the project owns.
+#
+# Loaded + FAIL-CLOSED validated at every Engine construction (engine/roles.py,
+# RolesConfig.load / _validate): a RolesError propagates loud and named — uncaught,
+# exactly like jobs.WorkerModelUnconfigured — never a silent default, never a partial
+# boot. See engine/roles.py's own module docstring for the authoritative field reference;
+# this file mirrors it for the contracts layer (§9).
+#
+# Capability classes are SEALED (workflow *shape* stays fixed, P2): BUILD, REVIEW,
+# TRIAGE, CLOSE. CLOSE is distinct from BUILD — the close ritual has its own verbs, gate,
+# and paperwork scope.
+#
+# Annotations:  # REQUIRED | # OPTIONAL | <placeholder> | a | b (enum)
+
+roles:                        # REQUIRED; at least one role
+  <role-name>:                # e.g. engineer, reviewer-code, architect, <project-custom>
+    persona: <path>           # REQUIRED. Repo-relative path to this role's agent file;
+                              # boot-fatal if the file doesn't exist on disk.
+    model: <str>              # REQUIRED. The worker model this role runs on. NO DEFAULT —
+                              # absent, blank, or non-string is boot-fatal (never inherits
+                              # the host CLI's own ambient default model).
+    binds: [<class>, ...]     # REQUIRED, >=1. Capability classes this role services, from
+                              # the sealed enum {BUILD, REVIEW, TRIAGE, CLOSE}. Every
+                              # REACHABLE class must have >=1 bound role across the whole
+                              # file (boot-fatal otherwise).
+    selector:                 # OPTIONAL. Deterministic block/cadence -> role match input
+                              # (no model call, ever — P2). A role with NO selector for a
+                              # class it binds is that class's DEFAULT match.
+      block_tag: <str>        #   BUILD: matches a block whose `Tags:` header includes this.
+      reviewer_class: <str>   #   REVIEW: matches a cadence type (mirrors the pre-existing
+                              #   `reviewer-<lens>` naming convention).
+    paperwork:                # OPTIONAL. Feeds `verify_docs` (the read-only DONE-gate
+                              # paperwork verdict). Absent -> the plain default: the
+                              # project's declared paperwork area only, pipeline + blocks
+                              # dir explicitly denied.
+      allow: [<template>, ...]   # e.g. "{block_doc}", "{archive}", "{pipeline}", "{blocks_dir}"
+      deny: [<template>, ...]    # same placeholder vocabulary
+      line_scoped:               # path -> a required per-line substring (e.g. the block id)
+        <template>: <template>    # e.g. "{pipeline}": "{block_id}"
+                              # Placeholders resolve at paperwork-check time (fsm.
+                              # _paperwork_placeholders): {block_doc} {archive} {block_id}
+                              # need a specific block in play — an entry naming one is
+                              # dropped (never emitted unresolved) when none is given.
+    spec_owner: true | false  # OPTIONAL (default false). The architect-first target for
+                              # EVERY wall. EXACTLY ONE role across the file may set this
+                              # (boot-fatal on zero or two+).
+    persistent: true | false  # OPTIONAL (default false). Spawned once at boot, alive for
+                              # the whole session, excluded from the worker_count pool.
+                              # The conventional TRIAGE/spec_owner role sets this.
+    cardinality: <int>        # OPTIONAL, informational only (today only spec_owner's
+                              # singularity and close_fallback's uniqueness are
+                              # boot-enforced).
+    close_fallback: true | false  # OPTIONAL (default false). The designated CLOSE role
+                              # when SEVERAL roles bind CLOSE — boot-fatal if more than one
+                              # role binds CLOSE and this isn't set on exactly one of them.
+                              # Irrelevant (and unchecked) when only one role binds CLOSE.
+
+# ── Fail-closed boot validation (ADR-0002 D4/T3; engine/roles.py RolesConfig._validate) ──
+# - every capability class in {BUILD, REVIEW, TRIAGE, CLOSE} has >=1 bound role
+# - exactly one role has spec_owner: true
+# - if >1 role binds CLOSE, exactly one of them has close_fallback: true
+# - every role's persona path resolves to a file that exists on disk
+# - every role's model resolves to a non-empty string (no default, ever)
+# Any violation raises roles.RolesError — loud, named, uncaught — before the session
+# starts (P8: fail-closed, never a partial/silent boot).

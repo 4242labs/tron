@@ -29,6 +29,7 @@ import wake            # noqa: E402
 import eventlog        # noqa: E402
 from ctx import Ctx    # noqa: E402
 from fsm import Engine  # noqa: E402
+from sentry_test import seed_trivial_roles  # noqa: E402
 
 NOW = "2026-06-28T00:00:00Z"
 HEADER = {"at", "kind", "type", "actor", "block", "tag", "cid", "run", "tick", "trunk", "payload"}
@@ -65,6 +66,7 @@ def build(blocks=None):
         rows.append(f"| {bid} | t | {status} | Block `blocks/{bid}.md` |")
         util.atomic_write(os.path.join(bdir, f"{bid}.md"), _block_md(bid, status, deploy=deploy))
     util.atomic_write(os.path.join(repo, "meta", "pipeline.md"), "\n".join(rows) + "\n")
+    seed_trivial_roles(repo)   # ADR-0002 D4: Engine(ctx) fails closed without roles.yaml
     return Ctx(d), repo
 
 
@@ -161,7 +163,7 @@ def induce_dispatch_fail(ctx):
     jobs.spawn_runner = lambda *a, **k: (_ for _ in ()).throw(OSError("simulated spawn failure"))
     raised = False
     try:
-        eng._spawn("ENG-A-01", "spawn.engineer", "engineer", block="A-01")
+        eng._spawn("ENG-A-01", "engineer", block="A-01")
     except OSError:
         raised = True
     finally:
@@ -173,7 +175,7 @@ def induce_session_residue(ctx):
     # tron-13 D1: session end with an unlanded paperwork declaration -> ONE named
     # session-residue failure + a parked case, never a silent archive.
     eng = engine(ctx)
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "session_id": "dry", "status": "working",
                            "pending_landings": ["docs/review-260702"]})
     eng._end_session()

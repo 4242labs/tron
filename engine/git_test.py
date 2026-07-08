@@ -129,9 +129,9 @@ def t_two_step_engineer():
     eng = Engine(ctx); started(eng)
     # SPAWN copy itself is identity-only (the prompt is the spawn process input, not an emit).
     spawn_copy = eng.renderer.render(
-        "spawn.engineer", {"worker_id": "ENG-A-01", "role": "engineer",
-                           "persona": "/p/engineer.md", "report": "/s/report.sh",
-                           "contract": "/c/worker-contract.md"})
+        "spawn.worker", {"worker_id": "ENG-A-01", "role": "engineer",
+                        "persona": "/p/engineer.md", "report": "/s/report.sh",
+                        "contract": "/c/worker-contract.md"})
     ok("two-step: SPAWN copy is identity-only (online check-in, no assignment)",
        "online" in spawn_copy.lower() and "acceptance criteria" not in spawn_copy.lower()
        and "/p/engineer.md" in spawn_copy and "/s/report.sh" in spawn_copy)
@@ -142,7 +142,7 @@ def t_two_step_engineer():
     w = next(x for x in eng.st.workers if x.get("role") == "engineer")
     pa = w.get("pending_assign") or {}
     ok("two-step: spawn records a pending engineer assignment",
-       pa.get("kind") == "engineer" and pa.get("block") == "A-01" and pa.get("assignment"))
+       pa.get("kind") == "build" and pa.get("block") == "A-01" and pa.get("assignment"))
     ok("two-step: dispatch emits no assignment (work waits for online)",
        not any("Read its spec" in t for t in spawn_ev))
 
@@ -159,9 +159,9 @@ def t_two_step_reviewer():
     eng = Engine(ctx); started(eng)
     eng.cadence_cfg = {"code": 3}
     eng._dispatch_reviewer("code")
-    w = next(x for x in eng.st.workers if x.get("role") == "reviewer")
+    w = next(x for x in eng.st.workers if eng.roles.binds(x.get("role"), "REVIEW"))
     ok("two-step: reviewer spawn records a pending reviewer assignment",
-       (w.get("pending_assign") or {}).get("kind") == "reviewer")
+       (w.get("pending_assign") or {}).get("kind") == "review")
     n1 = len(events(ctx))
     eng._h_worker_online({"worker_id": w["id"]})
     assign_ev = events(ctx)[n1:]

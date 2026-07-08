@@ -50,6 +50,7 @@ import judge
 import reader
 import trunk
 import grants
+import roles as roles_mod
 import eventlog
 from state import State, DEFAULT_APPROVALS
 from render import Renderer
@@ -192,6 +193,12 @@ class Engine:
         self._tq = []   # the trigger queue, drained within one tick
         self.table = TABLE
         self.paths = ctx.repo_paths(self.project)
+        # ADR-0002 D4 (T1/T3): the project-authored fleet — capability-class binding,
+        # personas, models, selectors, paperwork scopes, spec_owner/close_fallback. Loaded
+        # + fail-closed validated on EVERY construction (roles.RolesError propagates
+        # uncaught — loud, named — exactly like jobs.WorkerModelUnconfigured). The engine
+        # ships no personas and hardcodes no role name; this is the one and only source.
+        self.roles = roles_mod.RolesConfig.load(self.paths["roles_path"], self.paths["root"])
         self._trunk_sha = ""                          # last-known trunk HEAD (forensic state context)
         self._trunk_sha_prev = ""                     # F1 (review round 1): the sha BEFORE the most
                                                        # recent refresh's advance — kept around past
@@ -565,11 +572,11 @@ class Engine:
         self.emit("terminal.block_done", {"block": block})
         if self._worker_id_for_block(block):
             g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
-            self._drive_close(block, g, self._worker_id("engineer", block))
+            self._drive_close(block, g, self._worker_id(self._close_role(block), block))
             self.log("flow", f"{block} ✅ on trunk -> CLOSE (slot held), cadence++")
         else:
-            self.st.gate.pop(block, None)                # no engineer to close out
-            self.log("flow", f"{block} ✅ on trunk -> done (no live engineer), cadence++")
+            self.st.gate.pop(block, None)                # no live builder to close out
+            self.log("flow", f"{block} ✅ on trunk -> done (no live builder), cadence++")
         self._reconcile_ahead(block)                     # re-check the next scoped block vs this one's drift (M-05)
         self._emit("pulse")
 
@@ -821,7 +828,7 @@ class Engine:
     def _due_cadence(self):
         for typ, thresh in self.cadence_cfg.items():
             if thresh and self.st.cadence.get(typ, 0) >= thresh:
-                if not any(w.get("role") == "reviewer" and w.get("rtype") == typ
+                if not any(self.roles.binds(w.get("role"), "REVIEW") and w.get("rtype") == typ
                            for w in self._pool()):
                     return typ
         return None
@@ -845,13 +852,17 @@ class Engine:
                 return rows
         return rows
 
-    # ── worker-pool accounting (architect EXCLUDED) ──
+    # ── worker-pool accounting (the persistent spec_owner EXCLUDED) ──
     def _pool(self):
         # T2 (D-15-2): a walled worker is HELD, not released, but it must not occupy a
         # worker_count slot while parked — excluded from work-selection same as "released"
-        # (un-held on operator resume, _h_apply_decision).
+        # (un-held on operator resume, _h_apply_decision). ADR-0002 D4: the pool is every
+        # BUILD- or REVIEW-bound role (any project role, not a hardcoded engineer/reviewer
+        # pair) — the persistent TRIAGE/spec_owner worker is excluded by construction
+        # (it binds neither).
         return [w for w in self.st.workers
-                if w.get("role") in ("engineer", "reviewer")
+                if (self.roles.binds(w.get("role"), "BUILD")
+                    or self.roles.binds(w.get("role"), "REVIEW"))
                 and w.get("status") not in ("released", "walled")]
 
     def _worker_count(self):
@@ -888,6 +899,14 @@ class Engine:
         self.st.workers.append(worker)
         self.st.save()
 
+    def _build_role_for(self, row):
+        """ADR-0002 D4/T2: the deterministic block -> BUILD role match (binding + selector
+        table lookup, no model call) — an explicit `Role:` header wins, else a `Tags:`
+        match against a role's `selector.block_tag`, else the project's default BUILD
+        role (today's behavior when both headers are absent)."""
+        row = row or {}
+        return self.roles.select_build_role(row.get("role_hdr"), row.get("tags"))
+
     def _dispatch_engineer(self, block):
         # No status write — TRON owns no pipeline. The active worker record IS the in-flight
         # marker; the agent moves the block to 🔄 on trunk itself.
@@ -895,29 +914,33 @@ class Engine:
         row = self.st.row(block)
         if not row or not self._available(row, idx):
             return
-        wid = self._worker_id("engineer", block)
-        # Pending assignment recorded on the durable worker record (01-07): the SPAWN brings the
-        # engineer online; the block is delivered (assign.engineer) on its `online` report. A crash
-        # between spawn and assign survives — the pending assignment persists in the MANIFEST.
-        w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
+        role = self._build_role_for(row)
+        wid = self._worker_id(role, block)
+        # Pending assignment recorded on the durable worker record (01-07): the SPAWN brings
+        # the worker online; the block is delivered (assign.worker) on its `online` report. A
+        # crash between spawn and assign survives — the pending assignment persists in the
+        # MANIFEST. `self.st.block_roles` durably records the role CLOSE affinity resolves
+        # against later (T2/AC-4), independent of whether this worker is still alive then.
+        self.st.block_roles[block] = role
+        w = {"id": wid, "role": role, "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
              # T2 (01-32, ADR-0002 D1): the scratch-carve observation budget — the worker's
              # first ritual act (carve its own worktree+branch) is checked every tick
              # (_check_carve_bootstrap) until it's observed or this deadline passes.
              "_carve_deadline_tick": self._tick_no() + int(self.knobs.get("carve_observe_ticks", 5)),
-             "pending_assign": {"kind": "engineer", "block": block,
+             "pending_assign": {"kind": "build", "block": block,
                                 "assignment": self._engineer_assignment(block)}}
         self._reserve(w)                               # durable intent before spawn
-        session, short = self._spawn(wid, "spawn.engineer", "engineer", block=block)
+        session, short = self._spawn(wid, role, block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
         self.st.record_dispatch(wid, session, block, self._branch(block), 1)
-        self.events.event("dispatch", actor=wid, block=block, role="engineer",
+        self.events.event("dispatch", actor=wid, block=block, role=role,
                           session=session, attempt=1)
         self.emit("terminal.dispatched", {"worker_id": wid, "block": block})
         self.log("flow", f"build:block:next -> dispatch {wid} on {block}")
 
     def _redispatch(self, block, bypass_gate=False):
-        """Recovery: re-spawn an engineer on a block whose prior worker died, even if the
+        """Recovery: re-spawn a builder on a block whose prior worker died, even if the
         agent had already moved it to 🔄 on trunk (TRON's worker/PR tracking is the real
         in-flight authority). Skips if it's done, parked, has a live PR, or deps unmet.
         `bypass_gate` (T3(b) 01-20, MAJOR-2): the ONE caller is the fleet-hold's canary
@@ -936,60 +959,63 @@ class Engine:
                 or self._block_branch(block) in (self.st.open_prs or {})
                 or self.st.has_active_worker_for_block(block)):
             return
-        wid = self._worker_id("engineer", block)
-        w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
+        role = self.st.block_roles.get(block) or self._build_role_for(row)
+        wid = self._worker_id(role, block)
+        self.st.block_roles[block] = role
+        w = {"id": wid, "role": role, "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
              "_carve_deadline_tick": self._tick_no() + int(self.knobs.get("carve_observe_ticks", 5)),
-             "pending_assign": {"kind": "engineer", "block": block,
+             "pending_assign": {"kind": "build", "block": block,
                                 "assignment": self._engineer_assignment(block)}}
         self._reserve(w)
-        session, short = self._spawn(wid, "spawn.engineer", "engineer", block=block)
+        session, short = self._spawn(wid, role, block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
         self.st.record_dispatch(wid, session, block, self._branch(block), 2)
-        self.events.event("dispatch", actor=wid, block=block, role="engineer",
+        self.events.event("dispatch", actor=wid, block=block, role=role,
                           session=session, attempt=2, recovery=True)
         self.log("flow", f"recover -> re-dispatch {wid} on {block}")
 
     def _dispatch_reviewer(self, typ):
         self.st.cadence[typ] = 0                       # consume the counter on dispatch
-        wid = self._worker_id("reviewer", typ)
+        role = self.roles.select_review_role(typ)
+        wid = self._worker_id(role, typ)
         thresh = self.cadence_cfg.get(typ, 0)
         assignment = self._reviewer_assignment(typ)    # since-last-review range, then reset the marker (T6)
-        w = {"id": wid, "role": "reviewer", "rtype": typ, "session_id": "", "shortid": "",
+        w = {"id": wid, "role": role, "rtype": typ, "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": f"review:{typ}",
-             "pending_assign": {"kind": "reviewer", "assignment": assignment}}
+             "pending_assign": {"kind": "review", "assignment": assignment}}
         self._reserve(w)                               # durable intent before spawn
-        session, short = self._spawn(wid, "spawn.reviewer", "reviewer", rtype=typ)
+        session, short = self._spawn(wid, role, block=f"review:{typ}")
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
-        self.events.event("dispatch", actor=wid, block=f"review:{typ}", role="reviewer",
+        self.events.event("dispatch", actor=wid, block=f"review:{typ}", role=role,
                           session=session, rtype=typ)
         self.emit("terminal.review", {"count": thresh})
         self.log("flow", f"cadence:{typ} -> review:{typ}")
 
     def _model_for_role(self, role):
-        """01-30 T2: per-role model resolution — the single global `worker_model` string
-        01-21 introduced is now a knobs.yaml MAP with two keys: `architect` (the persistent
-        architect only) and `other` (every non-architect role — engineer, reviewer, ...).
-        Each resolves INDEPENDENTLY and FAIL-CLOSED: an unset/blank entry for the resolving
-        role returns None here (never silently borrows the other key's value, never a
-        baked-in fallback) — jobs.spawn_runner then refuses outright
-        (WorkerModelUnconfigured) before any process spawns, exactly the 01-21 credit-drain
-        guard, now scoped per role instead of one global switch. A malformed/legacy shape
-        (e.g. still a bare string) is treated the same as unset, never guessed at."""
-        wm = self.knobs.get("worker_model")
-        if not isinstance(wm, dict):
-            return None
-        key = "architect" if role == "architect" else "other"
-        return wm.get(key) or None
+        """ADR-0002 D4 (T3/T4): `model = role.model`, resolved from roles.yaml alone — NO
+        default, ever (absent/unknown is boot-fatal, enforced at RolesConfig construction).
+        Retires the 01-30 `knobs.yaml worker_model {architect, other}` map entirely: that
+        was a hardcoded 2-tier split keyed to one specific role name; every role now
+        declares its OWN model in config, independently, fail-closed."""
+        return self.roles.model_for(role)
 
-    def _spawn(self, wid, template_id, role, block=None, rtype=None):
+    def _spawn(self, wid, role, block=None):
         """Identity-only spawn (01-07 two-step): fill PMT-SPAWN's slots and bring the worker
         online — no assignment. The persona prompt is delivered as the worker's FIRST mailbox
         message (seq 1 -> the runner's turn 1); the work follows on its `online` report (assign.*).
         `persona` (the project's agent file) and `report` (report.sh) ride the SPAWN copy itself
         (delta-only over the project's persona). Returns (session_id, shortid) — the session id is
-        engine-minted and stable for the worker's whole life; the shortid is the worker id."""
-        persona = self._agent_file(rtype and f"reviewer-{rtype}" or role) or self._agent_file(role)
+        engine-minted and stable for the worker's whole life; the shortid is the worker id.
+
+        ADR-0002 D4 (T4): `role` is already the FULLY RESOLVED role name (roles.yaml's
+        selector — fsm._dispatch_engineer / _dispatch_reviewer / _spawn_architect all
+        resolve it before calling here); this method does no per-role branching at all.
+        The single `spawn.worker` template (messages.yaml) — role-generic, PMT-SPAWN
+        carries `{role}` as data — replaces the three byte-identical `spawn.<role>`
+        duplicates 01-33 retires, so an injected role needs no new template entry
+        (AC-2: zero engine edits)."""
+        persona = self._agent_file(role)
         slots = {"worker_id": wid, "role": role, "persona": persona}
         if self.dry:
             return "dry", "dry"
@@ -1001,7 +1027,7 @@ class Engine:
             jobs.retire_stale_dir(self.ctx.worker_dir(wid))
             # turn 1: the persona/onboarding, via the mailbox — through emit() (S-4/W4:
             # every worker send goes through the one slot-injecting sender).
-            self.emit(template_id, slots, worker_id=wid)
+            self.emit("spawn.worker", slots, worker_id=wid)
             # T2 (01-32, ADR-0002 D1): spawn cwd is the worker's OWN TRON-owned scratch dir
             # (`meta/agents/tron/scratch/<wid>/`), never the shared project root — under
             # folder-absolute, TRON cannot clean residue outside its own folder, so every
@@ -1010,8 +1036,8 @@ class Engine:
             # `_check_carve_bootstrap` observes the carve within `carve_observe_ticks`.
             scratch = self.ctx.worker_scratch_dir(wid)
             os.makedirs(scratch, exist_ok=True)
-            # 01-21 T1 (per-role since 01-30 T2): the worker model is a declared,
-            # project-configured input — read from knobs.yaml (never the host CLI's own
+            # 01-21 T1 (per-role since ADR-0002 D4, 01-33): the worker model is a declared,
+            # project-configured input — read from roles.yaml (never the host CLI's own
             # ambient default) and threaded explicitly, resolved for THIS spawn's role.
             # jobs.spawn_runner fails closed if this resolves to nothing.
             jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=scratch,
@@ -1020,25 +1046,32 @@ class Engine:
             self.events.failure(                          # forensic record (AC-2/AC-6)
                 "dispatch-fail", "spawn-failed", "spawn a worker process",
                 f"{type(e).__name__}: {e}", actor=wid, block=block,
-                inputs={"template": template_id, "role": role, "rtype": rtype},
+                inputs={"role": role},
                 node="SWITCHBOARD dispatch", next_action="crash (reservation recovered next sweep)")
             raise
         return session_id, wid
 
     def _agent_file(self, role):
-        for a in (self.project.get("agents") or []):
-            if a.get("role") == role and a.get("file"):
-                return os.path.join(self.paths["root"], a["file"])
-        ptr = (self.project.get("pointers") or {}).get("agents", "")
-        return os.path.join(self.paths["root"], ptr, f"{role}.md") if role else ""
+        """ADR-0002 D4 (T1/T4): the persona path is a roles.yaml lookup, full stop — the
+        project.yaml `agents[]`/`pointers.agents` convention this used to scan (and the
+        01-30 bootup model-recommendation feature that read it) is retired; roles.yaml
+        is the one and only fleet-composition source (P5)."""
+        return self.roles.persona_for(role) if role else ""
 
     # ── table handlers (trigger -> step) ──
     def _h_bootup(self, m):
         # tron:start: the deterministic part of protocol:bootup, then pulse.
-        if (self.comp.get("session", {}).get("persistent_architect")
-                and not self._architect()):
+        if self._spec_owner_persistent() and not self._architect():
             self._spawn_architect()
         self._emit("pulse")
+
+    def _spec_owner_persistent(self):
+        """ADR-0002 D4 (T3/T4): retires the `session.persistent_architect` knob — a
+        single global boolean keyed to one hardcoded role name. Whether the spec_owner
+        role is spawned once at boot and kept alive for the session is now that role's
+        OWN `persistent:` flag in roles.yaml, exactly like every other per-role fact."""
+        role = self.roles.spec_owner
+        return bool(role and (self.roles.roles.get(role) or {}).get("persistent"))
 
     def _h_dispatch_engineer(self, m):
         # Reached only if a build:block:next trigger arrives generically; SWITCHBOARD
@@ -1056,11 +1089,11 @@ class Engine:
 
     def _h_worker_online(self, m):
         # worker:online (01-07 two-step) — a spawned worker checked in. Deliver its pending
-        # assignment (assign.engineer / assign.reviewer) to its session, then clear it. Mirrors the
-        # architect idle-pump: spawn is identity-only; the work follows on `online`. Crash-safe —
-        # the pending assignment is durable on the worker record (set at reserve), so a crash
-        # between spawn and assign re-emits cleanly (at-least-once; deduped by the worker already
-        # being online). No pending (architect, or already assigned) -> nothing to do.
+        # assignment (assign.worker) to its session, then clear it. Mirrors the architect
+        # idle-pump: spawn is identity-only; the work follows on `online`. Crash-safe — the
+        # pending assignment is durable on the worker record (set at reserve), so a crash
+        # between spawn and assign re-emits cleanly (at-least-once; deduped by the worker
+        # already being online). No pending (architect, or already assigned) -> nothing to do.
         wid = m.get("worker_id")
         w = next((x for x in self.st.workers if x.get("id") == wid), None)
         if not w:
@@ -1068,14 +1101,15 @@ class Engine:
         pend = w.get("pending_assign")
         if not pend:
             return
-        # ASSIGN is role-neutral (PMT-ASSIGN); the per-role {assignment} was composed at dispatch.
+        # ASSIGN is role-neutral (PMT-ASSIGN); the per-role {assignment} was composed at
+        # dispatch. `kind` here is the coarse dispatch CATEGORY ("build" | "review" — never
+        # a role name; ADR-0002 D4/T4 retires the single "assign.engineer"/"assign.reviewer"
+        # duplicate templates in favor of one generic "assign.worker" — any injected role
+        # needs no new template entry, AC-2).
         assignment = pend.get("assignment", "")
         slots = {"worker_id": wid, "assignment": assignment,
-                 "merge_path": self._merge_path(pend.get("kind") or "engineer")}   # mode-/role-true (01-11 FX-4)
-        if pend.get("kind") == "reviewer":
-            self.emit("assign.reviewer", slots, worker_id=wid)
-        else:
-            self.emit("assign.engineer", slots, worker_id=wid)
+                 "merge_path": self._merge_path(pend.get("kind") or "build")}   # mode-/kind-true (01-11 FX-4)
+        self.emit("assign.worker", slots, worker_id=wid)
         w["pending_assign"] = None
         self.log("flow", f"{wid} online -> assign ({pend.get('kind')})")
 
@@ -1122,7 +1156,7 @@ class Engine:
             if g and g.get("stage") == "close":
                 self._confirm_close(block, g)
             elif g and g.get("stage") == "record":
-                self._drive_close(block, g, self._worker_id("engineer", block))
+                self._drive_close(block, g, self._worker_id(self._close_role(block), block))
             return
         g = self.st.gate.setdefault(block, {"stage": None, "pr": None})
         g.pop("awaiting_rework", None)                # a fresh report -> rework done; re-challenge merge
@@ -1133,7 +1167,8 @@ class Engine:
             n = g.get("stall_attempts", 0) + 1
             g["stall_attempts"] = n
             if n > int(self.knobs.get("gate_step_cap", 2)):
-                self._gate_giveup(block, g, self._worker_id("engineer", block),
+                build_role = self.st.block_roles.get(block) or self.roles.select_build_role()
+                self._gate_giveup(block, g, self._worker_id(build_role, block),
                                   f"stuck at {before} after {n} attempts",
                                   "gate-step-cap", f"advance DONE gate stage '{before}'")
         else:
@@ -1155,7 +1190,7 @@ class Engine:
         # Admission (S-2-lite) only lets a receipt through while the gate is AT record;
         # trunk truth (row status) still gates the close drive.
         if row and g and g.get("stage") == "record" and row.get("status") == "done":
-            self._drive_close(block, g, self._worker_id("engineer", block))
+            self._drive_close(block, g, self._worker_id(self._close_role(block), block))
         else:
             self.log("flow", f"record receipt for {block} noted (stage={(g or {}).get('stage')})")
         self._emit("pulse")
@@ -1168,14 +1203,13 @@ class Engine:
         block = m.get("block")
         gkey = f"review:{typ}"
         rev = next((w for w in self.st.workers
-                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+                    if self.roles.binds(w.get("role"), "REVIEW") and w.get("rtype") == typ), None)
         if self.st.gate.get(gkey) is None:
             self.st.gate[gkey] = {"stage": "review"}
             self.events.event("gate_advance", block=gkey,
                               **{"from": None, "to": "review", "detail": "attest coverage"})
-            wid = rev.get("id") if rev else self._worker_id("reviewer", typ)
             if rev:
-                self.emit("gate.review", {"worker_id": wid}, worker_id=wid)
+                self.emit("gate.review", {"worker_id": rev.get("id")}, worker_id=rev.get("id"))
             self.log("flow", f"review:{typ} -> DONE-REVIEW gate (attest coverage)")
             self._emit("pulse")
             return
@@ -1193,7 +1227,7 @@ class Engine:
         # when a branch was declared — paperwork-less reviews release exactly as before);
         # the wall-clock driver (_drive_review_landing) paces it from here.
         if rev and rev.get("pending_landings"):
-            code, detail = self._drain_landings(rev, "reviewer")
+            code, detail = self._drain_landings(rev, rev.get("role"))
             if code == "blocked":
                 g = self.st.gate[gkey]
                 prev = g.get("stage")
@@ -1210,7 +1244,7 @@ class Engine:
         # Release + remediation — the single exit for a completed review cycle.
         self.st.gate.pop(f"review:{typ}", None)
         for w in list(self.st.workers):
-            if w.get("role") == "reviewer" and w.get("rtype") == typ:
+            if self.roles.binds(w.get("role"), "REVIEW") and w.get("rtype") == typ:
                 self._release_worker(w, reason="review-complete")
         if self._architect():                       # no architect -> nothing drains a log job
             self.st.architect_queue.append({"kind": "log", "type": typ, "block": block})
@@ -1299,7 +1333,8 @@ class Engine:
         detail = require_content(m, "detail")
         freed = worker_id
         for w in list(self.st.workers):
-            if w.get("role") not in ("engineer", "reviewer"):
+            if not (self.roles.binds(w.get("role"), "BUILD")
+                    or self.roles.binds(w.get("role"), "REVIEW")):
                 continue
             if (block and w.get("block") == block) or (worker_id and w.get("id") == worker_id):
                 freed = w.get("id")
@@ -1652,7 +1687,7 @@ class Engine:
         if not wid:
             return
         w = next((x for x in self.st.workers if x.get("id") == wid), None)
-        if w is None or w.get("role") == "architect":
+        if w is None or w.get("role") == self.roles.spec_owner:
             return
         block = case.get("block")
         if case.get("decision") == "abandon":
@@ -1766,7 +1801,7 @@ class Engine:
             if not wid or w.get("id") == wid:
                 block, role, rtype = w.get("block"), w.get("role"), w.get("rtype")
                 self._release_worker(w, notify=False, reason="stall-recover")
-                if role == "reviewer" and rtype:
+                if self.roles.binds(role, "REVIEW") and rtype:
                     self.st.cadence[rtype] = max(self.st.cadence.get(rtype, 0),
                                                  self.cadence_cfg.get(rtype, 0))
                 elif block and not str(block).startswith("review:"):
@@ -1893,9 +1928,14 @@ class Engine:
         if block in self._dropped():
             self.st.gate.pop(block, None)
             return
-        wid = self._worker_id("engineer", block)
+        # ADR-0002 D4: `wid` below drives every PRE-close stage (local/merge/trunk/record)
+        # against the role that actually BUILT this block; the CLOSE transition resolves
+        # separately via CLOSE affinity (same role/worker if it binds CLOSE, else the
+        # project's close_fallback — T2/AC-4), which usually IS the same role but need not be.
+        build_role = self.st.block_roles.get(block) or self.roles.select_build_role()
+        wid = self._worker_id(build_role, block)
         if row and row.get("status") == "done":          # ✅ on trunk -> CLOSE (slot held, T7)
-            self._drive_close(block, g, wid)
+            self._drive_close(block, g, self._worker_id(self._close_role(block), block))
             return
         branch = self._block_branch(block)               # the worker-named branch (T2), never a guess
         pr = (self.st.open_prs or {}).get(branch)
@@ -2358,7 +2398,7 @@ class Engine:
             return None
         if not trunk.is_descendant(self.paths["root"], cur_tip, merged, self.dry):
             return None                      # divergent history — the contradiction arm's job
-        allow, deny, _ = self._paperwork_rules("engineer", block)
+        allow, deny, _ = self._paperwork_rules(self.st.block_roles.get(block), block)
         if not trunk.delta_has_code(self.paths["root"], merged, cur_tip, allow,
                                     self.dry, denylist=deny):
             return None                      # paperwork-only descendant -> the paperwork lane owns it
@@ -2631,8 +2671,9 @@ class Engine:
             return
         now = self._tick_no()
         for w in list(self.st.workers):
-            if (w.get("role") != "engineer" or "_carve_deadline_tick" not in w
-                    or w.get("status") == "released"):
+            # "_carve_deadline_tick" is set ONLY at BUILD dispatch (any BUILD-bound role,
+            # ADR-0002 D4) — no separate role check needed; its presence alone scopes this.
+            if "_carve_deadline_tick" not in w or w.get("status") == "released":
                 continue
             block = w.get("block")
             branch = self._block_branch(block) if block else None
@@ -2657,11 +2698,13 @@ class Engine:
         return ("push it on a side branch, open a PR, and merge that PR yourself, now — "
                 "it needs no approval hold")
 
-    def _merge_path(self, kind="engineer"):
+    def _merge_path(self, kind="build"):
         """The {merge_path} slot of PMT-ASSIGN (01-11 FX-4): the mode-true merge instruction —
         local mode must never tell a worker to open a PR (tron-05 F2), and a reviewer must
-        never receive merge instructions at all (review is a milestone, not a merge)."""
-        if kind == "reviewer":
+        never receive merge instructions at all (review is a milestone, not a merge). `kind`
+        is the coarse dispatch CATEGORY ("build" | "review"), never a role name — ADR-0002
+        D4 dissolves the old "engineer"/"reviewer" literal here too."""
+        if kind == "review":
             return "you review and report; you never merge — deliver your findings log and report done"
         if self._local_mode():
             return ("build on your branch and report done — there is no PR here; "
@@ -2901,28 +2944,64 @@ class Engine:
                           repeat_nudge=True)
 
     # ── the unified paperwork lander (F-1/S-3+R-6, tron-13 D1) ──
-    def _paperwork_rules(self, role, block=None):
-        """Per-role paperwork rules -> (allow, deny, line_scoped). The project declares
-        the paperwork area (`paperwork_paths`, seeder-authored; default the meta dir).
-        Pipeline content is carved OUT for engineer/reviewer — the pipeline's shape is
-        the architect's product — with two mechanically-scoped exceptions for the
-        engineer's own close-out (co-signed ask-2 fix): its OWN block doc + archive path
-        (the archive move + Completed line), and pipeline edits whose every changed line
-        names its own block id. The architect gets the explicit UNION — a config where
-        blocks_dir isn't under a paperwork path must not silently exclude it."""
-        base = list(self.paths.get("paperwork") or [])
+    def _paperwork_placeholders(self, block=None):
+        """ADR-0002 D4 (T4): the substitution map for roles.yaml's `paperwork:` template
+        strings. `{block_doc}`/`{archive}`/`{block_id}` resolve only when `block` is
+        given (a role's paperwork check tied to a specific block/branch); entries that
+        need them are dropped (never a bogus/empty-string path) when it isn't."""
         pipe = self.paths.get("pipeline_rel") or "meta/pipeline.md"
         blocks = self.paths.get("blocks_rel") or "meta/blocks/"
-        if role == "architect":
-            return base + [blocks, pipe], None, None
-        deny = [blocks, pipe]
-        if role == "engineer" and block:
+        ph = {"{pipeline}": pipe, "{blocks_dir}": blocks}
+        if block:
             rel = self._block_relpath(block)
             archive_rel = os.path.relpath(
                 os.path.join(self.paths["archive"], os.path.basename(rel)),
                 self.paths["root"])
-            return base + [rel, archive_rel], deny, {pipe: str(block)}
-        return base, deny, None
+            ph.update({"{block_doc}": rel, "{archive}": archive_rel, "{block_id}": str(block)})
+        return ph
+
+    def _subst_paths(self, templates, ph):
+        """Substitute each entry of `templates` (a list of `{placeholder}` strings, dir
+        entries keeping their trailing `/`) via `ph`; an entry naming a placeholder not
+        in `ph` (block-scoped, no block given) is dropped, never emitted unresolved."""
+        out = []
+        for t in templates or []:
+            if t in ph:
+                out.append(ph[t])
+            elif "{" not in t:
+                out.append(t)          # a literal, non-templated path — passed through
+            # else: references a placeholder that isn't resolvable here — dropped
+        return out
+
+    def _subst_line_scoped(self, templates, ph):
+        out = {}
+        for k, v in (templates or {}).items():
+            rk = ph.get(k, k if "{" not in k else None)
+            rv = ph.get(v, v if "{" not in v else None)
+            if rk is not None and rv is not None:
+                out[rk] = rv
+        return out
+
+    def _paperwork_rules(self, role, block=None):
+        """ADR-0002 D4 (T4): per-role paperwork rules -> (allow, deny, line_scoped), READ
+        FROM roles.yaml's `paperwork:` config — no more hardcoded engineer/architect
+        special cases. The project's declared paperwork area (`paperwork_paths`) is
+        always included in `allow` for every role (project-wide, not role-specific). A
+        role that omits `paperwork:` entirely gets the plain default: the paperwork area
+        only, with the pipeline + blocks dir explicitly denied (today's behavior for
+        every role that isn't the pipeline's owner)."""
+        base = list(self.paths.get("paperwork") or [])
+        pipe = self.paths.get("pipeline_rel") or "meta/pipeline.md"
+        blocks = self.paths.get("blocks_rel") or "meta/blocks/"
+        raw = self.roles.paperwork_for(role)
+        if raw is None:
+            return base, [blocks, pipe], None
+        allow_t, deny_t, scoped_t = raw
+        ph = self._paperwork_placeholders(block)
+        allow = base + self._subst_paths(allow_t, ph)
+        deny = self._subst_paths(deny_t, ph) or None
+        scoped = self._subst_line_scoped(scoped_t, ph) or None
+        return allow, deny, scoped
 
     def _drain_landings(self, w, role):
         """FS-1: land the worker's declared paperwork branches FIFO head-first — a second
@@ -2950,7 +3029,7 @@ class Engine:
         fifo = w.setdefault("pending_landings", [])
         grants_live = w.setdefault("landing_grants", {})
         correlate = w.setdefault("landing_correlate", {})
-        job = w.get("current_job") if role == "architect" and w.get("status") == "busy" else None
+        job = w.get("current_job") if role == self.roles.spec_owner and w.get("status") == "busy" else None
         while fifo:
             branch = fifo[0]
             case_id = grants_live.get(branch)
@@ -3055,7 +3134,7 @@ class Engine:
         arch = self._architect()
         if not arch or not arch.get("pending_landings"):
             return
-        code, detail = self._drain_landings(arch, "architect")
+        code, detail = self._drain_landings(arch, arch.get("role"))
         if code != "blocked":
             arch.pop("land_since", None)
             arch.pop("land_nudged_at", None)
@@ -3065,7 +3144,7 @@ class Engine:
         if now - since >= self._pace("gate_close_cap", 3):
             arch.pop("land_since", None)
             arch.pop("land_nudged_at", None)
-            self._fail_landing(arch, "architect", detail)
+            self._fail_landing(arch, arch.get("role"), detail)
             return
         last = arch.get("land_nudged_at")
         ceiling = float(self.knobs.get("wake_ceiling_sec", 30))
@@ -3081,11 +3160,11 @@ class Engine:
         session-end sweep re-surfaces)."""
         typ = gkey.split(":", 1)[1]
         rev = next((w for w in self.st.workers
-                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+                    if self.roles.binds(w.get("role"), "REVIEW") and w.get("rtype") == typ), None)
         if rev is None:
             self.st.gate.pop(gkey, None)
             return
-        code, detail = self._drain_landings(rev, "reviewer")
+        code, detail = self._drain_landings(rev, rev.get("role"))
         if code != "blocked":
             self.log("flow", f"{gkey} paperwork landed -> release")
             self._finish_review(typ, g.get("block"))
@@ -3093,7 +3172,7 @@ class Engine:
         wid = rev.get("id")
 
         def _cap(idle_s):
-            self._fail_landing(rev, "reviewer", detail)
+            self._fail_landing(rev, rev.get("role"), detail)
             self._finish_review(typ, g.get("block"))
 
         self._pace_ladder(g, "landing_idle_since", "landing_nudged_at",
@@ -3112,7 +3191,7 @@ class Engine:
         recovery, now with the engine asking for it instead of hiding it."""
         typ = gkey.split(":", 1)[1]
         rev = next((w for w in self.st.workers
-                    if w.get("role") == "reviewer" and w.get("rtype") == typ), None)
+                    if self.roles.binds(w.get("role"), "REVIEW") and w.get("rtype") == typ), None)
         if rev is None:
             self.st.gate.pop(gkey, None)
             return
@@ -3166,12 +3245,12 @@ class Engine:
             self._consume_grant_administratively(case_id)
             g.pop("close_landing_case", None)
             self.events.event("docs_landed", actor=wid, block=block,
-                              **{"role": "engineer", "branch": branch,
+                              **{"role": self._close_role(block), "branch": branch,
                                  "detail": f"observed landed (grant {case_id})"})
             self.log("flow", f"paperwork[{block}] landed (grant {case_id})")
             code, ldetail = "none", "landed via grant"   # fall through to replica_clean below
         else:
-            allow, deny, scoped = self._paperwork_rules("engineer", block)
+            allow, deny, scoped = self._paperwork_rules(self._close_role(block), block)
             code, ldetail = trunk.verify_docs(self.paths["root"], branch, allow,
                                               self.paths.get("main_branch", "main"), self.dry,
                                               denylist=deny, line_scoped=scoped,
@@ -3189,7 +3268,7 @@ class Engine:
             self._consume_grant_administratively(case_id)
             g.pop("close_landing_case", None)
             self.events.event("docs_landed", actor=wid, block=block,
-                              **{"role": "engineer", "branch": branch,
+                              **{"role": self._close_role(block), "branch": branch,
                                  "detail": f"observed landed (grant {case_id})"})
             self.log("flow", f"paperwork[{block}] landed (grant {case_id})")
         elif code == "violation":
@@ -3254,7 +3333,8 @@ class Engine:
             self.log("flow", f"gate[{block}] close claim rejected: {detail}")
             return
         for w in list(self.st.workers):
-            if w.get("role") == "engineer" and w.get("block") == block:
+            if w.get("block") == block and (self.roles.binds(w.get("role"), "BUILD")
+                                            or self.roles.binds(w.get("role"), "CLOSE")):
                 self._release_worker(w, notify=False, reason="close-confirmed")  # CLOSE already sent
         self.st.gate.pop(block, None)
         self.log("flow", f"{block} close confirmed -> worker released")
@@ -3267,7 +3347,7 @@ class Engine:
         LATER tick's re-check (`_check_violation_landing`, from `_drive_close`)."""
         self._consume_grant_administratively(case_id)
         self.events.event("docs_landed", actor=wid, block=block,
-                          **{"role": "engineer", "branch": g.get("violation_branch"),
+                          **{"role": self._close_role(block), "branch": g.get("violation_branch"),
                              "detail": f"observed landed (grant {case_id})",
                              "via": "violation-approved"})
         self.log("flow", f"gate[{block}] violation range landed (grant {case_id})")
@@ -3276,7 +3356,8 @@ class Engine:
         g.pop("violation_tip", None)
         g.pop("violation_landing_case", None)
         for w in list(self.st.workers):
-            if w.get("role") == "engineer" and w.get("block") == block:
+            if w.get("block") == block and (self.roles.binds(w.get("role"), "BUILD")
+                                            or self.roles.binds(w.get("role"), "CLOSE")):
                 self._release_worker(w, notify=False, reason="close-confirmed")
         self.st.gate.pop(block, None)
         self.log("flow", f"{block} close confirmed (violation range landed) -> worker released")
@@ -3368,9 +3449,26 @@ class Engine:
                    {"block": block, "worker_id": wid, "detail": detail, "code": code})
 
     def _worker_id_for_block(self, block):
+        """The live BUILD/CLOSE-bound worker holding `block`, if any — role-agnostic
+        (ADR-0002 D4): any role the selector dispatched to build it (or that CLOSE
+        affinity handed it to) qualifies, never a hardcoded 'engineer' literal."""
         w = next((w for w in self.st.workers
-                  if w.get("role") == "engineer" and w.get("block") == block), None)
+                  if w.get("block") == block
+                  and (self.roles.binds(w.get("role"), "BUILD")
+                       or self.roles.binds(w.get("role"), "CLOSE"))), None)
         return w.get("id") if w else None
+
+    def _close_role(self, block):
+        """ADR-0002 D4 (T2/AC-4): CLOSE affinity — the role (and worker, if alive) that
+        BUILT this block continues into CLOSE when it binds CLOSE; otherwise the
+        project's unique `close_fallback` role picks it up. `self.st.block_roles`
+        durably records which role actually built each block (set at BUILD dispatch),
+        so this resolves identically whether or not that worker is still alive."""
+        build_role = self.st.block_roles.get(block)
+        if not build_role:
+            w = next((w for w in self.st.workers if w.get("block") == block), None)
+            build_role = w.get("role") if w else None
+        return self.roles.close_role_for(build_role)
 
     def _resolve_workerless_gate(self, block, g):
         """T2 (01-16, D-17-1): a workerless gate is never a wait state. Every path that
@@ -3435,13 +3533,20 @@ class Engine:
 
     # ── the architect (persistent, queued, forward-only) ──
     def _architect(self):
-        return next((w for w in self.st.workers if w.get("role") == "architect"), None)
+        """ADR-0002 D4: 'the architect' is the project's spec_owner role (boot-validated
+        unique) — never a hardcoded 'architect' literal. Method name kept (internal
+        identifier, not a role-name comparison) for the persistent-TRIAGE-worker
+        concept this whole cluster of methods implements."""
+        role = self.roles.spec_owner
+        return next((w for w in self.st.workers if role and w.get("role") == role), None)
 
     def _spawn_architect(self):
-        w = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "", "shortid": "",
+        role = self.roles.spec_owner
+        wid = self._worker_id(role, "")
+        w = {"id": wid, "role": role, "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "idle", "current_job": None, "block": None}
         self._reserve(w)                               # durable intent before spawn
-        session, short = self._spawn("ARCH-PERSIST", "spawn.architect", "architect")
+        session, short = self._spawn(wid, role)
         w["session_id"], w["shortid"] = session, short
 
     def _forward_review(self, block):
@@ -4127,8 +4232,9 @@ class Engine:
         w = next((x for x in self.st.workers if x.get("id") == sid), None) if sid else None
         if w is None:
             return tag, slots
-        arch_job_kind = (w.get("current_job") or {}).get("kind") if w.get("role") == "architect" else None
-        if w.get("role") == "architect" and (
+        spec_owner = self.roles.spec_owner
+        arch_job_kind = (w.get("current_job") or {}).get("kind") if w.get("role") == spec_owner else None
+        if w.get("role") == spec_owner and (
                 tag in ("worker.done", "worker.recorded")
                 # T5 (01-20): widen sender-truth for the architect's `--tag review-done` —
                 # required (not redundant with done/recorded), the ONLY message route for a
@@ -4153,7 +4259,7 @@ class Engine:
             return "architect.relay", {**slots,
                                        "detail": slots.get("detail")
                                        or slots.get("_raw", "")}
-        if w.get("role") == "reviewer" and tag == "worker.done":
+        if self.roles.binds(w.get("role"), "REVIEW") and tag == "worker.done":
             return "worker.review_done", {**slots,
                                           "type": w.get("rtype") or slots.get("type")}
         return tag, slots
@@ -4180,7 +4286,7 @@ class Engine:
                         f"clean) and `--block <your block id>` when the act concerns "
                         f"your block. Say the same thing; carry the tags.",
                         "report.bounce")
-        if w.get("role") == "architect":
+        if w.get("role") == self.roles.spec_owner:
             self._mark_engine_wake(w)   # T6(b): a bounce is an engine-initiated wake too
         self.log("flow", f"bounced {sid}: {why}")
 
@@ -4379,11 +4485,11 @@ class Engine:
         # walled the block's own engineer. A non-owner's block ref is DISCARDED here;
         # its branch routes to the sender's paperwork FIFO, which is what a non-owner's
         # branch always is.
-        owner = (w is not None and w.get("role") == "engineer"
+        owner = (w is not None and self.roles.binds(w.get("role"), "BUILD")
                  and block and w.get("block") == block)
         if not owner:
-            if w is None or w.get("role") == "engineer":
-                # Unknown sender, or an engineer naming someone else's block: never record.
+            if w is None or self.roles.binds(w.get("role"), "BUILD"):
+                # Unknown sender, or a builder naming someone else's block: never record.
                 self.log("flow", f"branch declaration from {wid} for '{block}' refused "
                                  f"(not the owner) -> dropped")
                 return
@@ -4412,7 +4518,7 @@ class Engine:
             return
         self.st.branches[block] = branch
         for w in self.st.workers:                      # stamp it on the owner record too
-            if w.get("block") == block and w.get("role") == "engineer":
+            if w.get("block") == block and self.roles.binds(w.get("role"), "BUILD"):
                 w["branch"] = branch
         self.log("flow", f"branch[{block}] = {branch} (worker-named)")
 
@@ -4582,8 +4688,8 @@ class Engine:
         hold = self._fleet_refusal_hold()
         if not hold.get("canary"):
             role = w.get("role")
-            ref = (w.get("block") if role == "engineer"
-                   else w.get("rtype") if role == "reviewer" else None)
+            ref = (w.get("block") if self.roles.binds(role, "BUILD")
+                   else w.get("rtype") if self.roles.binds(role, "REVIEW") else None)
             if ref:
                 hold["canary"], hold["canary_role"] = ref, role
         self._release_worker(w, notify=False, reason="fleet-refusal-hold")
@@ -4599,10 +4705,10 @@ class Engine:
         hold = self._fleet_refusal_hold()
         if not hold.get("active"):
             return
-        ref = hold.get("canary")           # the canary reference: a block id (engineer) OR an rtype (reviewer)
+        ref = hold.get("canary")           # the canary reference: a block id (BUILD) OR an rtype (REVIEW)
         if not ref:
             return
-        role = hold.get("canary_role", "engineer")
+        role = hold.get("canary_role") or self.roles.select_build_role()
         wid = self._worker_id(role, ref)
         rec = jobs.find(wid, idx)
         if rec is not None:
@@ -4627,7 +4733,7 @@ class Engine:
         last = hold.get("canary_probed_at")
         if last is None or now - last >= self._pace("gate_nudge_after", 2):
             hold["canary_probed_at"] = now
-            if role == "reviewer":
+            if self.roles.binds(role, "REVIEW"):
                 # A reviewer canary needs none of _redispatch's hard-stop guards: the dead
                 # reviewer was already off the roster (_release_worker at election), the
                 # reviewer wid is keyed on rtype so there is no duplicate-slot risk, and
@@ -4667,7 +4773,7 @@ class Engine:
                 continue
             sess = w.get("session_id")
             alive = bool(sess) and sess != "dry" and jobs.is_alive(w.get("id"), idx)
-            if w.get("role") == "architect":
+            if w.get("role") == self.roles.spec_owner:
                 if not alive:                    # persistent: died or never confirmed -> restore
                     self.st.workers.remove(w)
                     self._spawn_architect()
@@ -4740,7 +4846,7 @@ class Engine:
                 # wall-clock law). Naturally one-shot: _gate_giveup raises a wall, which
                 # HOLDS this worker (walled) — and this loop skips walled workers up top —
                 # so it never re-fires on the same orphan.
-                if w.get("role") == "engineer" and rstate == "idle" and w.get("block"):
+                if self.roles.binds(w.get("role"), "BUILD") and rstate == "idle" and w.get("block"):
                     blk = w.get("block")
                     row = self.st.row(blk)
                     g = self.st.gate.get(blk)
@@ -5007,7 +5113,8 @@ class Engine:
             # block) left `branches: {}` through three declarations and walled the gate.
             snd_id = (msg.get("sender") or {}).get("id")
             sw = next((x for x in self.st.workers if x.get("id") == snd_id), None)
-            blk = (sw or {}).get("block") if (sw or {}).get("role") == "engineer" else None
+            blk = ((sw or {}).get("block")
+                   if self.roles.binds((sw or {}).get("role"), "BUILD") else None)
             self._record_branch({"branch": data_slots["branch"],
                                  "worker_id": snd_id,
                                  "block": blk or data_slots.get("block")})
@@ -5078,6 +5185,7 @@ class Engine:
         self.st.data["review_markers"] = {}      # since-last-review markers don't carry across sessions (T6)
         self.st.data["checkpoints"] = []
         self.st.data["branches"] = {}            # worker-named branches don't carry across sessions (T2)
+        self.st.data["block_roles"] = {}         # ADR-0002 D4: build-role affinity resets each session
         self.st.data["approvals"] = dict(DEFAULT_APPROVALS)
         # Ask-before-merging (T8): the bootup question (live_config) or the knob flips the trunk-merge
         # step to ASK. Default APPROVED — TRON instructs the merge unprompted.
@@ -5369,7 +5477,7 @@ class Engine:
                 purged += 1
                 blk, role = w.get("block"), w.get("role")
                 self._release_worker(w, notify=False, reason="stall-recover")
-                if blk and not str(blk).startswith("review:") and role != "architect":
+                if blk and not str(blk).startswith("review:") and role != self.roles.spec_owner:
                     g = self.st.gate.get(blk)
                     if g is not None:
                         self._resolve_workerless_gate(blk, g)   # T2: hand the orphaned gate off
@@ -5377,8 +5485,8 @@ class Engine:
                         self._redispatch(blk)          # no gate yet -> the ordinary lost-work re-arm
         self.st.data["active_workers"] = [w for w in self.st.workers
                                           if w in rebuilt or w.get("status") == "spawning"]
-        if (self.comp.get("session", {}).get("persistent_architect")
-                and not any(w.get("role") == "architect" for w in self.st.workers)):
+        if (self._spec_owner_persistent()
+                and not any(w.get("role") == self.roles.spec_owner for w in self.st.workers)):
             self._spawn_architect()
         self.log("recover", f"recovered={alive} purged={purged}")
         self.st.save()

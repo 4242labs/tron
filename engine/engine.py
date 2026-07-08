@@ -85,7 +85,7 @@ def cmd_start(ctx):
             util.atomic_write(ctx.state, open(tpl).read())
     max_c = _arg("--max")
     if max_c is None:
-        print("start: --max <N> required (worker_count: engineers + reviewers; no default)")
+        print("start: --max <N> required (worker_count: build + review workers; no default)")
         return 2
     eng = Engine(ctx)
     # start() resets disposable runtime — refuse on a live session so a stray internal

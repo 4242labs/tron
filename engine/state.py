@@ -135,6 +135,13 @@ class State:
         return self.data.setdefault("branches", {})
 
     @property
+    def block_roles(self):
+        """ADR-0002 D4 (T2/AC-4): block id -> the role dispatched to BUILD it, recorded at
+        dispatch so CLOSE affinity resolves the same way whether or not that worker is
+        still alive (fsm._close_role)."""
+        return self.data.setdefault("block_roles", {})
+
+    @property
     def review_markers(self):
         """Per-reviewer-type last-review marker: <type> -> the trunk commit at that type's
         previous review (T6). The reviewer's assignment is the commit range since this marker,

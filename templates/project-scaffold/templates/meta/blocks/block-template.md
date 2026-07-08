@@ -8,6 +8,8 @@
 **Reviewer class:** <code | security | data | none>  ← which reviewer the supervising process dispatches on its review cadence; pinned at scoping, not pickable by engineer
 **Merge approval:** <auto | needs-user>  ← default `auto` (the supervising process's gate drives the merge, no human sign-off); stamp `needs-user` for genuinely risky blocks that require explicit human sign-off before merge
 **Deploy:** <none | check>  ← default inherits the project deploy check (`context.md → Deploy`); `none` opts this block out; `check` overrides with a block-specific success check
+**Role:** <optional — project role this block is for (roles.yaml selector input; omit for default binding)>
+**Tags:** <optional — selector tags, e.g. design (omit if none)>
 **Created:** <YYYY-MM-DD>
 
 ---
