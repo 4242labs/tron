@@ -18,6 +18,12 @@ invariants set (tron-22/23/24 defect set).
       covers the root-cause fix: `_hold_worker` no longer clobbers `held_status` on a
       SECOND hold of an already-walled worker (the tron-23 mechanism — a corrupted
       held_status of 'walled' made every later un-hold a no-op).
+      SUPERSEDED (block 01-31, ADR-0002 D5): `_sweep_wall_invariant` (both arms above)
+      is retired outright — `_close_case`/`_release_case_hold` now owns every worker-hold
+      release by construction, so the drift these arms repaired can no longer occur. The
+      three arm-specific behavioral tests below are replaced with one structural
+      retirement proof; full new-mechanism depth lives in block_01_31_test.py. The
+      root-cause `_hold_worker` fix is untouched by this and still tested as-is.
 
 T1's real-git cases reuse the block_01_14_test/tron13_test `_mkrepo`/`_git` convention
 (git reads by design). T2/T3 are FSM-level, dry (TRON_DRY, sentry_test's fixture
@@ -274,65 +280,28 @@ def _eng17(block="A-01"):
     return eng
 
 
-def t_sweep_unhold_walled_worker_whose_case_already_settled():
-    eng = _eng17()
-    cid = _walled(eng, "A-01", "ENG-A-01")
-    # Simulate the tron-23 inconsistency directly: the case settled (decision written)
-    # but nothing un-held the worker.
-    eng.st.pending_cases[cid]["decision"] = "resume"
-    clock = {"t": 1000.0}
-    eng._now_s = lambda: clock["t"]
-    eng._sweep()
-    ok("T3(a) a settled-case walled worker is NOT un-held instantly (one silence window)",
-       next(w for w in eng.st.workers if w["id"] == "ENG-A-01").get("status") == "walled")
-    clock["t"] += PING_WINDOW_S
-    eng._sweep()
-    w = next(w for w in eng.st.workers if w["id"] == "ENG-A-01")
-    ok("T3(a) settled case -> un-held within one silence window",
-       w.get("status") != "walled", f"w={w}")
-    ok("T3(a) held_status is fully cleared (the ordinary _unhold_worker primitive)",
-       "held_status" not in w, f"w={w}")
-    ok("T3(a) the settled case is closed too (nothing left for any settle to do with it)",
-       cid not in eng.st.pending_cases)
-
-
-def t_sweep_reraises_a_walled_worker_with_no_case():
+def t_sweep_wall_invariant_retired_01_31():
+    """SUPERSEDED (block 01-31, ADR-0002 D5): both T3(a) and T3(b) above are gone —
+    `_sweep_wall_invariant` no longer exists at all, and `_sweep()` simply skips a
+    walled worker (no repair, no un-hold, no re-raise) since the case that opened the
+    hold is now the only thing that can close it. Structural proof here; full
+    behavioral coverage of the replacement (F-1 via `_on_block_done`) lives in
+    block_01_31_test.py."""
+    ok("T3 _sweep_wall_invariant retired (01-31) — no longer an Engine attribute",
+       not any(n == "_sweep_wall_invariant" for n in dir(Engine)))
     eng = _eng17()
     cid = _walled(eng, "A-01", "ENG-A-01", detail="close-time violation on feat/a-01")
-    # Simulate the tron-23 inconsistency: the case vanished (closed/lost) but the worker
-    # was never un-held.
-    eng.st.pending_cases.pop(cid, None)
+    eng.st.pending_cases[cid]["decision"] = "resume"   # bypasses _close_case, on purpose
     clock = {"t": 1000.0}
     eng._now_s = lambda: clock["t"]
     eng._sweep()
-    ok("T3(b) a caseless walled worker is NOT re-raised instantly (one silence window)",
-       not eng.st.pending_cases)
     clock["t"] += PING_WINDOW_S
-    eng._sweep()
-    ok("T3(b) walled + no case -> a case is re-raised within one silence window",
-       bool(eng.st.pending_cases), f"cases={eng.st.pending_cases}")
-    new_case = next(iter(eng.st.pending_cases.values()))
-    ok("T3(b) the re-raised case reuses the ORIGINAL wall detail (never invented)",
-       new_case.get("detail") == "close-time violation on feat/a-01", f"case={new_case}")
+    eng._sweep()                    # no arm (a)/(b) left to fire, either shape
     w = next(w for w in eng.st.workers if w["id"] == "ENG-A-01")
-    ok("T3(b) the worker stays walled (still parked, now reachable again)",
-       w.get("status") == "walled")
-
-
-def t_sweep_reraise_names_the_inconsistency_when_detail_is_gone():
-    eng = _eng17()
-    cid = _walled(eng, "A-01", "ENG-A-01")
-    eng.st.pending_cases.pop(cid, None)
-    w = next(w for w in eng.st.workers if w["id"] == "ENG-A-01")
-    w.pop("wall_detail", None)      # the recorded detail is itself gone
-    clock = {"t": 1000.0}
-    eng._now_s = lambda: clock["t"]
-    eng._sweep()                    # anchors the silence window
-    clock["t"] += PING_WINDOW_S
-    eng._sweep()
-    new_case = next(iter(eng.st.pending_cases.values()))
-    ok("T3(b) with no recorded detail either, the inconsistency itself is named",
-       "no pending case" in (new_case.get("detail") or ""), f"case={new_case}")
+    ok("T3 a walled worker with a decided-but-unclosed case stays walled — "
+       "sweep alone never un-holds it anymore", w.get("status") == "walled", f"w={w}")
+    ok("T3 the case stays open — sweep alone never closes it anymore",
+       cid in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
 
 
 def t_sweep_never_touches_a_walled_worker_with_a_live_case():
