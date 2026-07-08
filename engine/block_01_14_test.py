@@ -302,6 +302,14 @@ def _mkrepo(prefix):
 
 
 def t_lander_removes_worktree_before_branch_delete():
+    # T3 (01-32, ADR-0002 D1): this test's original premise (the ENGINE removes a
+    # worktree before deleting a branch it just landed) is retired outright —
+    # `verify_docs` (renamed from `land_docs`) never lands or deletes anything any
+    # more; landing is `land.sh`'s job under a grant, and worktree/branch cleanup is
+    # the WORKER's own close ritual (Decision 1: "Branch deletion is the worker's
+    # close ritual ... never an engine `branch -d`"). What survives: the content
+    # verdict itself ("ok" — clean, ff-able) — asserted here — plus the fact that
+    # NEITHER the worktree nor the branch is touched by this read-only check.
     d = _mkrepo("tron-0114-lander-")
     _git(d, "branch", "feat/paperwork")
     wt = os.path.join(d, "wt-paperwork")
@@ -310,11 +318,13 @@ def t_lander_removes_worktree_before_branch_delete():
         fh.write("paperwork addition\n")
     _git(wt, "add", "-A")
     _git(wt, "commit", "-qm", "paperwork")
-    code, detail = trunk.land_docs(d, "feat/paperwork", ["meta/"], "main")
-    ok("T4 lander lands the paperwork branch", code == "landed", detail)
-    ok("T4 no 'ref survives' noise in the landing detail", "ref survives" not in detail, detail)
-    ok("T4 the branch is gone", not trunk.branch_exists(d, "feat/paperwork"))
-    ok("T4 the worktree is gone", not any(p for p, _ in trunk.list_worktrees(d)))
+    code, detail = trunk.verify_docs(d, "feat/paperwork", ["meta/"], "main")
+    ok("T3 verify_docs verdict: clean, ff-able -> 'ok' (never lands it itself)",
+       code == "ok", detail)
+    ok("T3 verify_docs never deletes the branch (worker's own close ritual now)",
+       trunk.branch_exists(d, "feat/paperwork"))
+    ok("T3 verify_docs never removes the worktree either",
+       any(p for p, _ in trunk.list_worktrees(d)))
     shutil.rmtree(d, ignore_errors=True)
 
 

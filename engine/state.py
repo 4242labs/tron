@@ -141,6 +141,29 @@ class State:
         so nothing slips between reviews; reset to HEAD when a review of that type dispatches."""
         return self.data.setdefault("review_markers", {})
 
+    @property
+    def trunk_sha_observed(self):
+        """N1 (01-32 review round 2, ADR-0002 D2): the trunk sha the engine last OBSERVED,
+        persisted here (not a plain Engine instance attr) because production constructs a
+        FRESH `Engine(ctx)` every tick (wake.py's `locked_tick` + daemon loop — deliberate
+        "stateless rebuild-from-trunk", ADR-0002 D1). An instance attr reset in `__init__`
+        never survives that reconstruction, so `_trunk_sha_prev` was ALWAYS "" at the start
+        of every tick — the observed-advance window `_refresh_from_trunk` computes never
+        actually spanned a tick boundary, which made `_grant_matches_landed_range`'s
+        fail-closed branch (no window -> False) fire on EVERY tick, turning every
+        legitimate crash-window land into a false gate-bypass violation. Persisting the
+        value here (`self.data`, written by the same `self.st.save()` every tick already
+        calls) makes it survive both the next tick's fresh Engine AND a process restart.
+        '' means never observed: either a genuine first tick, or a state file saved before
+        this field existed (legacy upgrade) — `_refresh_from_trunk` treats that as "adopt
+        the current tip as baseline" (an empty window this tick, never a violation storm),
+        never as a huge/unbounded window against all of history."""
+        return self.data.get("trunk_sha_observed", "")
+
+    @trunk_sha_observed.setter
+    def trunk_sha_observed(self, value):
+        self.data["trunk_sha_observed"] = value
+
     def next_case_id(self, block):
         """A monotonic correlation id for an escalation (stable across a retried tick by the
         counter, not the clock)."""

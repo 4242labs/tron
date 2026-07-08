@@ -47,8 +47,11 @@ Always true. Read every situation against them.
   it stays in the fleet.
 - **R7 — Workers never self-terminate.** Only the engine releases a worker. A message that reads as
   a worker volunteering to shut down is **not** a completion — never `worker.done`.
-- **R8 — Branches are protected.** Work lands on a feature branch, through review. Anything implying
-  a direct commit to a protected branch is out of bounds.
+- **R8 — Trunk is protected.** Work lands on a feature branch, through review, and reaches trunk
+  only via the sanctioned landing path (`land.sh` under a grant, where scaffolded — 01-32/ADR-0002 D2);
+  anything implying a direct out-of-gate advance of trunk is out of bounds. Worker branches are their
+  owners' workspace — cross-branch tampering surfaces at close via the ratchet (patch-id + content
+  checks), not via per-branch protection.
 - **Review is a milestone, not a verdict.** A reviewer delivers a findings log and "done"; the
   architect's log-review decides what becomes work. You do not adjudicate findings.
 - **Escalation is rare.** Default to solving it inside the fleet. Crying wolf costs you.

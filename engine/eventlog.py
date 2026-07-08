@@ -37,10 +37,16 @@ import util
 #                   dropped (never strands the tick) but never silently, now.
 #   mailbox-send-failed — an engine->worker mailbox write failed (OSError) after retry
 #                   (01-31, AC-5 HIGH): queued durable for at-least-once redelivery.
+#   sealed-allowlist-violation — a handler tripped the git wrapper's sealed subcommand
+#                   allowlist (review round 1, F4, ADR-0002 D1): a distinct class from
+#                   `handler-raised` on purpose — this is the write-boundary audit's
+#                   own tripwire, never an ordinary handler bug, and routes to the
+#                   architect as a VIOLATION case rather than a dropped trigger.
 FAILURE_CLASSES = {
     "refresh-fail", "classify-fail", "ingest-drop", "gate-stuck",
     "dispatch-fail", "session-residue", "crash",
     "content-missing", "handler-raised", "mailbox-send-failed",
+    "sealed-allowlist-violation",
 }
 
 # The closed vocabulary of `type` values an `event` record carries — the engine's own
@@ -71,12 +77,19 @@ FAILURE_CLASSES = {
 #                   pending text (01-31, AC-5b): forensic, never silent.
 #   unknown_worker_send — an engine->worker send named a worker no longer on the roster
 #                   (01-31, MED inventory): forensic, never a silent no-op.
+#   grant_minted  — T3 (01-32, ADR-0002 D2): a patch-id-bound merge/close grant was
+#                   minted in TRON's own folder (case · block · branch · patch_id) —
+#                   the authorize half of grant -> land.sh -> observe.
+#   grant_consumed — T3 (01-32, ADR-0002 D2): a live grant was consumed
+#                   ADMINISTRATIVELY by the engine (the land.sh-crashed-before-consume
+#                   window: trunk advanced, patch-id matched over the observed range) —
+#                   a write in TRON's own folder, forensic, never silent.
 EVENT_TYPES = {
     "tick", "model_call", "dispatch", "gate_advance", "settle", "release",
     "escalate", "case_reping", "case_safe_parked", "docs_landed", "block_done",
     "session_start", "session_end", "halt",
     "wall_auto_settled", "abandon", "abandon_flag_delivered",
-    "triage_dedup_dropped", "unknown_worker_send",
+    "triage_dedup_dropped", "unknown_worker_send", "grant_minted", "grant_consumed",
 }
 
 

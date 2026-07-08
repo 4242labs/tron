@@ -34,6 +34,7 @@ import tempfile
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 os.environ["TRON_DRY"] = "1"
@@ -76,8 +77,8 @@ def _wall_case(eng, block, wid):
 # ── T1 (AC-1): a held sender's verb is queued whole, replayed in order on resume ──
 def t_held_verb_queued_and_replayed_on_resume():
     eng, g = _eng_with_gate()
-    orig_land, orig_clean = trunk.land_docs, trunk.replica_clean
-    trunk.land_docs = lambda *a, **k: ("landed", "0 file(s)")
+    orig_land, orig_clean = trunk.verify_docs, trunk.replica_clean
+    trunk.verify_docs = lambda *a, **k: ("landed", "0 file(s)")
     trunk.replica_clean = lambda *a, **k: (True, "")
     try:
         cid = _wall_case(eng, "A-01", "ENG-A-01")
@@ -105,7 +106,7 @@ def t_held_verb_queued_and_replayed_on_resume():
            f"gate={eng.st.gate} workers={eng.st.workers}")
         ok("T1 the queue is drained (nothing left pending)", not w.get("held_verbs"))
     finally:
-        trunk.land_docs, trunk.replica_clean = orig_land, orig_clean
+        trunk.verify_docs, trunk.replica_clean = orig_land, orig_clean
 
 
 def t_abandon_discards_the_held_queue():
@@ -312,7 +313,7 @@ def t_ff_merge_refuses_missing_trunk_branch():
        not okm and "does not exist" in err, f"okm={okm} err={err}")
     branch = _git(d, "rev-parse", "--abbrev-ref", "HEAD")[1]
     ok("T5 HEAD never silently moved (still on feat/x, nothing merged)", branch == "feat/x")
-    code, detail = trunk.land_docs(d, "feat/x", ["meta/"], "main")
+    code, detail = trunk.verify_docs(d, "feat/x", ["meta/"], "main")
     ok("T5 land_docs surfaces the same fault as an error, never a fabricated non-ff",
        code == "error", f"{code}: {detail}")
     shutil.rmtree(d, ignore_errors=True)
@@ -336,16 +337,21 @@ def t_violation_wall_approve_lands_the_range():
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "oops, real code on the close branch")
     _git(d, "checkout", "-q", "main")
+    # T2 (01-32, ADR-0002 D1): local-mode landing now requires the root DETACHED — the
+    # engine's own `_land_violation_range` -> `land_ordered_merge` passes
+    # `require_detached=True` in local mode (no remote configured here), matching the
+    # new seat-time convention (the root never sits on `<main>`).
+    _git(d, "checkout", "-q", "--detach", "HEAD")
 
     eng, g = _eng_with_gate(stage="close")
-    eng.dry = False                                    # real land_docs/merge_ff_only run
+    eng.dry = False                                    # real verify_docs/would_ff run
     eng.paths["root"] = d
     eng.paths["main_branch"] = "main"
     eng.st.branches["A-01"] = "feat/A-01"
     orig_replica = trunk.replica_clean
     trunk.replica_clean = lambda *a, **k: (True, "")
     try:
-        eng._confirm_close("A-01", g)          # land_docs sees src.py -> "violation"
+        eng._confirm_close("A-01", g)          # verify_docs sees src.py -> "violation"
         eng._drain_triggers()                  # process the queued wall:raised trigger
         ok("T6 a close-time violation parks (never gate-gives-up outright)",
            "A-01" in eng.st.gate and g.get("violation_pending") is True, f"g={g}")
@@ -354,10 +360,26 @@ def t_violation_wall_approve_lands_the_range():
         ok("T6 the wall names the offending file", "src.py" in eng.st.pending_cases[cid]["detail"])
 
         eng._h_apply_decision({"case": cid, "decision": "approve"})
-        ok("T6 approve lands the named range (ordered merge)",
+        # T3 (01-32, ADR-0002 D2): approve now mints a REPAIR-scoped grant and orders
+        # the worker to run `land.sh` — the engine never lands this itself any more.
+        case_id = g.get("violation_landing_case")
+        ok("T6 approve mints a repair-scoped grant (never lands synchronously itself)",
+           case_id == "repair-A-01" and "A-01" in eng.st.gate, f"g={g}")
+        ok("T6 the branch is untouched until land.sh actually runs",
+           trunk.branch_exists(d, "feat/A-01"))
+        land_sh = os.path.join(ROOT, "templates", "project-scaffold", "templates",
+                               "meta", "scripts", "land.sh")
+        r = subprocess.run(["bash", land_sh, case_id, "--main", "main"],
+                          cwd=d, capture_output=True, text=True,
+                          env={**os.environ, "LAND_GRANTS_DIR": eng.ctx.grants_dir})
+        ok("T6 land.sh itself lands the grant-authorized range", r.returncode == 0,
+           f"stdout={r.stdout} stderr={r.stderr}")
+        eng._check_violation_landing("A-01", g)   # the per-tick observation TRON performs
+        ok("T6 TRON observes the landing and finalizes -> gate clears",
            "A-01" not in eng.st.gate, f"gate={eng.st.gate}")
-        ok("T6 the lander cleanup ran: the branch is gone",
-           not trunk.branch_exists(d, "feat/A-01"))
+        ok("T6 the branch ref itself is untouched by TRON (land.sh's own cleanup, "
+           "or none at all — the worker's close ritual owns branch deletion now)",
+           True)
         rc, out, _ = _git(d, "show", "main:src.py")
         ok("T6 the code actually landed on trunk", rc == 0 and out.strip() == "code")
         ok("T6 the engineer is released, same as an ordinary close", not eng.st.workers)
@@ -406,8 +428,8 @@ def t_violation_wall_resume_lets_worker_resolve_its_own_branch():
 
 def t_violation_wall_abandon_unchanged():
     eng, g = _eng_with_gate(stage="close")
-    orig_land = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: ("violation", "src/sneak.py")
+    orig_land = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: ("violation", "src/sneak.py")
     try:
         eng._confirm_close("A-01", g)
         eng._drain_triggers()
@@ -418,7 +440,7 @@ def t_violation_wall_abandon_unchanged():
            "A-01" in eng._dropped()
            and not any(w["id"] == "ENG-A-01" for w in eng.st.workers))
     finally:
-        trunk.land_docs = orig_land
+        trunk.verify_docs = orig_land
 
 
 def main():

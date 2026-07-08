@@ -234,6 +234,19 @@ def induce_handler_raised(ctx):
     return [r for r in failures(ctx) if r.get("fclass") == "handler-raised"]
 
 
+def induce_sealed_allowlist_violation(ctx):
+    # Review round 1 (F4, ADR-0002 D1): a handler tripping the git wrapper's sealed
+    # subcommand allowlist is a DISTINCT class from `handler-raised` — the write-
+    # boundary audit's own tripwire, never an ordinary handler bug.
+    eng = engine(ctx)
+    eng._tq = [("wall:raised:A-01", {"block": "A-01", "detail": "x"})]
+    eng._route = (lambda trig, slots:
+                 (_ for _ in ()).throw(trunk.SealedAllowlistViolation(
+                     "simulated sealed allowlist trip")))
+    eng._drain_triggers()
+    return [r for r in failures(ctx) if r.get("fclass") == "sealed-allowlist-violation"]
+
+
 def t_per_class():
     """AC-3 + AC-2 + AC-1: induce one failure per class; each record is complete + reconstructable."""
     induced = {}
@@ -247,6 +260,7 @@ def t_per_class():
     ctx, _ = build();  induced["content-missing"] = induce_content_missing(ctx)
     ctx, _ = build();  induced["mailbox-send-failed"] = induce_mailbox_send_failed(ctx)
     ctx, _ = build();  induced["handler-raised"] = induce_handler_raised(ctx)
+    ctx, _ = build();  induced["sealed-allowlist-violation"] = induce_sealed_allowlist_violation(ctx)
 
     # Reconstructable-with-no-re-run predicate per class: the record holds enough to pin the
     # exact trigger — either in the cause (the simulated detail) or in the captured inputs.
@@ -262,6 +276,8 @@ def t_per_class():
         "content-missing": lambda r: "empty detail" in (r.get("cause") or ""),
         "mailbox-send-failed": lambda r: "OSError" in (r.get("cause") or ""),
         "handler-raised": lambda r: "simulated handler explosion" in (r.get("cause") or ""),
+        "sealed-allowlist-violation": lambda r: "simulated sealed allowlist trip"
+                                                in (r.get("cause") or ""),
     }
     for cls in eventlog.FAILURE_CLASSES:
         rs = induced.get(cls, [])

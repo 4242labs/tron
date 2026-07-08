@@ -281,13 +281,13 @@ def test_close_time_violation_routes_architect_first():
     arch = _arch_idle(eng)
     sent = _capture(eng)
     g = eng.st.gate.setdefault("A-01", {"stage": "close"})
-    orig = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: ("violation", "src/sneak.txt")
+    orig = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: ("violation", "src/sneak.txt")
     try:
         eng._confirm_close("A-01", g)
         eng._drain_triggers()
     finally:
-        trunk.land_docs = orig
+        trunk.verify_docs = orig
     ok("AC-2 close-time violation never pages the operator directly",
        not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
     ok("AC-2 close-time violation dispatches the architect",

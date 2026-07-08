@@ -74,18 +74,21 @@ def t_triage_detail():
 def t_review_marker():
     ctx, _ = build(blocks=[("A-01", "📋", "none")])
     eng = Engine(ctx); started(eng)
-    orig = trunk.head_sha
-    trunk.head_sha = lambda *a, **k: "sha1"
+    # T2 (01-32, ADR-0002 D1): _reviewer_assignment reads trunk.truth_sha (the mode's
+    # truth ref), never trunk.head_sha, now that a detached local-mode root's literal
+    # HEAD no longer tracks trunk's position — stub the seam the engine actually calls.
+    orig = trunk.truth_sha
+    trunk.truth_sha = lambda *a, **k: "sha1"
     try:
         a1 = eng._reviewer_assignment("code")
         ok("AC-8 marker reset to HEAD on first dispatch", eng.st.review_markers.get("code") == "sha1")
         ok("AC-8 first review covers full history (no prior marker)", "no prior" in a1)
-        trunk.head_sha = lambda *a, **k: "sha2"
+        trunk.truth_sha = lambda *a, **k: "sha2"
         a2 = eng._reviewer_assignment("code")
         ok("AC-8 second review covers the range since the last marker", "sha1..sha2" in a2)
         ok("AC-8 marker advanced to the new HEAD", eng.st.review_markers.get("code") == "sha2")
     finally:
-        trunk.head_sha = orig
+        trunk.truth_sha = orig
 
 
 # ── AC-11: a gate step that fails past the cap escalates (T9) ──

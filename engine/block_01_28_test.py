@@ -72,6 +72,17 @@ def _git(cwd, *args):
     return r.returncode, r.stdout.strip()
 
 
+def _scratch(d):
+    """N3 (review round 2): `trunk._under_scratch_root` now REFUSES a worktree
+    add/remove with no `scratch_root` at all (fail-closed — the pre-01-32 opt-in
+    fallback to the system tempdir is gone). Every direct `trunk.validate_trunk` call
+    in this file that reaches `_run_declared_command`'s clean checkout must now supply
+    one explicitly, same as the one real production caller (fsm.py's `ctx.scratch_dir`)
+    always did. Nested under the test repo's own tempdir so it's swept by the same
+    `shutil.rmtree(d, ...)` each test already runs — no separate cleanup needed."""
+    return os.path.join(d, ".trunkval-scratch")
+
+
 def _mkrepo():
     d = tempfile.mkdtemp(prefix="tron-0128-")
     _git(d, "init", "-q", "-b", "main")
@@ -127,7 +138,7 @@ def _capture_failures(eng):
 def t_ac1_ff_landed_green_block_closes_clean():
     d, sha = _ff_merge_scenario()
     cmd = "test -f feature.test.ts && exit 0 || exit 1"
-    status, detail = trunk.validate_trunk(d, sha, cmd, None, None, False)
+    status, detail = trunk.validate_trunk(d, sha, cmd, None, None, False, scratch_root=_scratch(d))
     ok("AC-1 a bare-ff merged commit validates green via the declared command "
        "(no base/range, nothing to collapse)", status == "pass", detail)
 
@@ -153,7 +164,7 @@ def t_ac1_ff_landed_green_block_closes_clean():
 # ── AC-2: a genuinely test-red block still HOLDS — no false pass ──
 def t_ac2_red_block_holds():
     d, sha = _ff_merge_scenario()
-    status, detail = trunk.validate_trunk(d, sha, "exit 1", None, None, False)
+    status, detail = trunk.validate_trunk(d, sha, "exit 1", None, None, False, scratch_root=_scratch(d))
     ok("AC-2 a genuinely failing declared command reads fail, not unconfirmed",
        status == "fail", detail)
 
@@ -196,18 +207,20 @@ def t_ac3_declared_command_validates_ts():
     # a real, non-Python declared command that actually inspects the landed content —
     # a genuine command execution, never a language assumption.
     cmd = 'grep -q "add(2,2)" feature.test.ts && exit 0 || exit 1'
-    status, detail = trunk.validate_trunk(d, sha, cmd, None, None, False)
+    status, detail = trunk.validate_trunk(d, sha, cmd, None, None, False, scratch_root=_scratch(d))
     ok("AC-3 a declared non-Python command validates green off the real landed content",
        status == "pass", detail)
 
     cmd_broken = 'grep -q "NEVER MATCHES ANYTHING" feature.test.ts && exit 0 || exit 1'
-    status2, detail2 = trunk.validate_trunk(d, sha, cmd_broken, None, None, False)
+    status2, detail2 = trunk.validate_trunk(d, sha, cmd_broken, None, None, False,
+                                             scratch_root=_scratch(d))
     ok("AC-3 the declared command genuinely runs — a non-matching check fails, not a free pass",
        status2 == "fail", detail2)
 
     # test.env is honored (layered onto the clean checkout's shell env).
     cmd_env = 'test "$TRON_TEST_MARK" = "01-28" && exit 0 || exit 1'
-    status3, detail3 = trunk.validate_trunk(d, sha, cmd_env, {"TRON_TEST_MARK": "01-28"}, None, False)
+    status3, detail3 = trunk.validate_trunk(d, sha, cmd_env, {"TRON_TEST_MARK": "01-28"}, None, False,
+                                             scratch_root=_scratch(d))
     ok("AC-3 test.env is layered onto the clean checkout before the command runs",
        status3 == "pass", detail3)
     shutil.rmtree(d, ignore_errors=True)

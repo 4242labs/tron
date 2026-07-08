@@ -140,6 +140,32 @@ class Ctx:
     def scripts_dir(self):
         return self.p("scripts")
 
+    # ── scratch (01-32 T2, ADR-0002 D1): TRON-owned spawn cwd + validation-checkout root.
+    # Squarely inside TRON's own folder-absolute writable surface — every worker spawns
+    # here and carves its OWN worktree+branch as its first ritual act (never a pre-carve
+    # write landing in the shared project checkout); the declared-command trunk verdict's
+    # validation checkouts (trunk._run_declared_command) live here too (the "scratch
+    # worktree admin" exception Decision 1 names). Swept by TRON, never project content —
+    # the scaffold's `.gitignore` covers it. ──
+    @property
+    def scratch_dir(self):
+        return self.p("scratch")
+
+    def worker_scratch_dir(self, worker_id):
+        return self.p("scratch", worker_id)
+
+    # ── grants (T3, 01-32 T3, ADR-0002 D2): patch-id-bound merge/close authorizations,
+    # minted here on gate approval and consumed by `land.sh` (or administratively, by
+    # the engine itself, in the post-advance crash window) — squarely inside TRON's own
+    # folder-absolute writable surface, never a project write. ──
+    @property
+    def grants_dir(self):
+        return self.p("grants")
+
+    @property
+    def landlock_path(self):
+        return self.p("grants", ".landlock")
+
     # ── loaders (read fresh each session start / tick) ──
     def load_routing(self):
         return util.load_yaml(self.routing)

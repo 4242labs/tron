@@ -51,15 +51,25 @@ def _stamp_merge_approval(repo, block, value):
 
 # ── AC-3: trunk is the only done-truth — an out-of-gate merge is never silently accepted ──
 def t_already_merged_skips_local():
+    # T3 (01-32, ADR-0002 D2): tightened, not regressed — a branch that reached trunk
+    # with NO grant on file at all (never minted, since the gate never even tracked
+    # this block before this tick) is now EXACTLY the grantless-land shape AC-3 names
+    # ("a trunk advance containing a block branch with no matching grant"). Pre-T3
+    # this test asserted a silent clean advance to 'trunk'; T3 closes that gap —
+    # the block's own doc calls it "MG-01 regression, both arms."
     eng = _eng()
     g = eng.st.gate.setdefault("A-01", {"stage": None, "pr": None})
     orig = trunk.branch_merged
     trunk.branch_merged = lambda *a, **k: True
     try:
+        eng._tq = []
         eng._drive_gate("A-01", g)
     finally:
         trunk.branch_merged = orig
-    ok("AC-3 already-merged branch skips local -> trunk re-validate", g.get("stage") == "trunk")
+    walled = any(t.startswith("wall:raised:A-01") for t, _ in eng._tq)
+    ok("AC-3 (T3 tightened): an already-merged branch with NO grant on file escalates "
+       "(no matching grant, live or consumed) rather than silently advancing",
+       walled and "A-01" not in eng.st.gate, f"gate={eng.st.gate} tq={eng._tq}")
 
 
 def t_bypass_during_pending_hold_escalates():

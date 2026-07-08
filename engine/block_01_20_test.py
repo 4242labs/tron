@@ -109,15 +109,15 @@ def _capture_reconcile(eng):
 
 # ══ T1: a correlated landing completes the live architect job (accelerator) ══
 
-def _stub_landing(land_result=("landed", "ok"), touches=True):
-    orig = (trunk.land_docs, trunk.branch_touches_path)
-    trunk.land_docs = lambda *a, **k: land_result
+def _stub_landing(land_result=("ok", "clean"), touches=True):
+    orig = (trunk.verify_docs, trunk.branch_touches_path)
+    trunk.verify_docs = lambda *a, **k: land_result
     trunk.branch_touches_path = lambda *a, **k: touches
     return orig
 
 
 def _restore_landing(orig):
-    trunk.land_docs, trunk.branch_touches_path = orig
+    trunk.verify_docs, trunk.branch_touches_path = orig
 
 
 def t1_correlated_landing_completes_via_h_reconcile():
@@ -125,7 +125,7 @@ def t1_correlated_landing_completes_via_h_reconcile():
     arch = _arch(eng, job={"kind": "reconcile", "block": "A-01", "after": ""},
                  pending_landings=["arch/scope-A-01"])
     calls = _capture_reconcile(eng)
-    orig = _stub_landing(("landed", "1 file(s) @ abc1234"), touches=True)
+    orig = _stub_landing(("ok", "1 file(s) clean"), touches=True)
     try:
         eng._drive_landings()
     finally:
@@ -145,7 +145,7 @@ def t1_multi_batch_landing_never_double_completes():
     calls = _capture_reconcile(eng)
     # Both branches would correlate if checked — proves only the FIRST one (while the
     # job is still live) ever completes anything.
-    orig = _stub_landing(("landed", "ok"), touches=True)
+    orig = _stub_landing(("ok", "clean"), touches=True)
     try:
         eng._drive_landings()
     finally:
@@ -160,7 +160,7 @@ def t1_log_job_landing_never_completes():
     eng = _eng()
     arch = _arch(eng, job={"kind": "log", "type": "code"}, pending_landings=["logbranch"])
     calls = _capture_reconcile(eng)
-    orig = _stub_landing(("landed", "ok"), touches=True)
+    orig = _stub_landing(("ok", "clean"), touches=True)
     try:
         eng._drive_landings()
     finally:
@@ -176,7 +176,7 @@ def t1_uncorrelated_landing_is_inert():
     arch = _arch(eng, job={"kind": "reconcile", "block": "A-01"},
                  pending_landings=["unrelated-branch"])
     calls = _capture_reconcile(eng)
-    orig = _stub_landing(("landed", "ok"), touches=False)   # never touches A-01's file
+    orig = _stub_landing(("ok", "clean"), touches=False)   # never touches A-01's file
     try:
         eng._drive_landings()
     finally:
@@ -193,7 +193,7 @@ def t1_reviewer_landing_never_completes_the_architects_job():
           "status": "working", "block": "review:code", "pending_landings": ["rev-findings"]}
     eng.st.workers.append(rev)
     calls = _capture_reconcile(eng)
-    orig = _stub_landing(("landed", "ok"), touches=True)   # would correlate if it were checked
+    orig = _stub_landing(("ok", "clean"), touches=True)   # would correlate if it were checked
     try:
         eng._drain_landings(rev, "reviewer")
     finally:
@@ -207,7 +207,7 @@ def t1_no_live_job_landing_never_completes_anything():
     eng = _eng()
     arch = _arch(eng, job=None, status="idle", pending_landings=["stray-branch"])
     calls = _capture_reconcile(eng)
-    orig = _stub_landing(("landed", "ok"), touches=True)
+    orig = _stub_landing(("ok", "clean"), touches=True)
     try:
         eng._drive_landings()
     finally:
@@ -222,7 +222,7 @@ def t1_job_case_auto_closes_on_correlated_completion():
                  pending_landings=["arch/forward-A-01"])
     cid = eng._open_case("A-01", "architect", arch["id"], "architect stalled")
     arch["job_case"] = cid
-    orig = _stub_landing(("landed", "ok"), touches=True)
+    orig = _stub_landing(("ok", "clean"), touches=True)
     try:
         eng._drive_landings()
     finally:

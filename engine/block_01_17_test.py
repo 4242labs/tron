@@ -2,10 +2,15 @@
 invariants set (tron-22/23/24 defect set).
 
   T1  the dominant wall class (tron-22/23/24, 5+ runs): every ordered/ff landing path
-      shares ONE primitive, `trunk.merge_ff_only` — on a first ff-refusal it now rebases
-      the branch onto the CURRENT trunk tip ONCE and retries, rather than walling on pure
-      timing. A conflicted rebase (aborted cleanly, no residue) or a second refusal after a
-      clean rebase both still wall, with today's (unchanged) non-ff detail text.
+      shares ONE primitive, `trunk.merge_ff_only`.
+      SUPERSEDED (block 01-32, ADR-0002 D1/D2): the auto-rebase-and-retry this T1 used to
+      describe (on a first ff-refusal, rebase the branch onto trunk ONCE and retry) is
+      RETIRED outright — TRON never rebases, conflict-free or not (a write-boundary
+      violation). Every non-ff refusal now returns the plain detail, unconditionally; the
+      two behavioral tests below are updated in place to the new contract, and the
+      structural replacement (the worker's own rebase-before-close ritual resolves it, or
+      an unfinishable rebase walls with content) lives in block_01_32_test.py's
+      `clobber_dead` (AC-2).
   T2  D-22-1: a failed (or re-pinned) violation-land settle must never spend the case that
       is a `violation_pending` gate's ONLY reachable handle — `_land_violation_range`
       reports back whether it actually landed, and `_h_apply_decision` reopens the SAME
@@ -87,6 +92,14 @@ def _mkrepo(prefix="tron-0117-"):
 
 
 # ── T1 (AC-1 bullet 1): ff-refusal -> rebase-retry -> land ──
+# SUPERSEDED (block 01-32, ADR-0002 D1/D2 T1): the auto-rebase-and-retry arm these two
+# tests locked in is RETIRED — a git rebase, conflict-free or not, is a write TRON
+# performs on the worker's own branch content, exactly the class the strict/folder-
+# absolute write boundary forbids. Behavioral replacement (engine never rebases, even
+# on a disjoint-file, conflict-free timing race) lives in block_01_32_test.py's
+# `clobber_dead` (AC-2); the two tests below are updated in place to the NEW contract
+# (a first ff-refusal returns non-ff, unconditionally, no retry of any kind) rather than
+# kept as dead behavioral history.
 def t_merge_ff_only_rebases_once_and_lands():
     d = _mkrepo()
     _git(d, "checkout", "-qb", "feat/x")
@@ -94,7 +107,8 @@ def t_merge_ff_only_rebases_once_and_lands():
         fh.write("branch change\n")
     _git(d, "commit", "-aqm", "branch work")
     _git(d, "checkout", "-q", "main")
-    # Trunk moves under the branch, on a DIFFERENT file -> a real timing race, no conflict.
+    # Trunk moves under the branch, on a DIFFERENT file -> a real timing race, no conflict —
+    # exactly the shape the retired arm used to auto-rebase-and-land silently.
     with open(os.path.join(d, "README.md"), "w") as fh:
         fh.write("readme v2\n")
     _git(d, "add", "-A")
@@ -103,18 +117,23 @@ def t_merge_ff_only_rebases_once_and_lands():
     ok("setup: trunk really did move under the branch",
        _git(d, "merge-base", "--is-ancestor", trunk_tip_before, "feat/x")[0] != 0)
     okm, err = trunk.merge_ff_only(d, "feat/x", "main")
-    ok("T1 a first ff-refusal auto-rebases once and lands (never walls on pure timing)",
-       okm is True, f"err={err}")
-    ok("T1 trunk now contains the branch's content (real ff, no merge commit)",
-       "branch change" in open(os.path.join(d, "meta", "x.md")).read())
-    log = _git(d, "log", "--oneline", "-n", "1")[1]
-    ok("T1 the landed history is still linear (no merge commit fabricated)",
-       "Merge" not in _git(d, "log", "-n", "3", "--format=%s")[1])
+    ok("01-32 T1: a first ff-refusal is NEVER auto-rebased any more — the engine "
+       "never rebases, conflict-free or not", okm is False, f"err={err}")
+    ok("01-32 T1: trunk is untouched — the branch's content never lands without the "
+       "worker's own rebase", "branch change" not in open(os.path.join(d, "meta", "x.md")).read())
+    ok("01-32 T1: no rebase was ever attempted — no mid-rebase residue, ever",
+       not os.path.exists(os.path.join(d, ".git", "rebase-merge"))
+       and not os.path.exists(os.path.join(d, ".git", "rebase-apply")))
     shutil.rmtree(d, ignore_errors=True)
 
 
 def t_land_docs_rebases_and_lands_the_dominant_wall_class():
-    # Same race, through the actual paperwork lander (land_docs), the FSM's own call site.
+    # Same race, through the actual paperwork lander (land_docs), the FSM's own call site —
+    # land_docs shares merge_ff_only, so it inherits the same 01-32 T1 retirement: it no
+    # longer auto-rebases paperwork branches either (Decision 1 is engine-wide, not scoped
+    # to engineer blocks). A disjoint-file timing race now surfaces as "non-ff", not a
+    # silent land — the paperwork lane's own rebase-before-close ritual (or a repair-scoped
+    # re-land) is the worker's/architect's to drive, same as the block gate.
     d = _mkrepo()
     _git(d, "checkout", "-qb", "docs/late")
     with open(os.path.join(d, "meta", "x.md"), "a") as fh:
@@ -125,11 +144,11 @@ def t_land_docs_rebases_and_lands_the_dominant_wall_class():
         fh.write("readme v2\n")
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "another lander moved trunk first")
-    code, detail = trunk.land_docs(d, "docs/late", ["meta/"], "main")
-    ok("T1 land_docs resolves the dominant wall class deterministically -> landed",
-       code == "landed", f"{code}: {detail}")
-    ok("T1 the branch is cleaned up on landing (no leftover ref)",
-       not trunk.branch_exists(d, "docs/late"))
+    code, detail = trunk.verify_docs(d, "docs/late", ["meta/"], "main")
+    ok("01-32 T1: land_docs no longer auto-rebases either — a timing race is 'non-ff', "
+       "never a silent land", code == "non-ff", f"{code}: {detail}")
+    ok("01-32 T1: the branch survives, untouched, for its owner to rebase",
+       trunk.branch_exists(d, "docs/late"))
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -190,9 +209,9 @@ def _eng_with_violation_wall(block="A-01"):
 
 
 def _mock_land(code, detail=""):
-    orig = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: (code, detail)
-    return lambda: setattr(sys.modules["trunk"], "land_docs", orig)
+    orig = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: (code, detail)
+    return lambda: setattr(sys.modules["trunk"], "verify_docs", orig)
 
 
 def t_violation_land_failure_reopens_the_same_case():
