@@ -225,10 +225,54 @@ def t_record_commit_ok_truth_ref_keyed():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ── D-C (260708 wave-1c/2c wedge): paperwork case ids stay land.sh-landable ──
+def t_paperwork_case_id_land_sh_landable():
+    d, work = _mkrepo_record()
+    try:
+        eng = _eng_record(d)
+        # the architect's forward-review log parked on a SLASHED branch name —
+        # the exact 1c/2c shape (arch/01-02-forward).
+        wt = tempfile.mkdtemp(prefix="tron-record-wt-")
+        os.rmdir(wt)
+        _git(d, "worktree", "add", "-b", "arch/a-01-forward", wt, "main")
+        try:
+            os.makedirs(os.path.join(wt, "meta", "logs"), exist_ok=True)
+            with open(os.path.join(wt, "meta", "logs", "log-a-01-forward.md"), "w") as fh:
+                fh.write("# forward review\n")
+            _git(wt, "add", "-A")
+            _git(wt, "commit", "-qm", "arch: forward review log")
+        finally:
+            rc, _, _ = _git(d, "worktree", "remove", "--force", wt)
+            if rc != 0:
+                shutil.rmtree(wt, ignore_errors=True)
+                _git(d, "worktree", "prune")
+        w = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
+             "status": "working", "pending_landings": ["arch/a-01-forward"]}
+        eng.st.workers.append(w)
+        code, detail = eng._drain_landings(w, "architect")
+        case_id = w.get("landing_grants", {}).get("arch/a-01-forward")
+        ok("D-C: a paperwork grant minted for the slashed branch", bool(case_id),
+           f"code={code} detail={detail}")
+        ok("D-C: the case id is inside land.sh's safe-token alphabet",
+           bool(case_id) and grants.CASE_ID_TOKEN.match(case_id), f"case={case_id}")
+        live = grants.read_live(eng.ctx.grants_dir, case_id) if case_id else None
+        ok("D-C: the grant is live and branch-bound",
+           bool(live) and live.get("branch") == "arch/a-01-forward", f"live={live}")
+        r = _run_land(d, case_id, eng.ctx.grants_dir)
+        ok("D-C: land.sh accepts and lands it (the 1c/2c wedge is gone)",
+           r.returncode == 0, f"stdout={r.stdout} stderr={r.stderr}")
+        ok("D-C: mint refuses an off-alphabet case id outright (fail-closed)",
+           grants.mint(eng.ctx.grants_dir, "bad/slash", "A-01", "b", "deadbeef") is None)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+
 def main():
     for fn in (t_record_stage_mints_and_worker_lands,
               t_code_bearing_descendant_still_redrives,
-              t_record_commit_ok_truth_ref_keyed):
+              t_record_commit_ok_truth_ref_keyed,
+              t_paperwork_case_id_land_sh_landable):
         fn()
     bad = [r for r in _results if not r[1]]
     for name, good, detail in _results:

@@ -26,7 +26,14 @@ never before. Every write in this module lands under TRON's own folder-absolute
 writable surface (P3) — nothing here ever touches the project's git state.
 """
 import os
+import re
 import time
+
+# land.sh's own safe-token guard, mirrored: a case id that the landing script
+# would refuse must never mint (a live-but-unlandable grant wedges the lane —
+# the 260708 reset-wave-1c/2c architect-paperwork wedge). Same alphabet as
+# land.sh's pre-interpolation validation.
+CASE_ID_TOKEN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 _LIVE_SUFFIX = ".grant"
 
@@ -76,8 +83,10 @@ def mint(grants_dir, case_id, block, branch, patch_id, ttl_min=60, now=None):
     Overwrites any prior live grant for the same case_id (a fresh mint after a
     content-changing rebase IS a new grant for the same case — the old one's
     patch-id no longer describes the branch anyway). Returns the grant dict minted,
-    or None on the fail-closed refusal."""
-    if not patch_id or not case_id:
+    or None on the fail-closed refusal. A case id outside land.sh's safe-token
+    alphabet also refuses (None) — minting it would create a live grant the
+    landing script structurally cannot consume."""
+    if not patch_id or not case_id or not CASE_ID_TOKEN.match(case_id):
         return None
     now = now if now is not None else time.time()
     fields = {"case": case_id, "block": block or "", "branch": branch or "",
