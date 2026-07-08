@@ -147,6 +147,64 @@ def test_require_content_raises_on_missing_field():
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
+# F2 (review, MAJOR): no prior test asserted the actual ROOT-CAUSE fix — `_structured`
+# carrying `msg["text"]` into `slots["detail"]` for `tag == "wall"` when `slots` has no
+# `detail` key at all. This is report.sh's REAL shape (scripts/report.sh:70): a worker's
+# stated reason rides `text`; `slots` only ever holds block/branch/type/kind, NEVER
+# detail. A regression here silently resurrects the wave-1b contentless-wall defect —
+# `m.get("detail", "wall")` firing on every real structured wall report, always, because
+# no real report ever populated `slots["detail"]` in the first place. If this test ever
+# fails, that defect is back.
+# ══════════════════════════════════════════════════════════════════════════════════
+
+def test_structured_wall_carries_real_report_text_into_detail():
+    eng = _eng()
+    wid = "ENG-A-01"
+    # Shaped EXACTLY like the JSON line report.sh actually emits for a plain
+    # `report.sh "ENG-A-01" --tag wall --block A-01 "npm install is broken here"` —
+    # `slots` carries only `block` (no `branch`/`type`/`kind` given), never `detail`;
+    # the stated reason lives in `text`.
+    msg = {"at": "2026-07-07T00:00:00Z", "text": "npm install is broken here",
+          "sender": {"kind": "worker", "id": wid},
+          "tag": "wall", "slots": {"block": "A-01"}}
+    tag, slots = eng._structured(msg)
+    ok("F2 _structured resolves the real report.sh wall shape to worker.wall",
+       tag == "worker.wall", f"tag={tag}")
+    ok("F2 THE ROOT-CAUSE FIX: slots['detail'] carries msg['text'] verbatim when the "
+       "real shape's slots have no detail key at all — a regression here silently "
+       "resurrects the wave-1b contentless-wall defect (every real wall report hit "
+       "m.get('detail', 'wall') because no real report ever populated slots['detail'])",
+       slots.get("detail") == msg["text"], f"slots={slots}")
+
+
+def test_structured_wall_detail_carry_reaches_a_case_with_the_real_reason():
+    # The same real shape, but carried the FULL journey through _classify -> _ingest ->
+    # _drain_triggers -> _h_escalate, proving the carried detail actually lands ON the
+    # resulting case — not just on the intermediate slots dict.
+    eng = _eng()
+    wid = "ENG-A-01"
+    arch = _arch_idle(eng)
+    reason = "the trunk merge conflicts and I can't resolve it"
+    msg = {"at": "2026-07-07T00:00:00Z", "text": reason,
+          "sender": {"kind": "worker", "id": wid},
+          "tag": "wall", "slots": {"block": "A-01"}}
+    tag, slots = eng._classify(msg)          # the exact call tick() makes (fsm.py:344)
+    ok("F2 journey: _classify resolves the real wall shape with detail carried as data",
+       tag == "worker.wall" and slots.get("detail") == reason, f"tag={tag} slots={slots}")
+    slots = {**slots, "_raw": msg["text"]}    # mirror tick()'s own _raw carry (fsm.py:348)
+    eng._tq = []
+    eng._ingest(tag, slots, msg["sender"])
+    eng._drain_triggers()
+    case = next((c for c in eng.st.pending_cases.values()
+                if c.get("block") == "A-01"), None)
+    ok("F2 journey: the case carries the worker's REAL stated reason, never the old "
+       "'wall' placeholder and never dropped along the way",
+       case is not None and case.get("detail") == reason, f"case={case}")
+    ok("F2 journey: architect-first, not an operator page (ADR-0002 D3, still holds)",
+       (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
 # AC-2: every wall kind reaches the architect first; operator-direct only on the four
 # named structural exemptions.
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -171,6 +229,48 @@ def test_all_walls_architect_first():
            not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent),
            f"sent={sent}")
         ok(f"AC-2 wall kind '{kind}' dispatches the architect (triage job, case-carrying)",
+           (arch.get("current_job") or {}).get("kind") == "triage"
+           and (arch.get("current_job") or {}).get("case") is not None, f"arch={arch}")
+
+
+def test_gate_giveup_codes_architect_first_real_path():
+    """F1 (review): the direct-call variant above (test_all_walls_architect_first) proves
+    the ROUTING RULE (a case of the right kind never pages the operator) but calls
+    `eng._h_escalate(m)` straight — it never proves the real pipeline actually GETS there.
+    Here every one of the 8 GATE_GIVEUP_SPLIT_CODES is driven through the REAL emit site
+    (`_gate_giveup` itself — the exact function every real gate-giveup call site in fsm.py
+    invokes, never a stand-in) -> its own `self._emit("wall:raised:<block>", ...)` onto the
+    trigger queue -> `_drain_triggers` popping + routing it -> `_h_escalate` via the SAME
+    dispatch table `_route`/`_match` uses in production (fsm.py:562-601), not a hand-built
+    message dict handed straight to the handler. This is the exact gap a reviewer could
+    otherwise raise: routing logic proven correct in isolation says nothing about whether
+    the real wiring ever reaches it."""
+    for code in GATE_GIVEUP_SPLIT_CODES:
+        eng = _eng()
+        wid = "ENG-A-01"
+        arch = _arch_idle(eng)
+        sent = _capture(eng)
+        g = {"stage": "close" if "close" in code else "trunk",
+             "stall_attempts": 1, "idle_since": eng._now_s()}
+        eng.st.gate["A-01"] = g
+        eng._tq = []
+        # The real emit site — same call every actual `_gate_giveup(...)` site in fsm.py
+        # makes (gate-contradiction ~1810, gate-bypass ~1844, gate-idle-cap ~2055,
+        # gate-close-dirty ~2657/2673, gate-orphaned ~2786/4166, gate-record-bypass ~2333,
+        # record-bypass ~2318, gate-close-idle-cap ~2385).
+        eng._gate_giveup("A-01", g, wid, f"real-path proof for '{code}'", code,
+                         "check + resume or reassign")
+        eng._drain_triggers()      # the real drain: trigger queue -> _route -> _h_escalate
+        case = next((c for c in eng.st.pending_cases.values()
+                    if c.get("block") == "A-01"), None)
+        ok(f"F1 real-path '{code}': _gate_giveup's trigger reaches _h_escalate via "
+           f"_drain_triggers and opens a case of that exact kind",
+           case is not None and case.get("kind") == code, f"case={case}")
+        ok(f"F1 real-path '{code}' never pages the operator directly",
+           not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent),
+           f"sent={sent}")
+        ok(f"F1 real-path '{code}' dispatches the architect (triage job, case-carrying) "
+           f"— architect-first, not operator-direct",
            (arch.get("current_job") or {}).get("kind") == "triage"
            and (arch.get("current_job") or {}).get("case") is not None, f"arch={arch}")
 
@@ -579,6 +679,79 @@ def test_architect_relayed_settle_unhold_and_replay_fires_exactly_once():
     ok("regression: the case still closes and the worker still un-holds",
        cid not in eng.st.pending_cases
        and next(x for x in eng.st.workers if x["id"] == wid).get("status") != "walled")
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# F3 (review, MAJOR): _close_case's fallback used to act on the STALE passed-in `case`
+# whenever neither case_id nor object-identity resolved a LIVE entry in pending_cases
+# (`self._release_case_hold(resolved if resolved is not None else case)`) — a double-
+# close on a stale reference risked re-firing release + duplicating the abandon flag
+# (against ADR-0002 D3's "zero spam" third bullet). Fixed: an unresolvable close is now
+# a safe no-op — only ever release what THIS call actually resolved+popped.
+# ══════════════════════════════════════════════════════════════════════════════════
+
+def test_close_case_stale_double_close_is_a_safe_noop():
+    eng = _eng()
+    wid = "ENG-A-01"
+    eng._tq = []
+    eng._h_escalate({"block": "A-01", "worker_id": wid, "detail": "genuinely stuck"})
+    cid = next(iter(eng.st.pending_cases))
+    case = eng.st.pending_cases[cid]
+    calls = []
+    orig = eng._release_case_hold
+    eng._release_case_hold = lambda c: (calls.append(c), orig(c))[-1]
+    try:
+        # The real settle path: abandon decision + _close_case, exactly what
+        # _h_apply_decision does.
+        eng._h_apply_decision({"case": cid, "decision": "abandon", "block": "A-01"})
+        ok("F3 setup: the first (real) close releases exactly once",
+           len(calls) == 1, f"calls={calls}")
+        ok("F3 setup: exactly one release event and one abandon flag recorded",
+           sum(1 for r in _events(eng) if r.get("type") == "release") == 1
+           and len(eng.st.data.get("abandon_flags") or []) == 1,
+           f"events={_events(eng)} flags={eng.st.data.get('abandon_flags')}")
+        # F3's exact shape: a SECOND close on the SAME (case_id, case) — case_id is no
+        # longer live in pending_cases (already popped above) and `case` is the
+        # identical STALE dict handed back in, unresolvable by identity either (it's no
+        # longer IN pending_cases to be found by `c is case`).
+        eng._close_case(cid, case)
+    finally:
+        eng._release_case_hold = orig
+    ok("F3 a stale/unresolvable double-close is a safe no-op — _release_case_hold is "
+       "never called a second time for it", len(calls) == 1, f"calls={calls}")
+    ok("F3 exactly one release event total (no duplicate release from the stale close)",
+       sum(1 for r in _events(eng) if r.get("type") == "release") == 1,
+       f"events={_events(eng)}")
+    ok("F3 exactly one abandon flag/event total (no duplicated flag from the stale "
+       "close, no second 'abandon' event)",
+       sum(1 for r in _events(eng) if r.get("type") == "abandon") == 1
+       and len(eng.st.data.get("abandon_flags") or []) == 1,
+       f"events={_events(eng)} flags={eng.st.data.get('abandon_flags')}")
+
+
+def test_close_case_stale_double_close_is_a_safe_noop_wall_kind():
+    # Same shape, a plain (non-abandon) WALL_KINDS case — a resume-style auto/settle
+    # close, double-fired.
+    eng = _eng()
+    wid = "ENG-A-01"
+    eng._tq = []
+    eng._h_escalate({"block": "A-01", "worker_id": wid, "detail": "genuinely stuck"})
+    cid = next(iter(eng.st.pending_cases))
+    case = eng.st.pending_cases[cid]
+    calls = []
+    orig = eng._release_case_hold
+    eng._release_case_hold = lambda c: (calls.append(c), orig(c))[-1]
+    try:
+        eng._close_case(cid, case)               # first (real) close: un-holds + replays
+        ok("F3 setup: the first close releases the hold exactly once",
+           len(calls) == 1, f"calls={calls}")
+        w = next(x for x in eng.st.workers if x["id"] == wid)
+        ok("F3 setup: the worker is un-held", w.get("status") != "walled", f"w={w}")
+        eng._close_case(cid, case)                # stale double-close
+    finally:
+        eng._release_case_hold = orig
+    ok("F3 a stale/unresolvable double-close is a safe no-op (wall-kind case too)",
+       len(calls) == 1, f"calls={calls}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════

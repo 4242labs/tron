@@ -1459,7 +1459,15 @@ class Engine:
         role+block (the retired `_force_release_block`, which silently skipped any
         non-'engineer' role — the ADHOC-worker gap). Resolves the SAME case object every
         caller already resolved (by id or identity) before popping it, so the hold-release
-        always sees the decision the caller just wrote onto it."""
+        always sees the decision the caller just wrote onto it.
+
+        F3 (review): a close that resolves NOTHING (neither case_id nor object-identity
+        finds a live entry in pending_cases — e.g. a double-close racing an earlier close
+        of the same case) must be a safe no-op, never fall back to acting on the raw,
+        possibly-stale `case` the caller happened to still be holding. Acting on a stale
+        reference risks re-firing release + duplicating the abandon flag (ADR-0002 D3
+        "zero spam") the moment `_release_case_hold`'s own internal guards ever change out
+        from under this call. Only ever release what THIS call actually resolved+popped."""
         resolved = None
         if case_id and case_id in self.st.pending_cases:
             resolved = self.st.pending_cases.pop(case_id, None)
@@ -1468,7 +1476,8 @@ class Engine:
                 if c is case:
                     resolved = self.st.pending_cases.pop(cid, None)
                     break
-        self._release_case_hold(resolved if resolved is not None else case)
+        if resolved is not None:
+            self._release_case_hold(resolved)
 
     def _release_case_hold(self, case):
         """The worker-hold half of D3/D5's "every settle releases" rule. Only ever acts on
@@ -1539,8 +1548,10 @@ class Engine:
             note = (f"[TRON] FYI — block {f.get('block') or '?'} was abandoned "
                     f"({f.get('detail')}). No action required unless you were relying on "
                     f"it.")
-            if not self.dry:
-                self._to_worker(awid, note, "abandon.flag")
+            # F6 (review): the `if self.dry: return` above already guarantees self.dry is
+            # False by this point — the inner `if not self.dry:` guard was unreachable dead
+            # code, removed.
+            self._to_worker(awid, note, "abandon.flag")
             self.events.event("abandon_flag_delivered", block=f.get("block"),
                               **{"detail": f.get("detail"), "via": "architect-touchpoint"})
         self.st.data["abandon_flags"] = []
