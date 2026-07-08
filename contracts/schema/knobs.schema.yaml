@@ -28,6 +28,10 @@ knobs:                             # REQUIRED
   silence_escalate_min: 8          # silent past this -> engine emits worker:stalled; > silence_ping_min
   wake_cooldown_sec: 5             # WAKE min-gap floor (sec, n>0): shortest interval between ticks (debounce)
   wake_ceiling_sec: 30             # WAKE max-latency ceiling (sec, n>0): a tick fires by now regardless; >= cooldown
+  abandon_flag_window: 60          # ADR-0002 D3 third bullet (01-31): minutes an abandon flag may ride
+                                   # unread before it escalates to exactly ONE ordinary case (bounded-
+                                   # window backstop; the flag itself is delivered on the architect's
+                                   # next dispatched touchpoint, whichever comes first). default 60.
 
 # ── Reviewer cadence (PULL) — <type> -> blocks between reviews ──
 cadence:                           # REQUIRED (may be empty {}). Types are open.

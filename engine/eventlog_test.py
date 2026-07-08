@@ -195,6 +195,45 @@ def induce_crash(ctx):
     return raised, [r for r in failures(ctx) if r.get("fclass") == "crash"]
 
 
+def induce_content_missing(ctx):
+    # 01-31 (ADR-0002 D5): a contentless worker.wall is NAK'd at the door (_admit) —
+    # the empty detail never reaches a case, but the discard itself is forensic.
+    eng = engine(ctx)
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working"})
+    eng._admit("worker.wall", {"block": "A-01", "detail": ""},
+              {"kind": "worker", "id": "ENG-A-01"})
+    return [r for r in failures(ctx) if r.get("fclass") == "content-missing"]
+
+
+def induce_mailbox_send_failed(ctx):
+    # 01-31 (AC-5 HIGH): jobs.send's own False (OSError writing the mailbox) is retried
+    # inline, then recorded forensically and queued durable — never silently lost.
+    eng = engine(ctx)
+    eng.dry = False
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working", "mbox_seq": 0})
+    orig = jobs.send
+    jobs.send = lambda *a, **k: False
+    try:
+        eng._to_worker("ENG-A-01", "hello", "test.kind")
+    finally:
+        jobs.send = orig
+        eng.dry = True
+    return [r for r in failures(ctx) if r.get("fclass") == "mailbox-send-failed"]
+
+
+def induce_handler_raised(ctx):
+    # 01-31 (AC-5b MED): a routed trigger's handler raising now leaves a forensic
+    # record before the trigger is dropped (never a bare silent log line).
+    eng = engine(ctx)
+    eng._tq = [("wall:raised:A-01", {"block": "A-01", "detail": "x"})]
+    eng._route = (lambda trig, slots:
+                 (_ for _ in ()).throw(RuntimeError("simulated handler explosion")))
+    eng._drain_triggers()
+    return [r for r in failures(ctx) if r.get("fclass") == "handler-raised"]
+
+
 def t_per_class():
     """AC-3 + AC-2 + AC-1: induce one failure per class; each record is complete + reconstructable."""
     induced = {}
@@ -205,6 +244,9 @@ def t_per_class():
     ctx, _ = build();  dispatch_raised, induced["dispatch-fail"] = induce_dispatch_fail(ctx)
     ctx, _ = build();  induced["session-residue"] = induce_session_residue(ctx)
     ctx, _ = build();  crash_raised, induced["crash"] = induce_crash(ctx)
+    ctx, _ = build();  induced["content-missing"] = induce_content_missing(ctx)
+    ctx, _ = build();  induced["mailbox-send-failed"] = induce_mailbox_send_failed(ctx)
+    ctx, _ = build();  induced["handler-raised"] = induce_handler_raised(ctx)
 
     # Reconstructable-with-no-re-run predicate per class: the record holds enough to pin the
     # exact trigger — either in the cause (the simulated detail) or in the captured inputs.
@@ -217,6 +259,9 @@ def t_per_class():
         "session-residue": lambda r: "unlanded paperwork branch docs/review-260702"
                                      in (r.get("cause") or ""),
         "crash": lambda r: "simulated tick crash" in (r.get("cause") or ""),
+        "content-missing": lambda r: "empty detail" in (r.get("cause") or ""),
+        "mailbox-send-failed": lambda r: "OSError" in (r.get("cause") or ""),
+        "handler-raised": lambda r: "simulated handler explosion" in (r.get("cause") or ""),
     }
     for cls in eventlog.FAILURE_CLASSES:
         rs = induced.get(cls, [])

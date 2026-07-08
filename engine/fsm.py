@@ -132,6 +132,31 @@ GATE_GIVEUP_SPLIT_CODES = ("gate-contradiction", "gate-bypass", "gate-idle-cap",
                            "record-bypass", "gate-close-idle-cap")
 WALL_KINDS = frozenset(("wall",) + GATE_GIVEUP_SPLIT_CODES)
 
+# ── Content integrity (block 01-31, ADR-0002 Decision 5; P8) ──
+# "Content-bearing slots are schema-required; missing content is a loud protocol error;
+# no substitution, no truncation, no silent discard." require_content is the ONE ingest
+# choke-point primitive every message class's handler calls on a schema-marked
+# content-bearing field (messages.schema.yaml: "detail" is the one slot the LLM may fill
+# with prose). Raising here — never defaulting — means a caller that forgets the check
+# fails LOUD at the handler-exception seam (_drain_triggers, itself forensic per T1/AC-5b)
+# rather than silently laundering a missing field into an empty string.
+class MissingContent(ValueError):
+    """A schema-marked content-bearing slot was empty at its ingest choke point."""
+
+
+def require_content(slots, field):
+    val = (slots or {}).get(field)
+    if not (isinstance(val, str) and val.strip()):
+        raise MissingContent(f"content-bearing field '{field}' is missing/empty")
+    return val
+
+
+# T2 (ADR-0002 D3): a contentless `wall` is NAK'd + re-prompted up to this many times
+# before the engine gives up asking and opens a wall ABOUT the worker itself (an
+# engine-observed fact — "cannot articulate its blocker" — never the old literal
+# placeholder default).
+WALL_NAK_MAX = 2
+
 
 class Engine:
     def __init__(self, ctx):
@@ -195,15 +220,71 @@ class Engine:
         monotonic counter on the durable worker record; it is bumped in memory here and persisted
         only at the tick's save(), so an at-least-once re-emit (crash before save) recomputes the
         SAME seq and the runner dedupes it by high-water. No delivery re-opens a session (finding #5).
-        `kind` is forensic metadata on the mailbox line (the message's template id / intent)."""
+        `kind` is forensic metadata on the mailbox line (the message's template id / intent).
+
+        T1 (01-31, AC-5 HIGH): jobs.send's own False (OSError writing the mailbox) used to be
+        silently ignored here — the message just vanished, never retried, never logged. Retry
+        a couple of times inline; if the mailbox is still unwritable, persist the message as
+        durable pending-send state on the worker record (never bump mbox_seq on total failure,
+        so the SAME seq is retried) and emit a forensic event. `_flush_pending_sends` (tick())
+        drains this queue every tick — at-least-once, never lost."""
         if self.dry:
             return
         w = next((x for x in self.st.workers if x.get("id") == worker_id), None)
         if not w:
+            # T1 (01-31, MED inventory): an unknown-worker send used to silently return
+            # with no trace at all — a forensic event now, same discipline as every
+            # other discard path on this pipe (never fatal: the caller already decided
+            # to notify; there's simply no roster entry left to notify).
+            self.events.event("unknown_worker_send", node="_to_worker", kind=kind,
+                              detail=f"no such worker on the roster: {worker_id}")
             return
         seq = int(w.get("mbox_seq", 0)) + 1
+        # Reserve the seq BEFORE attempting the send (original ordering, restored) — not
+        # after success. A retry queue remembers ITS OWN seq (rec["seq"], below) and
+        # replays with it; but the in-memory counter itself must always advance on every
+        # attempt, success or fail, so a SECOND, unrelated _to_worker call for the same
+        # worker (e.g. the very next message this same tick) can never compute the SAME
+        # seq a still-pending failed send is already holding. Two mailbox lines sharing
+        # one seq would let the runner's high-water dedupe silently swallow whichever one
+        # arrives second — exactly the silent-loss shape this fix exists to close.
         w["mbox_seq"] = seq
-        jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
+        ok = jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
+        if not ok:
+            for _ in range(2):
+                ok = jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
+                if ok:
+                    break
+        if not ok:
+            w.setdefault("pending_sends", []).append({"seq": seq, "kind": kind, "text": text})
+            self.events.failure(
+                "mailbox-send-failed", "jobs-send-oserror",
+                "deliver an engine->worker mailbox message", f"OSError writing mailbox for {worker_id}",
+                actor=worker_id, node="_to_worker", next_action="retry every tick (durable pending_sends)")
+            self.log("flow", f"mailbox write to {worker_id} failed -> queued for retry (seq {seq})")
+
+    def _flush_pending_sends(self):
+        """T1 (01-31, AC-5 HIGH): drain every worker's durable pending-send queue (messages
+        whose mailbox write failed at emit time) — at-least-once, never lost. Runs every tick,
+        independent of pause/drain run_control (a stuck retry queue must never wait on gate
+        pacing). Preserves per-worker ORDER (a later send is never delivered ahead of an
+        earlier one still stuck)."""
+        for w in self.st.workers:
+            pending = w.get("pending_sends")
+            if not pending:
+                continue
+            still = []
+            for rec in pending:
+                if still:                         # an earlier send in THIS worker's queue is
+                    still.append(rec)              # still stuck -> preserve order, don't reorder past it
+                    continue
+                ok = jobs.send(self.ctx.worker_dir(w.get("id")), rec["seq"], rec["kind"], rec["text"])
+                if not ok:
+                    still.append(rec)
+            if still:
+                w["pending_sends"] = still
+            else:
+                w.pop("pending_sends", None)
 
     def _tg_send(self, line):
         import subprocess
@@ -234,6 +315,7 @@ class Engine:
         if self.ended:                                   # refresh hit the trunk-fail death-cap -> halted loud (T6)
             self.st.save()
             return self.ended
+        self._flush_pending_sends()   # T1 (01-31): retry any mailbox write that failed last tick
         # Per-tick forensic record (01-09): run · tick_seq · trigger_source · trunk_sha ·
         # snapshot_hash · ts. Emitted after refresh so trunk + snapshot are the ones this tick
         # decides on. trigger_source is timer|event|manual — recorded honestly, never inferred.
@@ -383,6 +465,12 @@ class Engine:
             self.st.cadence[typ] = self.st.cadence.get(typ, 0) + 1
         if block in self.st.blocked:
             self.st.blocked.remove(block)
+        # T4 (01-31, ADR-0002 D3/D5, F-1 self-healing): the evidence-ratchet observing ✅
+        # on trunk for THIS block supersedes any wall claim still parked on it (P6) — a
+        # mis-tagged wall from a worker that is actually done settles here, through the
+        # SAME _close_case/_release_case_hold seam every other settle uses, never the
+        # retired sweep and never a second teardown mechanism.
+        self._auto_settle_walls_for_block(block)
         self.events.event("block_done", block=block)
         self.emit("terminal.block_done", {"block": block})
         if self._worker_id_for_block(block):
@@ -457,10 +545,19 @@ class Engine:
                 continue
             # A handler that raises must not abort the whole tick (see tick()): that strands the
             # triggering message in the inbox and re-fires it forever. Log and move on.
+            # T1 (01-31, AC-5b MED): a handler exception used to leave no forensic trace at
+            # all (a bare log line) — never silent now; the same events.failure discipline
+            # every other discard path on this tick already carries (the ingest-drop guard
+            # just above, the trunk-refresh guard in _refresh_from_trunk).
             try:
                 self._route(trig, slots)
             except Exception as e:
                 self.log("flow", f"handler for '{trig}' raised: {e}")
+                self.events.failure(
+                    "handler-raised", "handler-exception", f"route trigger '{trig}'",
+                    f"{type(e).__name__}: {e}", node="_drain_triggers",
+                    inputs={"trigger": trig, "slots": {k: str(v)[:200] for k, v in slots.items()}},
+                    next_action="drop trigger (re-derived next tick if the underlying report re-arrives)")
 
     def _route(self, trig, slots):
         handler, caps = self._match(trig)
@@ -1045,12 +1142,19 @@ class Engine:
 
     def _h_escalate(self, m):
         # wall:raised:<block> — Escalate: HOLD the slot (T2, D-15-2), park the block
-        # (runtime), contact operator.
+        # (runtime), contact the architect (T3/ADR-0002 D3 — universal, see below).
         block = m.get("block")
         worker_id = m.get("worker_id")
         if block and block in self.st.blocked:
             return                                      # already escalated — idempotent
-        detail = m.get("detail", "wall")
+        # T2 (01-31, ADR-0002 D3): `detail = m.get("detail", "wall")` deleted — the literal
+        # "wall" placeholder must never reach a case again. A worker-reported wall is
+        # already content-gated at the door (_admit); every OTHER wall:raised source
+        # (gate-giveup, close-violation, repeated-stall, the sweep's own repair nets) is
+        # engine-authored and always composes a real detail string at its own emit site —
+        # require_content raises loud (caught + forensically recorded at _drain_triggers)
+        # if some future caller ever forgets to.
+        detail = require_content(m, "detail")
         freed = worker_id
         for w in list(self.st.workers):
             if w.get("role") not in ("engineer", "reviewer"):
@@ -1076,20 +1180,29 @@ class Engine:
         case_id = self._open_case(block, case_kind, freed, detail)   # correlation id (02-10) for the reply
         self.events.event("escalate", actor=freed or "?", block=block, cid=case_id,
                           tag="worker.wall", detail=detail)
-        # T3 (01-24 F-2b): route by the wall's DECLARED kind, never prose — a spec-ownable
-        # decision-wall (scope/blueprint/design) goes to the architect first (it owns the
-        # block spec); anything else pages the operator directly, exactly as before. The
-        # case itself is unchanged either way (still kind=='wall', still a settle away
-        # from release) — only the first-contact notification target differs.
-        kind = (m.get("kind") or "").lower()
-        if kind in SPEC_OWNABLE_KINDS:
-            self._triage_to_architect(f"wall[{block or '?'}]: {detail}",
-                                      sender=freed, block=block, case=case_id)
-        else:
+        # T3 (01-31, ADR-0002 D3): architect-first, ALWAYS — SPEC_OWNABLE_KINDS stops being
+        # a special case and becomes the universal rule (every one of the 9 WALL_KINDS,
+        # close-time violation, every gate-giveup code, repeated-stall — all of them reach
+        # this ONE handler via the same `wall:raised:<block>` trigger, so fixing the routing
+        # here fixes every site at once). The ONE structural exemption (cardinality-1,
+        # debate-settled): a wall raised BY the architect itself (a TRIAGE-role self-wall)
+        # cannot route architect-first without self-looping — that one case pages the
+        # operator directly, exactly as every wall did pre-ADR-0002.
+        arch = self._architect()
+        is_triage_self = bool(arch and freed and freed == arch.get("id"))
+        # T3 (01-31, ADR-0002 D3): the SECOND structural exemption — the architect itself
+        # already triaged this and explicitly judged it "the operator's call"
+        # (_escalate_from_architect stamps `origin` before re-emitting wall:raised so its
+        # own explicit raise doesn't loop back through this very funnel to itself).
+        is_architect_raise = bool(m.get("origin") == "architect_raise")
+        if is_triage_self or is_architect_raise:
             self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
                                         "detail": detail, "case": case_id})
             if self._tg_on():
                 self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
+        else:
+            self._triage_to_architect(f"wall[{block or '?'}]: {detail}",
+                                      sender=freed, block=block, case=case_id)
         self._emit("pulse")
 
     def _h_apply_decision(self, m):
@@ -1139,7 +1252,13 @@ class Engine:
                 self.st.gate.pop(block, None)
                 if block not in self._dropped():
                     self._dropped().append(block)
-                self._force_release_block(block)
+                # T4 (01-31, ADR-0002 D3): release-by-construction — _close_case (below)
+                # resolves the case's own recorded worker_id via _release_case_hold, any
+                # role (the old _force_release_block's role=='engineer'-only match is
+                # retired — the ADHOC-worker gap it left open). Normalize the merge
+                # branch's "drop" synonym to the canonical "abandon" _release_case_hold
+                # reads — both spellings mean the exact same abandon-shaped release here.
+                case["decision"] = "abandon"
                 self._close_case(m.get("case"), case)
             else:
                 self._close_case(m.get("case"), case)             # unknown reply — drop case, hold
@@ -1311,10 +1430,11 @@ class Engine:
             # T2 (01-15 D-16-1 seam 2): settling a wall never pops the gate either — the
             # DONE ladder's own dropped-block check (_drive_gate) clears it on its next
             # pass, so a give-up-in-progress never reads the gate as vanished mid-decision.
-            # T2 (D-15-2): abandon/release-shaped settles RELEASE as today — the wall now
-            # holds its sender (status 'walled'), so the drop must free that held worker
-            # here, not leave it parked with a live idle session until session end.
-            self._force_release_block(block)
+            # T4 (01-31, ADR-0002 D3): abandon releases BY CONSTRUCTION now — _close_case
+            # (below) resolves the held worker via _release_case_hold, keyed on the case's
+            # own recorded worker_id (any role — the ADHOC-worker gap the old
+            # _force_release_block's role=='engineer' match left open), with the loud
+            # event + manifest flag D5 requires. Never a bare release here.
         if violation_reopen and case is not None:
             case["decision"] = None            # T2: reachable again, never a spent case
         else:
@@ -1333,13 +1453,152 @@ class Engine:
         return None
 
     def _close_case(self, case_id, case):
+        """T4 (01-31, ADR-0002 D3/D5): the single site that un-holds/releases a settled
+        case's recorded worker (_release_case_hold, below) — approve/resume/abandon all
+        release BY CONSTRUCTION here, never by each settle branch separately matching
+        role+block (the retired `_force_release_block`, which silently skipped any
+        non-'engineer' role — the ADHOC-worker gap). Resolves the SAME case object every
+        caller already resolved (by id or identity) before popping it, so the hold-release
+        always sees the decision the caller just wrote onto it.
+
+        F3 (review): a close that resolves NOTHING (neither case_id nor object-identity
+        finds a live entry in pending_cases — e.g. a double-close racing an earlier close
+        of the same case) must be a safe no-op, never fall back to acting on the raw,
+        possibly-stale `case` the caller happened to still be holding. Acting on a stale
+        reference risks re-firing release + duplicating the abandon flag (ADR-0002 D3
+        "zero spam") the moment `_release_case_hold`'s own internal guards ever change out
+        from under this call. Only ever release what THIS call actually resolved+popped."""
+        resolved = None
         if case_id and case_id in self.st.pending_cases:
-            self.st.pending_cases.pop(case_id, None)
+            resolved = self.st.pending_cases.pop(case_id, None)
+        else:
+            for cid, c in list(self.st.pending_cases.items()):
+                if c is case:
+                    resolved = self.st.pending_cases.pop(cid, None)
+                    break
+        if resolved is not None:
+            self._release_case_hold(resolved)
+
+    def _release_case_hold(self, case):
+        """The worker-hold half of D3/D5's "every settle releases" rule. Only ever acts on
+        a case that recorded a worker_id (merge/wall/gate-giveup/await/repeated-stall —
+        every kind _open_case ever stamped one for); NEVER touches the persistent
+        architect (its lifecycle belongs solely to _sweep's restore-on-death and
+        _architect_advance, regardless of what case kind happens to name it, e.g. an
+        `architect`-kind stall case) — the guard below is the one thing standing between
+        this and re-releasing TRON's own persistent consultant out from under itself.
+
+        decision == 'abandon': full release (D5 third bullet — "release worker, close
+        case, loud event, manifest flag"); any wall-hold is discarded whole (an abandoned
+        wall's queued held_verbs are never replayed — there is nothing left to replay them
+        INTO). Any other decision (resume/approve/amend/violation-approve, or an internal
+        auto-settle with no explicit decision at all — e.g. the F-1 observed-done path,
+        _auto_settle_walls_for_block) un-holds + replays exactly like an ordinary `resume`,
+        but ONLY for a WALL_KINDS case whose worker is actually still walled — a merge/
+        await case's worker was never wall-held in the first place, so there is nothing to
+        un-hold (a plain no-op here; whatever release that settle needed, its own branch
+        already performed, e.g. _land_violation_range's release-on-land)."""
+        if not case:
             return
-        for cid, c in list(self.st.pending_cases.items()):
-            if c is case:
-                self.st.pending_cases.pop(cid, None)
-                return
+        wid = case.get("worker_id")
+        if not wid:
+            return
+        w = next((x for x in self.st.workers if x.get("id") == wid), None)
+        if w is None or w.get("role") == "architect":
+            return
+        block = case.get("block")
+        if case.get("decision") == "abandon":
+            if w.get("status") == "walled":
+                self._unhold_worker(w)        # discard held_verbs whole — never replay them
+            self._release_worker(w, notify=False, reason="abandon")
+            self._flag_abandon(block, wid, case.get("detail") or f"case {case.get('kind')} abandoned")
+            return
+        if case.get("kind") in WALL_KINDS and w.get("status") == "walled":
+            self._unhold_and_replay(w, block, case)
+
+    def _flag_abandon(self, block, wid, detail):
+        """ADR-0002 D3 third bullet: "Abandon means drop — visibly." The worker is already
+        released and the case already closed by the caller (_release_case_hold) — this is
+        only the loud-event + manifest-flag half. No automatic new architect case (a drop
+        verb must not generate work): the flag is durable runtime state (TRON's own
+        manifest, `st.data`, never the project's pipeline.md) that rides the architect's
+        next dispatched touchpoint (_drain_abandon_flags, called from _pump_architect —
+        a push moment that provably occurs) or, if none occurs within
+        `abandon_flag_window` minutes (default 60), matures into exactly ONE ordinary
+        case (_sweep_abandon_flags, on the tick sweep) — zero spam, zero silence."""
+        self.events.event("abandon", block=block, actor=wid, detail=detail)
+        self.st.data.setdefault("abandon_flags", []).append(
+            {"block": block, "worker_id": wid, "detail": detail, "flagged_at_s": self._now_s()})
+
+    def _drain_abandon_flags(self, awid):
+        """Ride every still-pending abandon flag on the architect's next dispatched
+        touchpoint (job push — ADR-0002 D3 third bullet). Delivered as a follow-up
+        mailbox note alongside whatever job just dispatched — never a second case, never
+        a polling ritual. Called from `_pump_architect` at the moment a job actually goes
+        out (the "push moment that provably occurs")."""
+        flags = self.st.data.get("abandon_flags") or []
+        if not flags or not awid:
+            return
+        if self.dry:
+            # Never mark a flag delivered when no mailbox write actually happened —
+            # a dry tick leaves the queue intact (the forensic record must never claim
+            # a delivery that didn't occur; the flag rides the first REAL touchpoint).
+            return
+        for f in flags:
+            note = (f"[TRON] FYI — block {f.get('block') or '?'} was abandoned "
+                    f"({f.get('detail')}). No action required unless you were relying on "
+                    f"it.")
+            # F6 (review): the `if self.dry: return` above already guarantees self.dry is
+            # False by this point — the inner `if not self.dry:` guard was unreachable dead
+            # code, removed.
+            self._to_worker(awid, note, "abandon.flag")
+            self.events.event("abandon_flag_delivered", block=f.get("block"),
+                              **{"detail": f.get("detail"), "via": "architect-touchpoint"})
+        self.st.data["abandon_flags"] = []
+
+    def _sweep_abandon_flags(self):
+        """Bounded-window escalation (ADR-0002 D3 third bullet): a flag that never rode a
+        touchpoint within `abandon_flag_window` minutes (default 60 — a knob) escalates to
+        exactly ONE ordinary architect case per stale flag, then clears — never left to
+        poll forever, never spamming beyond the one case."""
+        flags = self.st.data.get("abandon_flags") or []
+        if not flags:
+            return
+        window_s = int(self.knobs.get("abandon_flag_window", 60)) * 60
+        now = self._now_s()
+        stale = [f for f in flags if now - f.get("flagged_at_s", now) >= window_s]
+        if not stale:
+            return
+        self.st.data["abandon_flags"] = [f for f in flags if f not in stale]
+        for f in stale:
+            detail = (f"abandon flag for block {f.get('block') or '?'} unread after "
+                     f"{window_s // 60}min ({f.get('detail')})")
+            # "escalates to one ordinary case" (D3 third bullet, verbatim) — a genuine
+            # case, not just a notification, so the operator/architect has a real
+            # correlation id to settle by; no worker to hold (already released at
+            # abandon time), so worker_id is None (_release_case_hold's guard no-ops
+            # cleanly on a caseless/workerless release, same as any other block-less
+            # case kind — paperwork/residue).
+            cid = self._open_case(f.get("block"), "abandon", None, detail)
+            self._triage_to_architect(detail, block=f.get("block"), case=cid)
+
+    def _auto_settle_walls_for_block(self, block):
+        """F-1 self-healing (ADR-0002 D3/D5), called from `_on_block_done` the instant the
+        evidence-ratchet observes ✅ for `block` on trunk: any WALL_KINDS case still parked
+        on this block — undecided, no explicit operator/architect decision ever written —
+        auto-settles through the ordinary `_close_case`/`_release_case_hold` seam, exactly
+        like an internal `resume` with no explicit decision at all (never the retired
+        `_sweep_wall_invariant`, never a second teardown mechanism). Loud, not silent: a
+        forensic event records the auto-settle before the close so a mis-tagged wall from a
+        worker that was actually done is visible in the record, not just quietly gone."""
+        for cid, case in list(self.st.pending_cases.items()):
+            if (case.get("block") == block and case.get("kind") in WALL_KINDS
+                    and case.get("decision") is None):
+                self.events.event("wall_auto_settled", block=block, cid=cid,
+                                  **{"detail": case.get("detail"), "via": "observed-done"})
+                self.log("flow", f"{block}: wall case {cid} auto-settled — "
+                                 f"gate observed done (F-1)")
+                self._close_case(cid, case)
 
     def _h_recover(self, m):
         # worker:stalled — Recover: free the slot, then re-arm the lost work.
@@ -1372,8 +1631,12 @@ class Engine:
         # the architect, with project context, is the only thing that steers it.
         raw = m.get("_trigger", "*")
         text = m.get("detail", "")
+        # T1 (01-31, AC-5 HIGH): the routed content to the architect is no longer capped
+        # at 160 chars (fsm.py:1376's truncation deleted) — payloads cross the pipe
+        # whole; a length cap is a render/display seam only, so the LOG preview below
+        # (console/debug output, never what the architect receives) may still preview-cap.
         self.log("sentry", f"unmatched trigger '{raw}': {text[:160]}")
-        self._triage_to_architect(text[:160] or raw,
+        self._triage_to_architect(text or raw,
                                   sender=m.get("worker_id"), block=m.get("block"))
         self._emit("pulse")
 
@@ -1769,9 +2032,10 @@ class Engine:
         # PR machinery owns that wait.
         if stage == g.get("stage") and not renudge and stage != "ci-wait":
             # T3 (01-18, N3): a wall raised mid-gate HOLDS its worker (D-15-2) and its runner
-            # idles by design (parked awaiting the operator, never a stall to accrue against)
-            # — the same exemption class the liveness sweep already applies to a walled
-            # worker (_sweep_wall_invariant). Without it the gate's own idle cap fired ~3x
+            # idles by design (parked awaiting the operator/architect, never a stall to
+            # accrue against) — the same exemption class the liveness sweep already applies
+            # to a walled worker (_sweep(), plain skip — 01-31 retired the invariant-repair
+            # arm, D5). Without it the gate's own idle cap fired ~3x
             # the ceiling later and popped the gate 01-15 deliberately preserved for the
             # wall, plus a duplicate wall the blocked-guard only mostly swallows. Roster
             # status is the authority (not the runner's on-disk idle record, which is
@@ -2473,11 +2737,6 @@ class Engine:
         self._emit("pulse")
         return True
 
-    def _force_release_block(self, block):
-        for w in list(self.st.workers):
-            if w.get("role") == "engineer" and w.get("block") == block:
-                self._release_worker(w, notify=False, reason="force-release")
-
     def _gate_giveup(self, block, g, wid, detail, code, action):
         """No-silent-stuck: drop the gate + escalate to the operator (forensic record).
         T2 (01-26, R-05): `code` rides the trigger's slots too — _h_escalate stamps it as
@@ -2590,9 +2849,22 @@ class Engine:
         # architect answers, never read by the plain peer-question path.
         if any(j.get("kind") == "triage" and j.get("detail") == detail
                for j in self.st.architect_queue):
+            # T1 (01-31, AC-5b MED): this text-dedup drop used to leave no forensic
+            # trace at all — never silent now, same discipline every other discard path
+            # on this pipe carries.
+            self.events.event("triage_dedup_dropped", block=block, actor=sender,
+                              detail=detail)
             return
         if not self._architect():
-            self.emit("escalate.unclassified", {"detail": detail})
+            # T3 (01-31, ADR-0002 D3): with architect-first now the UNIVERSAL wall route,
+            # this no-architect fallback is a genuine wall's LAST resort too (not only
+            # truly-unclassifiable input) — the correlation id (02-10) the operator settles
+            # by must survive here exactly as it did on the pre-01-31 direct escalate.wall
+            # page (`{case}` slot). escalate.unclassified carries no `case` slot at all
+            # (`detail` only), so a live case rides inline in the text — never silently
+            # dropped, never a page the operator can't act on.
+            text = f"[{case}] {detail}" if case else detail
+            self.emit("escalate.unclassified", {"detail": text})
             return
         job = {"kind": "triage", "detail": detail, "sender": sender, "block": block}
         if case:
@@ -2611,6 +2883,9 @@ class Engine:
         self._emit_arch_job(job, arch.get("id"))
         if job.get("kind") == "log":
             self._mark_log_dispatch(arch)   # T2 (01-22): this job settles on its own turn-done
+        # T4 (01-31, ADR-0002 D3): a job dispatch is exactly the "push moment that
+        # provably occurs" any pending abandon flag rides — never a second case.
+        self._drain_abandon_flags(arch.get("id"))
         self.log("architect", f"dispatch {job}")
 
     def _emit_arch_job(self, job, awid):
@@ -2836,9 +3111,12 @@ class Engine:
         return w.pop("held_verbs", None) or []
 
     def _unhold_and_replay(self, w, block, settled_case):
-        """T3 (01-19, F2/F7/F12/R2-2): the ONE un-hold-and-replay seam BOTH replayers call —
-        the operator-resume arm (_h_apply_decision) and the wall-invariant sweep repair arm
-        (a) (_sweep_wall_invariant, which mirrors resume's semantics and produced tron-26's
+        """T3 (01-19, F2/F7/F12/R2-2): the ONE un-hold-and-replay seam every settle-shaped
+        release calls through — the operator-resume arm (_h_apply_decision), the generic
+        `_release_case_hold` (01-31, D5, which now also covers the F-1 observed-done
+        auto-settle), and originally the wall-invariant sweep repair arm (a)
+        (_sweep_wall_invariant, retired 01-31 — its un-hold call was this exact seam,
+        which mirrors resume's semantics and produced tron-26's
         CASE-012). A walled worker re-sends its wall while held ("re-send, 5th time,
         unchanged" — tron-25 tick 66); every copy queues whole to held_verbs (_ingest's
         walled-check); replaying each serially re-raised one fresh case per stale echo, one
@@ -3101,6 +3379,18 @@ class Engine:
                       if x.get("id") == sender.get("id")), None)
             if w and w.get("rtype"):
                 slots["type"] = w["rtype"]
+        if tag == "worker.wall" and not slots.get("detail"):
+            # T1 (01-31, ADR-0002 D5): the ACTUAL root cause of the wave-1b contentless-
+            # wall defect — report.sh's structured `--tag wall "<reason>"` line carries
+            # the worker's stated reason in `text`, never in `slots` (report.sh's own JSON
+            # shape, scripts/report.sh:70 — `slots` only ever holds block/branch/type/
+            # kind). Every real structured wall report reached `_h_escalate` with NO
+            # `detail` slot at all, which is exactly what made `m.get("detail", "wall")`
+            # fire on every one of them, always — not an edge case, the common case. Carry
+            # the free text through here, at the ONE structured-resolution choke point,
+            # so a real stated reason is never silently absent by the time it reaches the
+            # content gate (_admit) or the case.
+            slots["detail"] = msg.get("text", "")
         return tag, slots
 
     def _admit(self, tag, slots, sender):
@@ -3154,6 +3444,58 @@ class Engine:
                     self.log("flow", f"gate[{block}] {cca}: reply doesn't open "
                                      f"'{pfx}' -> not a confirmation")
                     return None
+        # T2 (01-31, ADR-0002 D3): a worker-reported `wall` requires a non-empty stated
+        # reason at the door — never the old literal "wall" placeholder default
+        # (fsm.py:1053, deleted). NAK + re-prompt (never process the trigger) up to
+        # WALL_NAK_MAX times; only past the budget does the engine give up asking and
+        # substitute its OWN observed fact ("cannot articulate its blocker") — an
+        # engine-authored label, never user content laundered from nothing.
+        if tag == "worker.wall":
+            detail = (slots.get("detail") or "").strip()
+            if not detail:
+                # An UNROSTERED sender (w is None — e.g. an ADHOC id with a --block ref)
+                # has no worker record to persist a NAK count on: a re-prompt loop could
+                # never terminate (the count would read 0 forever, bouncing the sender
+                # for eternity — the exact silent dead-end class this block kills). Skip
+                # the NAK budget entirely and convert IMMEDIATELY to the engine-observed
+                # fact below — content is still never invented, the loop still terminates.
+                n = int(w.get("wall_nak_count", 0)) if w is not None else WALL_NAK_MAX
+                if n < WALL_NAK_MAX:
+                    w["wall_nak_count"] = n + 1
+                    self.events.failure(
+                        "content-missing", "contentless-wall",
+                        "raise a wall with a stated reason",
+                        f"empty detail from {(sender or {}).get('id')}",
+                        actor=(sender or {}).get("id"), block=block, node="_admit:worker.wall",
+                        next_action=f"NAK + re-prompt ({n + 1}/{WALL_NAK_MAX})")
+                    self._bounce(sender, "a wall needs a stated reason — resend `--tag wall` "
+                                         "describing the actual blocker")
+                    return None
+                if w is not None:
+                    w.pop("wall_nak_count", None)
+                who = (sender or {}).get("id") or "the worker"
+                slots = {**slots, "detail":
+                         f"{who} raised a wall but could not articulate a reason after "
+                         f"{WALL_NAK_MAX} prompts (engine-observed — the worker itself is "
+                         f"the blocker)"}
+            elif w is not None:
+                w.pop("wall_nak_count", None)     # a real reason resets any prior NAK episode
+        # T1 (01-31, ADR-0002 D5, AC-5/AC-5b): question_peer/question_tron both carry a
+        # required prose `detail` — the actual question. No placeholder substitution
+        # ("(peer question)") and no dead-end silent log ever launders a missing one
+        # again; a contentless question is NAK'd at the door exactly like every other
+        # content-bearing discard path (forensic event + bounce the sender — never a
+        # case, this isn't a wall).
+        if tag in ("worker.question_peer", "worker.question_tron"):
+            if not (slots.get("detail") or "").strip():
+                self.events.failure(
+                    "content-missing", "contentless-question",
+                    f"ask a {tag.split('.')[-1]}", f"empty detail from "
+                    f"{(sender or {}).get('id')}", actor=(sender or {}).get("id"),
+                    node=f"_admit:{tag}", next_action="NAK — resend with the actual question")
+                self._bounce(sender, "a question needs actual content — resend with "
+                                     "what you're actually asking")
+                return None
         return slots
 
     def _resolve_by_sender(self, tag, slots, sender):
@@ -3288,11 +3630,23 @@ class Engine:
         if handler == "reply_digest":
             self.emit("tg.status_digest", {"detail": self._digest()})
         elif handler == "answer_from_context":
-            self.log("side", f"question_tron: {slots.get('detail', '')}")
+            # T1 (01-31, AC-5 HIGH): question_tron used to dead-end here — logged and
+            # NEVER answered (routing.yaml:47's declared target was a lie no reply ever
+            # honored). It now reaches the architect with FULL content — the only thing
+            # with project context to answer it — through the same triage pipe a peer
+            # question already used (T10); never a second answering mechanism. Content
+            # is guaranteed non-empty here: _admit's content gate (below) NAKs an empty
+            # question before it ever reaches this handler.
+            self._triage_to_architect(slots.get("detail"),
+                                      sender=slots.get("worker_id"), block=slots.get("block"))
+            self._emit("pulse")
         elif handler == "record_branch":
             self._record_branch(slots)
         elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
-            self._triage_to_architect(slots.get("detail", "") or "(peer question)",
+            # T1 (01-31, AC-5b MED): the "(peer question)" placeholder substitution is
+            # gone — _admit's content gate refuses an empty question at the door, so a
+            # real question always reaches here.
+            self._triage_to_architect(slots.get("detail"),
                                       sender=slots.get("worker_id"), block=slots.get("block"))
             self._emit("pulse")
         elif handler == "relay_to_worker":               # T10: architect's answer -> the original asker
@@ -3347,11 +3701,15 @@ class Engine:
             block = case.get("block")
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
+            # T4 (01-31, ADR-0002 D5): _close_case now owns the un-hold-and-replay call
+            # BY CONSTRUCTION (_release_case_hold, since this is a live WALL_KINDS case
+            # whose worker is walled) — calling it again here double-fired
+            # _unhold_and_replay (a real regression this fix closes): the worker's
+            # held_verbs queue was already drained/replayed by the first call, so the
+            # second saw an empty queue and sent a SPURIOUS extra "gone quiet" nudge
+            # right after the genuine relayed answer. _close_case alone is now the
+            # complete release; never a second teardown call here.
             self._close_case(case_id, case)
-            w = next((x for x in self.st.workers
-                      if x.get("id") == target and x.get("status") == "walled"), None)
-            if w is not None:
-                self._unhold_and_replay(w, block, case)
             self.log("flow", f"architect-relayed settle: wall {case_id} released "
                              f"({block or '?'}) with the relayed answer as payload")
         elif stale:
@@ -3373,8 +3731,14 @@ class Engine:
         detail = slots.get("detail", "") or "architect raised to operator"
         self._architect_advance()
         if block:
+            # T3 (01-31, ADR-0002 D3): `origin` marks this as the architect's OWN explicit
+            # raise — _h_escalate's universal architect-first funnel must not re-triage an
+            # already-triaged decision back to the architect (a self-loop); origin is the
+            # discriminator that exempts it, same page-the-operator-directly path a wall
+            # always used pre-ADR-0002.
             self._emit("wall:raised:" + block,
-                       {"block": block, "worker_id": sender, "detail": detail})
+                       {"block": block, "worker_id": sender, "detail": detail,
+                        "origin": "architect_raise"})
         else:
             self.emit("escalate.unclassified", {"detail": detail})
         self._emit("pulse")
@@ -3501,65 +3865,23 @@ class Engine:
                                           "detail": f"{cid} still parked: "
                                                     f"{case.get('detail')}"})
 
-    # ── wall/hold invariants (T3, 01-17, tron-23) ──
-    def _sweep_wall_invariant(self, w, ping_min):
-        """A `walled` worker is only ever consistent while it is parked ON a live wall
-        case (D-15-2's whole model). Either half of that pairing missing is an
-        inconsistency, named after one silence window (the same wall-clock law, and the
-        same `since` idiom, as the gate-orphaned net just below) — never silent, never
-        indefinite:
-          (a) settled case -> un-held worker: the case for this worker/block already
-              carries a decision (settled) but the worker is still walled — un-hold it via
-              the ordinary _unhold_worker + the 01-16 post-unhold nudge, exactly as an
-              operator `resume` would;
-          (b) walled worker -> pending case: no case at all exists for this worker/block —
-              re-raise one (the wall_detail recorded at hold time if it's still there, else
-              name the inconsistency itself) so the operator can always reach it.
-        A live, still-undecided case is the ordinary wall state — never touched.
-
-        N9 (01-18): when a settled case and a live undecided case BOTH match this worker/
-        block (a settled-but-unclosed case coexisting with a live one), the UNDECIDED case
-        must win the match — else arm (a) below would un-hold this worker out from under
-        its own still-open wall just because a stale settled case happened to be found
-        first in iteration order."""
-        block = w.get("block")
-        wid = w.get("id")
-        matches = [c for c in self.st.pending_cases.values()
-                  if c.get("kind") in WALL_KINDS
-                  and (c.get("worker_id") == wid or (block and c.get("block") == block))]
-        case = next((c for c in matches if c.get("decision") is None), None)
-        if case is None and matches:
-            case = matches[0]                  # no live match — fall back to a settled one
-
-        def _repair(idle_s):
-            if case is not None:
-                # (a): the case settled but nothing un-held this worker. Close the case too
-                # (parity with an ordinary `resume` settle, which always closes what it acts
-                # on) — a decided case has nothing left for any settle to do with it.
-                # T2 (01-18, F2+N7) + T3 (01-19, F2): mirror an operator `resume`'s semantics
-                # exactly — via the ONE shared un-hold-and-replay helper the resume arm calls
-                # (the same factoring discipline _unhold_worker itself got in 01-18 T2). This
-                # seam is the treadmill's second door: tron-26's CASE-012 replayed a stale wall
-                # echo through HERE, post-safe-park, after 005–011 came through resume — a fold
-                # implemented only at the resume arm would have left this one re-raising. The
-                # already-settled `case` object is the discriminator this un-hold acted on.
-                self._close_case(None, case)
-                self.log("flow", f"sweep: {wid} walled with a settled case -> un-held")
-                self._unhold_and_replay(w, block, case)
-                self._emit("pulse")
-            else:
-                # (b): no case at all — this worker is unreachable. Re-raise one.
-                detail = w.pop("wall_detail", None) or (
-                    f"{wid} is walled with no pending case"
-                    + (f" for {block}" if block else "") + " — invariant repair")
-                self._reraise_wall(block, wid, detail)
-
-        # T1 (01-26): repair-only (no nudge tier); ping_min*60 — the gate-orphan clock's
-        # sibling, a preserved exemption, never wake_ceiling.
-        self._pace_ladder(w, "wall_bad_since",
-                          idle=case is None or case.get("decision") is not None,
-                          cap_span=ping_min * 60, on_cap=_repair)
-
+    # ── wall/hold invariants (T3, 01-17, tron-23; RETIRED 01-31 — ADR-0002 D5) ──
+    # `_sweep_wall_invariant` (both its arms — "settled case, still-held worker" and
+    # "walled worker, no pending case") is DELETED, not kept as a backstop: D5 makes
+    # `_close_case`/`_release_case_hold` the single site that un-holds a case's recorded
+    # worker, so arm (a)'s premise (a settle that forgets to release) is now structurally
+    # unreachable — every settle path (approve/resume/amend/abandon, the F-1 observed-done
+    # auto-settle) releases BY CONSTRUCTION the instant it closes its case, never a second,
+    # later sweep tick. Arm (b) (a walled worker with no case at all) required a settle to
+    # un-hold WITHOUT ever closing/creating the case it acted on — no code path does that
+    # anymore either (every hold is opened together with its case in _h_escalate, and every
+    # release is opened together with closing that SAME case in _release_case_hold), so the
+    # pairing this arm repaired can no longer drift apart. Verified by replay assertion
+    # (block_01_31_test.py: no "invariant repair" event ever fires across the abandon /
+    # resume / auto-settle paths). The distinct block-level net below (T6, 01-18 addendum
+    # N2 — a `st.blocked` block with no case/walled-worker/gate at all, a different
+    # invariant: an operator mis-verb spending the only case handle) is untouched — it still
+    # legitimately fires and still uses `_reraise_wall` below.
     def _reraise_wall(self, block, wid, detail):
         """T3(b): repair a caseless wall the same way every OTHER wall parks — a fresh
         case, the ordinary escalate.wall notice. Never routed through _h_escalate: its
@@ -3717,14 +4039,15 @@ class Engine:
         for w in list(self.st.workers):
             if w.get("status") == "released":
                 continue
-            # T2 (D-15-2): a walled worker is deliberately idle (parked on the operator) —
-            # the silence/stall machinery must never treat that as a hang and force a
-            # second, unintended release out from under the hold.
+            # T2 (D-15-2): a walled worker is deliberately idle (parked on the operator or
+            # architect) — the silence/stall machinery must never treat that as a hang and
+            # force a second, unintended release out from under the hold.
+            # T4 (01-31, ADR-0002 D5): the invariant-repair sweep (`_sweep_wall_invariant`)
+            # is RETIRED — the case that opened this hold is now the ONLY thing that can
+            # close it (_close_case/_release_case_hold), so the pairing this sweep used to
+            # repair can no longer drift apart. A walled worker is simply skipped here,
+            # same as "released".
             if w.get("status") == "walled":
-                # T3 (01-17, tron-23): the hold ITSELF must stay a valid pairing — a walled
-                # worker is only ever consistent while a wall case owns it. Checked here,
-                # not skipped like "released".
-                self._sweep_wall_invariant(w, ping)
                 continue
             sess = w.get("session_id")
             alive = bool(sess) and sess != "dry" and jobs.is_alive(w.get("id"), idx)
@@ -3877,7 +4200,8 @@ class Engine:
                     cap_span=ping * 60,
                     on_cap=lambda idle_s, block=block, g=g: self._resolve_workerless_gate(block, g))
         # T6 (01-18 addendum, N2): the wall-pairing law's THIRD key. 01-17 repaired the
-        # worker-keyed half (_sweep_wall_invariant above) and the gate-keyed half (the
+        # worker-keyed half (retired 01-31, D5 — the case now owns the hold by
+        # construction) and the gate-keyed half (the
         # workerless-gate net just above); a block in st.blocked with NO undecided case,
         # NO walled worker, and NO gate is unreachable by every net — an operator mis-verb
         # (`approve` on a plain workerless wall is a valid-verb silent spend of the only
@@ -3907,6 +4231,10 @@ class Engine:
                                    f"{block} is blocked with no pending case, no walled "
                                    f"worker, and no gate — unreachable by any settle; "
                                    f"invariant repair")
+        # T4 (01-31, ADR-0002 D3 third bullet): the abandon-flag bounded-window
+        # escalation — every sweep, so a flag that never rode an architect touchpoint
+        # within `abandon_flag_window` still surfaces, never left to poll forever.
+        self._sweep_abandon_flags()
 
     # ── inbound channels (at-least-once: read now, truncate only after a clean save) ──
     def _inbox_paths(self):

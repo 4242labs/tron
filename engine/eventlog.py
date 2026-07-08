@@ -30,9 +30,17 @@ import util
 #   session-residue — session end found unlanded/failed paperwork or leftover branches
 #                   (tron-13 D1 sweep: named + parked on the operator, never auto-landed)
 #   crash         — an unhandled exception escaped a whole tick (caught by the WAKE supervised loop)
+#   content-missing — a schema-marked content-bearing field arrived empty at its ingest
+#                   choke point (contentless wall, contentless peer/tron question — 01-31,
+#                   ADR-0002 D5): NAK'd at the door, never substituted/discarded silently.
+#   handler-raised  — a routed trigger's handler raised (01-31, AC-5b): the trigger is
+#                   dropped (never strands the tick) but never silently, now.
+#   mailbox-send-failed — an engine->worker mailbox write failed (OSError) after retry
+#                   (01-31, AC-5 HIGH): queued durable for at-least-once redelivery.
 FAILURE_CLASSES = {
     "refresh-fail", "classify-fail", "ingest-drop", "gate-stuck",
     "dispatch-fail", "session-residue", "crash",
+    "content-missing", "handler-raised", "mailbox-send-failed",
 }
 
 # The closed vocabulary of `type` values an `event` record carries — the engine's own
@@ -52,10 +60,23 @@ FAILURE_CLASSES = {
 #   docs_landed   — the engine landed a paperwork branch on trunk (D1 lander: role · branch)
 #   block_done    — a block reached ✅ on trunk
 #   session_start / session_end / halt — session lifecycle
+#   wall_auto_settled — F-1 self-healing (01-31, ADR-0002 D3/D5): a wall case auto-settled
+#                   because the block's own gate observed the milestone done, never a
+#                   sweep, never silent.
+#   abandon       — a case settled `abandon`: worker released, case closed, visibly (01-31,
+#                   D3 third bullet) — the loud event half of the drop.
+#   abandon_flag_delivered — an abandon's manifest flag rode the architect's next
+#                   dispatched touchpoint (01-31, D3 third bullet).
+#   triage_dedup_dropped — a triage hand-off to the architect deduped on identical
+#                   pending text (01-31, AC-5b): forensic, never silent.
+#   unknown_worker_send — an engine->worker send named a worker no longer on the roster
+#                   (01-31, MED inventory): forensic, never a silent no-op.
 EVENT_TYPES = {
     "tick", "model_call", "dispatch", "gate_advance", "settle", "release",
     "escalate", "case_reping", "case_safe_parked", "docs_landed", "block_done",
     "session_start", "session_end", "halt",
+    "wall_auto_settled", "abandon", "abandon_flag_delivered",
+    "triage_dedup_dropped", "unknown_worker_send",
 }
 
 

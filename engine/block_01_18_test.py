@@ -15,6 +15,17 @@ pacing-exemption set (holistic review round 2, post-01-17, canon 27d551c).
       one hold episode used to replay again on a LATER re-wall). N9: an UNDECIDED case
       coexisting with a settled one for the same worker/block must win the match — arm
       (a) must never un-hold a worker out from under its own still-open wall.
+      SUPERSEDED (block 01-31, ADR-0002 D5): arm (a) — the sweep's settled-case repair —
+      is retired outright; `_unhold_worker`'s unconditional pop-and-return and
+      `_unhold_and_replay`'s replay contract are UNTOUCHED and still load-bearing (every
+      real release path — operator resume, `_release_case_hold`, the F-1 auto-settle —
+      calls through the SAME seam), but nothing reaches them via a sweep anymore, and N9's
+      "pick the right case" concern is now moot by construction: `_release_case_hold`
+      always acts on the SPECIFIC case object its caller already resolved, never a
+      heuristic search across `pending_cases`. The four arm-(a)-specific tests below are
+      replaced with one structural + one behavioral retirement proof; the replay-seam
+      contract itself (`_unhold_worker`/`_unhold_and_replay`) is exercised end-to-end via
+      the ordinary resume path in block_01_15_test.py, untouched by this block.
   T3  walled workers are exempt from gate/close pacing (N3, both sites): a wall raised
       mid-gate or mid-close-out HOLDS its worker (D-15-2) and its runner idles by design
       (parked on the operator) — never a stall to accrue against. The close site is the
@@ -215,120 +226,41 @@ def t_merged_sha_regression_the_preimage_WOULD_have_false_contradicted():
         trunk.is_ancestor = orig_anc
 
 
-# ── T2 (AC-1 bullet 2): the sweep's un-hold seam pops + replays exactly like resume ──
-def t_sweep_arm_a_replays_the_queued_verb_and_releases():
-    # Mirrors block_01_15_test's resume-replay case, but the un-hold is the SWEEP's
-    # settled-case repair (arm (a)), never an operator resume.
+# ── T2 (AC-1 bullet 2): SUPERSEDED (block 01-31) — arm (a) retired outright ──
+def t_sweep_arm_a_retired_01_31():
+    """Structural + one behavioral proof that the sweep's settled-case repair (arm (a))
+    is gone: a decided-but-unclosed case's held worker now stays walled/queued forever
+    under `_sweep()` alone (nothing repairs it there anymore) — the ONLY way a case ever
+    gets closed and its worker released is through `_close_case`/`_release_case_hold`,
+    called by the SAME code that wrote the decision, in the SAME turn (resume, the F-1
+    auto-settle) — never a later, separate sweep pass. See block_01_31_test.py for the
+    replacement mechanism's own coverage."""
     eng = _eng_bare()
     eng.st.row("A-01")["status"] = "done"
     wid = "ENG-A-01"
     cid = _walled(eng, "A-01", wid)
-    orig_land, orig_clean = trunk.land_docs, trunk.replica_clean
-    trunk.land_docs = lambda *a, **k: ("landed", "0 file(s)")
-    trunk.replica_clean = lambda *a, **k: (True, "")
-    try:
-        eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
-        # The clean confirmation arrives WHILE held -> queued, never processed live.
-        eng._ingest("worker.done", {"block": "A-01", "clean_confirm": True, "_raw": "clean"},
-                    {"kind": "worker", "id": wid})
-        w = next(x for x in eng.st.workers if x["id"] == wid)
-        ok("setup: the clean verb is queued behind the wall, not acted on",
-           w.get("held_verbs") == [{"tag": "worker.done",
-                                    "slots": {"block": "A-01", "clean_confirm": True,
-                                              "_raw": "clean"}}],
-           f"held_verbs={w.get('held_verbs')}")
-        # Simulate the tron-23-class inconsistency: the case settles but nothing un-holds
-        # (arm (a)'s own precondition).
-        eng.st.pending_cases[cid]["decision"] = "resume"
-        clock = {"t": 1000.0}
-        eng._now_s = lambda: clock["t"]
-        eng._sweep()                       # anchors wall_bad_since; too soon to fire
-        ok("T2 the sweep does not act inside one silence window",
-           next(x for x in eng.st.workers if x["id"] == wid).get("status") == "walled")
-        clock["t"] += PING_WINDOW_S
-        eng._sweep()
-        eng._drain_triggers()              # the replayed trigger lands in _tq; drain it
-        ok("T2 arm (a) replays the queued verb: the close confirms and releases "
-           "(the D-16-1 swallow class, closed through the sweep's own door)",
-           "A-01" not in eng.st.gate and not any(x["id"] == wid for x in eng.st.workers),
-           f"gate={eng.st.gate} workers={eng.st.workers}")
-    finally:
-        trunk.land_docs, trunk.replica_clean = orig_land, orig_clean
-
-
-def t_sweep_arm_a_pops_the_queue_even_when_the_replay_is_a_noop():
-    # F2/N7: a STALE verb (queued behind a wall, then never relevant at replay time)
-    # must be POPPED regardless — never left stranded to replay a second time on a
-    # later hold episode.
-    eng = _eng_bare()
-    wid = "ENG-A-01"
-    cid = _walled(eng, "A-01", wid)
-    eng.st.gate.setdefault("A-01", {"stage": "trunk", "pr": None})
-    # A stale record-receipt queues behind the wall; the gate sits at 'trunk', not
-    # 'record', so replaying it later is a harmless no-op admission-wise — exactly the
-    # stale shape F2/N7 must never replay twice.
-    eng._ingest("worker.recorded", {"block": "A-01"}, {"kind": "worker", "id": wid})
+    eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
+    eng._ingest("worker.done", {"block": "A-01", "clean_confirm": True, "_raw": "clean"},
+               {"kind": "worker", "id": wid})
     w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("setup: the stale verb is queued behind the wall",
-       w.get("held_verbs") == [{"tag": "worker.recorded", "slots": {"block": "A-01"}}])
-    eng.st.pending_cases[cid]["decision"] = "resume"
+    ok("setup: the clean verb is queued behind the wall, not acted on",
+       w.get("held_verbs") == [{"tag": "worker.done",
+                                "slots": {"block": "A-01", "clean_confirm": True,
+                                          "_raw": "clean"}}],
+       f"held_verbs={w.get('held_verbs')}")
+    eng.st.pending_cases[cid]["decision"] = "resume"   # bypasses _close_case, on purpose
     clock = {"t": 1000.0}
     eng._now_s = lambda: clock["t"]
     eng._sweep()
     clock["t"] += PING_WINDOW_S
-    eng._sweep()
+    eng._sweep()                       # no arm (a) left to fire
     w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("T2 arm (a) un-holds on the settled case", w.get("status") != "walled", f"w={w}")
-    ok("T2 arm (a) pops held_verbs UNCONDITIONALLY (never stranded for a later re-wall)",
-       not w.get("held_verbs"), f"w={w}")
-    ok("T2 the replayed stale verb is a harmless no-op at this stage (gate untouched)",
-       "A-01" in eng.st.gate and eng.st.gate["A-01"].get("stage") == "trunk",
-       f"gate={eng.st.gate}")
-
-
-def t_sweep_arm_a_empty_queue_nudge_parity_with_resume():
-    # 01-16 addendum, mirrored: an EMPTY replay queue must never leave a mutual wait —
-    # the un-hold sends the gate's own pending stage prompt, exactly like resume's own
-    # empty-queue nudge (~1104-1112).
-    eng = _eng_bare()
-    wid = "ENG-A-01"
-    cid = _walled(eng, "A-01", wid)
-    eng.st.gate.setdefault("A-01", {"stage": "trunk", "pr": None})
-    eng.st.pending_cases[cid]["decision"] = "resume"
-    sent = _capture(eng)
-    clock = {"t": 1000.0}
-    eng._now_s = lambda: clock["t"]
-    eng._sweep()
-    clock["t"] += PING_WINDOW_S
-    eng._sweep()
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("T2 arm (a) un-holds with an empty replay queue", w.get("status") != "walled", f"w={w}")
-    ok("T2 empty-queue nudge parity: the gate's own pending stage prompt re-sends "
-       "(never a bare un-hold, same as an operator resume)",
-       any(tid == "gate.trunk" for tid, _ in sent), f"sent={sent}")
-
-
-def t_sweep_undecided_case_wins_over_a_settled_one_n9():
-    # N9: a settled-but-unclosed case coexisting with a LIVE undecided one for the same
-    # worker/block must never let arm (a) un-hold the worker out from under its own
-    # still-open wall.
-    eng = _eng_bare()
-    wid = "ENG-A-01"
-    cid_settled = _walled(eng, "A-01", wid, detail="first wall, already settled")
-    eng.st.pending_cases[cid_settled]["decision"] = "resume"
-    cid_live = eng._open_case("A-01", "wall", wid, "second wall, still live")
-    clock = {"t": 1000.0}
-    eng._now_s = lambda: clock["t"]
-    eng._sweep()
-    clock["t"] += PING_WINDOW_S
-    eng._sweep()
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("N9 an undecided case coexisting with a settled one wins the match "
-       "-> the worker STAYS walled", w.get("status") == "walled", f"w={w}")
-    ok("N9 the settled case is left untouched (arm (a) never fired on it)",
-       eng.st.pending_cases.get(cid_settled, {}).get("decision") == "resume")
-    ok("N9 the live case is still there, undecided",
-       eng.st.pending_cases.get(cid_live, {}).get("decision") is None)
+    ok("T2 (01-31) the worker stays walled — sweep alone never un-holds it anymore",
+       w.get("status") == "walled", f"w={w}")
+    ok("T2 (01-31) held_verbs stays queued — sweep alone never pops/replays it anymore",
+       bool(w.get("held_verbs")), f"w={w}")
+    ok("T2 (01-31) the case stays open — sweep alone never closes it anymore",
+       cid in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
 
 
 # ── T3 (AC-1 bullet 3): walled workers are exempt from gate/close pacing (N3) ──

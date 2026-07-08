@@ -68,6 +68,11 @@ knobs:
   # never asked at start, never changed by a runtime command. cooldown <= ceiling.
   wake_cooldown_sec: 5     # min gap between ticks — floor (debounce a chatty fleet)
   wake_ceiling_sec: 30     # max latency before a tick fires anyway — the cadence ceiling
+  # Abandon-flag bounded-window escalation (ADR-0002 D3 third bullet, 01-31): an abandon
+  # flag rides the architect's next dispatched touchpoint if one comes first; otherwise,
+  # left unread this many MINUTES, it escalates to exactly ONE ordinary case — never left
+  # to poll forever, never spamming beyond the one case (fsm._sweep_abandon_flags).
+  abandon_flag_window: 60
 
 # ── Reviewer cadence (PULL): <type> -> blocks between reviews ──
 # Per-type counter +1 on every block:next:done; due at threshold; reset on dispatch.

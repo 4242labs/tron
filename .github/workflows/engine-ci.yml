@@ -1,0 +1,83 @@
+name: engine-ci
+
+# Block 01-31 (ADR-0002 D5, AC-6): the no-default content-field lint — and the full
+# engine test suite it ships alongside — must run in CI. None of this existed as a
+# workflow before this block; this is the first engine CI gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: engine-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # replay_lock_test.py's A/B differential reads a NAMED historical commit
+          # (`git show 28224cb:engine/fsm.py`) out of this repo's own history — a
+          # shallow clone (actions/checkout's default) doesn't carry that object.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Configure git identity (fixtures shell out to real git)
+        run: |
+          git config --global user.email "ci@tron.local"
+          git config --global user.name "tron-ci"
+
+      - name: Install dependencies
+        # No requirements.txt exists in this repo (never needed one — every prior dev
+        # environment had it installed globally). PyYAML is the engine's one third-party
+        # import (util.py); everything else it imports is stdlib or a local module.
+        run: pip install pyyaml
+
+      - name: Stub the `claude` runtime (judge.py's TRON_RUNTIME, no CLI on this runner)
+        # judge.py's judgment-tool tests (eventlog_complete_test.py's t_model_call) stub
+        # the CLASSIFIER OUTPUT via TRON_JUDGE_STUB, but every dev machine this suite was
+        # ever written against had the real `claude` CLI on PATH as a fallback if a stub
+        # path is ever missed — a bare CI runner doesn't, and a genuinely-missed stub then
+        # raises FileNotFoundError instead of degrading to an ordinary invalid-output
+        # retry/exhaustion (the shape the suite already handles). A no-op stand-in closes
+        # that gap without touching test logic.
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/claude" <<'SCRIPT'
+          #!/usr/bin/env bash
+          exit 1
+          SCRIPT
+          chmod +x "$HOME/.local/bin/claude"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run the full engine test suite
+        run: |
+          set -euo pipefail
+          cd engine
+          fail=0
+          for f in block_*_test.py e2e_test.py eventlog_test.py eventlog_complete_test.py \
+                   git_test.py m_06_test.py mg_01_test.py prompts_test.py \
+                   replay_lock_test.py runtime_rewire_test.py sentry_test.py \
+                   tron07_test.py tron13_test.py wake_test.py; do
+            echo "::group::$f"
+            if ! python3 "$f"; then
+              echo "FAILED: $f"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: Blueprint + content-integrity lint (includes L26, ADR-0002 D5)
+        run: ./lint.sh
+
+      - name: Content-field lint — RED on fixture / GREEN on tree (AC-6 proof)
+        run: python3 .github/scripts/content_field_lint_check.py

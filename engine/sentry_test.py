@@ -242,9 +242,15 @@ def t_correlation():
                            "session_id": "dry", "status": "working"})
     eng._h_escalate({"block": "A-01", "worker_id": "ENG-A-01", "detail": "stuck"})
     cases = list(eng.st.pending_cases)
+    # 01-31 (ADR-0002 D3): architect-first is now universal — with no architect online
+    # (this fixture's shape), the wall pages via _triage_to_architect's no-architect
+    # fallback (escalate.unclassified), never the pre-01-31 direct escalate.wall
+    # ("Above my pay grade"). The correlation id must still ride the page text — the
+    # fallback inlines it as `[{case}] ...` since escalate.unclassified carries no
+    # `case` slot of its own.
     ok("AC-5 escalation stamps a correlation id",
        len(cases) == 1 and "A-01" in eng.st.blocked
-       and any("[" in t and "Above my pay grade" in t for t in events(ctx)))
+       and any(f"[{cases[0]}]" in t for t in events(ctx)))
     case_id = cases[0]
     eng._h_apply_decision({"case": case_id, "decision": "resume"})
     ok("AC-5 reply settles the case by id in one tick",
