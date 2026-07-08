@@ -315,6 +315,8 @@ class Engine:
         if self.ended:                                   # refresh hit the trunk-fail death-cap -> halted loud (T6)
             self.st.save()
             return self.ended
+        self._check_root_detached()   # T2 (01-32, ADR-0002 D1): detected within one tick (AC-6)
+        self._check_carve_bootstrap()  # T2 (01-32, ADR-0002 D1): scratch-carve observed within N ticks
         self._flush_pending_sends()   # T1 (01-31): retry any mailbox write that failed last tick
         # Per-tick forensic record (01-09): run · tick_seq · trigger_source · trunk_sha ·
         # snapshot_hash · ts. Emitted after refresh so trunk + snapshot are the ones this tick
@@ -378,7 +380,10 @@ class Engine:
                                    remote=self.paths.get("remote"))   # F1: thread the remote (absent/none -> local mode)
         if ok:
             self.st.counters["refresh_fail"] = 0
-            self._trunk_sha = trunk.head_sha(self.paths["root"], self.dry)  # pin the tree we're reading
+            # T2 (01-32, ADR-0002 D1): truth_sha, never head_sha — a detached (or
+            # stale-attached remote-mode) root's literal HEAD no longer tracks trunk's
+            # position once the branch advances by ref alone (update-ref CAS, no checkout).
+            self._trunk_sha = trunk.truth_sha(self.paths["root"], self._truth_ref(), self.dry)
         else:
             # Fail LOUD, never silent (T6/S1-10): a swallowed ff-failure leaves a stale snapshot
             # -> duplicate dispatch. Count consecutive failures; bootup (count=False) has no
@@ -772,6 +777,10 @@ class Engine:
         # between spawn and assign survives — the pending assignment persists in the MANIFEST.
         w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
+             # T2 (01-32, ADR-0002 D1): the scratch-carve observation budget — the worker's
+             # first ritual act (carve its own worktree+branch) is checked every tick
+             # (_check_carve_bootstrap) until it's observed or this deadline passes.
+             "_carve_deadline_tick": self._tick_no() + int(self.knobs.get("carve_observe_ticks", 5)),
              "pending_assign": {"kind": "engineer", "block": block,
                                 "assignment": self._engineer_assignment(block)}}
         self._reserve(w)                               # durable intent before spawn
@@ -806,6 +815,7 @@ class Engine:
         wid = self._worker_id("engineer", block)
         w = {"id": wid, "role": "engineer", "session_id": "", "shortid": "",
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
+             "_carve_deadline_tick": self._tick_no() + int(self.knobs.get("carve_observe_ticks", 5)),
              "pending_assign": {"kind": "engineer", "block": block,
                                 "assignment": self._engineer_assignment(block)}}
         self._reserve(w)
@@ -868,11 +878,19 @@ class Engine:
             # turn 1: the persona/onboarding, via the mailbox — through emit() (S-4/W4:
             # every worker send goes through the one slot-injecting sender).
             self.emit(template_id, slots, worker_id=wid)
+            # T2 (01-32, ADR-0002 D1): spawn cwd is the worker's OWN TRON-owned scratch dir
+            # (`meta/agents/tron/scratch/<wid>/`), never the shared project root — under
+            # folder-absolute, TRON cannot clean residue outside its own folder, so every
+            # bootstrap failure mode must land somewhere TRON may sweep. The worker's FIRST
+            # ritual act is carving its own worktree (into that scratch dir) + branch;
+            # `_check_carve_bootstrap` observes the carve within `carve_observe_ticks`.
+            scratch = self.ctx.worker_scratch_dir(wid)
+            os.makedirs(scratch, exist_ok=True)
             # 01-21 T1 (per-role since 01-30 T2): the worker model is a declared,
             # project-configured input — read from knobs.yaml (never the host CLI's own
             # ambient default) and threaded explicitly, resolved for THIS spawn's role.
             # jobs.spawn_runner fails closed if this resolves to nothing.
-            jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=self.paths["root"],
+            jobs.spawn_runner(wid, self.ctx.worker_dir(wid), session_id, cwd=scratch,
                               model=self._model_for_role(role))
         except Exception as e:
             self.events.failure(                          # forensic record (AC-2/AC-6)
@@ -949,7 +967,7 @@ class Engine:
         """The reviewer's work string (T6): the commit range SINCE this type's last review, never
         a block count — so nothing slips between reviews. Read the old marker, compose the range to
         the current trunk HEAD, then reset the marker to HEAD (the reset-on-dispatch)."""
-        head = trunk.head_sha(self.paths["root"], self.dry) or ""
+        head = trunk.truth_sha(self.paths["root"], self._truth_ref(), self.dry) or ""
         prev = self.st.review_markers.get(typ)
         self.st.review_markers[typ] = head           # reset on dispatch
         if prev and head and prev != head:
@@ -1763,7 +1781,8 @@ class Engine:
             status, vdetail = trunk.validate_trunk(
                 self.paths["root"], g.get("merged_sha"),
                 self.paths.get("test_command"), self.paths.get("test_env"),
-                self.paths.get("ci_check_name"), self.dry)
+                self.paths.get("ci_check_name"), self.dry,
+                scratch_root=self.ctx.scratch_dir)
             if status == "pass":
                 stage, msg = "record", "gate.record"
                 g.pop("validation_unconfirmed", None)
@@ -1801,7 +1820,7 @@ class Engine:
                           f"(revert + reopen?)")
             elif g.get("merged_sha") and not trunk.is_ancestor(
                     self.paths["root"], g["merged_sha"],
-                    self.paths.get("main_branch", "main"), self.dry):
+                    self._truth_ref(), self.dry):
                 contra = (f"merged sha {str(g['merged_sha'])[:7]} no longer in trunk "
                           f"history (force-push or reset?)")
             if contra:
@@ -1830,7 +1849,7 @@ class Engine:
                 # the block's branch already reached trunk with no PR for the gate to have
                 # seen (an out-of-gate merge) — never silently accept it.
                 if trunk.branch_merged(self.paths["root"], branch,
-                                       self.paths.get("main_branch", "main"), self.dry):
+                                       self._truth_ref(), self.dry):
                     # T1 (D-15-1): a block whose own ordered merge is IN FLIGHT is exempt —
                     # merge_in_flight is true only while approved_merge/self_merge holds
                     # (set at approval, cleared the moment it lands or the grant is voided),
@@ -1907,7 +1926,7 @@ class Engine:
                                     and cur_tip != g.get("case_tip")):
                                 if g.get("merge_in_flight") and trunk.patch_id_matches(
                                         self.paths["root"], g["case_tip"], cur_tip,
-                                        self.paths.get("main_branch", "main"), self.dry):
+                                        self._truth_ref(), self.dry):
                                     self.log("flow", f"gate[{block}] approved tip "
                                                      f"{str(g.get('case_tip'))[:7]} moved to "
                                                      f"{cur_tip[:7]} -> patch-id match, grant carries")
@@ -1929,7 +1948,8 @@ class Engine:
                             # run_block_tests seam).
                             ok, err = trunk.merge_ff_only(
                                 self.paths["root"], branch,
-                                self.paths.get("main_branch", "main"), self.dry)
+                                self.paths.get("main_branch", "main"), self.dry,
+                                require_detached=self._local_mode())
                             if ok:
                                 # A-5: anchor the held-stage predicate to the EXACT sha this
                                 # merge landed — paperwork commits after this never touch it.
@@ -2059,7 +2079,7 @@ class Engine:
                 detail = f"gate stalled at '{stage}' — worker idle {int(idle_s)}s"
                 if stage == "trunk" and not trunk.branch_merged(
                         self.paths["root"], branch,
-                        self.paths.get("main_branch", "main"), self.dry):
+                        self._truth_ref(), self.dry):
                     # R-3: a contradicted predicate is a trunk regression, not a stall.
                     detail += ("; predicate contradiction: the block branch is no longer "
                                "on trunk (revert or force-push?)")
@@ -2142,7 +2162,7 @@ class Engine:
             return None                      # paperwork-only descendant -> the paperwork lane owns it
         if g.get("approved_merge") and g.get("case_tip") and cur_tip != g.get("case_tip"):
             if trunk.patch_id_matches(self.paths["root"], g["case_tip"], cur_tip,
-                                      self.paths.get("main_branch", "main"), self.dry):
+                                      self._truth_ref(), self.dry):
                 self.log("flow", f"gate[{block}] record-redrive: approved tip "
                                  f"{str(g.get('case_tip'))[:7]} moved to {cur_tip[:7]} -> "
                                  f"patch-id match, grant carries")
@@ -2158,7 +2178,8 @@ class Engine:
         if self._merge_gated(block, g, wid):
             return "gated"
         ok, err = trunk.merge_ff_only(self.paths["root"], branch,
-                                      self.paths.get("main_branch", "main"), self.dry)
+                                      self.paths.get("main_branch", "main"), self.dry,
+                                      require_detached=self._local_mode())
         if not ok:
             self.log("flow", f"gate[{block}] record-redrive non-ff: {err.strip()}")
             return None
@@ -2178,6 +2199,95 @@ class Engine:
     def _local_mode(self):
         """No remote declared -> the root checkout IS the authority (local mode, #89)."""
         return not self.paths.get("remote") or self.paths.get("remote") == "none"
+
+    def _truth_ref(self):
+        """T2 (01-32, ADR-0002 D1): the mode's TRUTH REF — every read that used to key off
+        the literal `main_branch` name (ancestry, snapshot sha source, patch-id/re-pin
+        checks, job-correlation touches-path) re-keys HERE. Remote mode: `origin/<main>`
+        post-fetch (the local `<main>` ref is never advanced by `refresh()` any more — its
+        old ff-advance is deleted, so reading the bare local name would go stale forever).
+        Local mode: `<main>` itself, read in place (the root stays detached — Decision 1 —
+        so the branch ref is the live truth with no working-tree race). The local-mode-only
+        WRITE targets (`merge_ff_only`/`land_docs`/`land_ordered_merge` — the transitional
+        engine-owned landing acts) still pass the literal `main_branch` name, never this:
+        they're always the local branch being advanced, and in local mode that IS the
+        truth ref anyway."""
+        main = self.paths.get("main_branch", "main")
+        return main if self._local_mode() else f"origin/{main}"
+
+    def _tick_no(self):
+        return int((self.st.data.get("last_sweep") or {}).get("sweeps_this_session", 0))
+
+    def _check_root_detached(self):
+        """T2 (01-32, ADR-0002 D1 detection arm): local-mode roots must stay DETACHED
+        (never on `<main>`) — `merge_ff_only`'s own `require_detached` refusal is the
+        structural backstop (a write-time gate), but Decision 1 also asks for an ACTIVE
+        per-tick READ so a re-attach is caught and routed to the architect even on a tick
+        that never attempts a landing at all: "the engine therefore verifies root HEAD is
+        detached every tick." Remote-mode roots are never required to detach (Decision 1
+        scopes the cost to local no-remote mode only) — this is a no-op there.
+
+        Reuses the EXISTING case machinery, never a new mechanism (per the block's own
+        instruction): a synthetic pseudo-block id ('root-reattach') rides the same
+        `wall:raised:<block>` trigger every other violation uses, which gives it — for
+        free — `_h_escalate`'s idempotent dedupe (`block in self.st.blocked`) and
+        architect-first routing (ADR-0002 D3/01-31). When detachment is restored, this
+        closes the case itself (`_close_case` — worker_id is None here, so the release
+        half is a safe no-op) and un-blocks — the F-1 self-healing spirit, since there is
+        no real gate/block to observe a ✅ on for this condition."""
+        if self.dry or not self._local_mode():
+            return
+        attached = not trunk.root_head_detached(self.paths["root"], self.dry)
+        pseudo = "root-reattach"
+        if attached:
+            if pseudo in self.st.blocked:
+                return                          # already an open case — idempotent, no dup
+            self._emit("wall:raised:" + pseudo,
+                      {"block": pseudo, "worker_id": None,
+                       "detail": "the project root is checked out on a branch again — "
+                                 "ADR-0002 D1 violation (the local-mode root must stay "
+                                 "detached so the trunk ref can advance by update-ref CAS "
+                                 "with no working-tree race); landing holds until "
+                                 "detachment is restored"})
+        elif pseudo in self.st.blocked:
+            case = next((c for c in self.st.pending_cases.values()
+                        if c.get("block") == pseudo and c.get("decision") is None), None)
+            if case is not None:
+                cid = next(cid for cid, c in self.st.pending_cases.items() if c is case)
+                self._close_case(cid, case)
+            self.st.blocked.remove(pseudo)
+            self.log("flow", "root-reattach violation cleared — detachment restored, hold released")
+
+    def _check_carve_bootstrap(self):
+        """T2 (01-32, ADR-0002 D1): the worker's first ritual act after spawning into its
+        own scratch dir is carving its OWN worktree + branch — TRON verifies by
+        OBSERVATION (never a checkout it performs itself; folder-absolute forbids TRON
+        writing the shared project checkout). Observed within `carve_observe_ticks` ticks
+        of dispatch (default 5) via the existing git-only signal (`branch_exists` on the
+        block's branch convention) — a carve failure is a bootstrap wall, routed through
+        the SAME architect-first case machinery as every other violation (never a new
+        mechanism, never an engine-side substitute carve)."""
+        if self.dry:
+            return
+        now = self._tick_no()
+        for w in list(self.st.workers):
+            if (w.get("role") != "engineer" or "_carve_deadline_tick" not in w
+                    or w.get("status") == "released"):
+                continue
+            block = w.get("block")
+            branch = self._block_branch(block) if block else None
+            if branch and trunk.branch_exists(self.paths["root"], branch, self.dry):
+                w.pop("_carve_deadline_tick", None)     # carved -> satisfied, stop checking
+                continue
+            if now >= w["_carve_deadline_tick"] and not w.get("_carve_walled"):
+                w["_carve_walled"] = True
+                budget = int(self.knobs.get("carve_observe_ticks", 5))
+                self._emit("wall:raised:" + block,
+                          {"block": block, "worker_id": w.get("id"),
+                           "detail": f"{w.get('id')} did not carve its own worktree+branch "
+                                     f"within {budget} ticks of spawn (ADR-0002 D1 "
+                                     f"scratch-dir bootstrap) — bootstrap failure, never "
+                                     f"an engine-side substitute carve"})
 
     def _record_path(self):
         """The {record_path} slot of PMT-DONE-RECORD (01-11 FX-3, operator decision: PR for
@@ -2331,7 +2441,7 @@ class Engine:
         if not g.get("block_checked"):
             okb, bdetail = trunk.block_invariant_ok(
                 self.paths["root"], self._block_branch(block), g.get("merged_sha"),
-                self.paths.get("main_branch", "main"), self.dry)
+                self._truth_ref(), self.dry)
             if not okb:
                 self._gate_giveup(block, g, wid,
                                   f"block invariant violated: {bdetail}",
@@ -2465,10 +2575,11 @@ class Engine:
                 job and job.get("kind") in ("forward", "reconcile") and job.get("block")
                 and trunk.branch_touches_path(
                     self.paths["root"], branch, self._block_relpath(job["block"]),
-                    self.paths.get("main_branch", "main"), self.dry))
+                    self._truth_ref(), self.dry))
             code, detail = trunk.land_docs(self.paths["root"], branch, allow,
                                            self.paths.get("main_branch", "main"),
-                                           self.dry, denylist=deny, line_scoped=scoped)
+                                           self.dry, denylist=deny, line_scoped=scoped,
+                                           require_detached=self._local_mode())
             if code in ("landed", "none"):
                 fifo.pop(0)
                 if code == "landed":
@@ -2630,7 +2741,8 @@ class Engine:
         allow, deny, scoped = self._paperwork_rules("engineer", block)
         code, ldetail = trunk.land_docs(self.paths["root"], branch, allow,
                                         self.paths.get("main_branch", "main"), self.dry,
-                                        denylist=deny, line_scoped=scoped)
+                                        denylist=deny, line_scoped=scoped,
+                                        require_detached=self._local_mode())
         if code == "landed":
             self.events.event("docs_landed", actor=wid, block=block,
                               **{"role": "engineer", "branch": branch,
@@ -2724,7 +2836,7 @@ class Engine:
         pinned = g.get("violation_tip")
         cur = trunk.tip_sha(self.paths["root"], branch, self.dry) if branch else ""
         if pinned and cur and cur != pinned and not trunk.patch_id_matches(
-                self.paths["root"], pinned, cur, self.paths.get("main_branch", "main"), self.dry):
+                self.paths["root"], pinned, cur, self._truth_ref(), self.dry):
             g["violation_tip"] = cur          # A-3 rider 2: re-pin, never land a tip unseen
             self.log("flow", f"gate[{block}] violation-approve re-pinned: {branch} moved "
                              f"{str(pinned)[:7]} -> {cur[:7]} with a divergent diff")
@@ -2734,7 +2846,8 @@ class Engine:
                                 "gate.changes")
             return False
         okm, detail = trunk.land_ordered_merge(self.paths["root"], branch,
-                                               self.paths.get("main_branch", "main"), self.dry)
+                                               self.paths.get("main_branch", "main"), self.dry,
+                                               require_detached=self._local_mode())
         if not okm:
             self.log("flow", f"gate[{block}] violation-approve failed: {detail}")
             if wid and not self.dry:

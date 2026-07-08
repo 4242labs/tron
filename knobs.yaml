@@ -73,6 +73,13 @@ knobs:
   # left unread this many MINUTES, it escalates to exactly ONE ordinary case — never left
   # to poll forever, never spamming beyond the one case (fsm._sweep_abandon_flags).
   abandon_flag_window: 60
+  # Scratch-carve observation budget (ADR-0002 D1, 01-32 T2): a worker spawns into its
+  # OWN TRON-owned scratch dir (`meta/agents/tron/scratch/<wid>/`) and its first ritual
+  # act is carving its own worktree + branch there — TRON verifies by OBSERVATION
+  # (never a checkout it performs itself). Ticks of budget from dispatch before a
+  # not-yet-carved engineer becomes a bootstrap wall (architect-first, same case
+  # machinery as every other violation). Default 5.
+  carve_observe_ticks: 5
 
 # ── Reviewer cadence (PULL): <type> -> blocks between reviews ──
 # Per-type counter +1 on every block:next:done; due at threshold; reset on dispatch.

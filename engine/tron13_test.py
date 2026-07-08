@@ -419,8 +419,11 @@ def t_lander_lands_paperwork():
     code, detail = trunk.land_docs(d, "docs/close", ALLOW, "main", False, denylist=DENY)
     ok("D1 paperwork-only branch lands", code == "landed", f"{code}: {detail}")
     ok("D1 landed branch is deleted", not trunk.branch_exists(d, "docs/close"))
+    # T2 (01-32, ADR-0002 D1): merge_ff_only advances trunk by `update-ref` CAS, never a
+    # checkout — the root's WORKING TREE no longer reflects the new tip (by design; the
+    # working tree is never authoritative). Verify the committed ref content instead.
     ok("D1 paperwork is on trunk",
-       os.path.exists(os.path.join(d, "meta", "logs", "log-1.md")))
+       _git(d, "show", "main:meta/logs/log-1.md")[0] == 0)
 
 
 def t_lander_code_violation():
@@ -462,8 +465,10 @@ def t_lander_own_block_exceptions():
                                    line_scoped={"meta/pipeline.md": "A-01"})
     ok("D1 own-block archival + Completed + own pipeline line lands",
        code == "landed", f"{code}: {detail}")
+    # T2 (01-32, ADR-0002 D1): same rekey — check the committed ref, not the (unmoved,
+    # by design) working tree.
     ok("D1 archive move is on trunk",
-       os.path.exists(os.path.join(d, "meta", "blocks", "archive", "A-01.md")))
+       _git(d, "show", "main:meta/blocks/archive/A-01.md")[0] == 0)
 
 
 def t_lander_foreign_pipeline_line():

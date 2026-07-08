@@ -247,12 +247,14 @@ def t_empty_trunk_read_never_regresses_gate_state():
     eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
     eng.st.row("A-01")["status"] = "done"      # the gate's own view — done + at close
     before = len(_events(eng))
-    orig_head_sha = trunk.head_sha
-    trunk.head_sha = lambda *a, **k: ""
+    # T2 (01-32, ADR-0002 D1): _refresh_from_trunk reads trunk.truth_sha, never
+    # trunk.head_sha — stub the seam the engine actually calls.
+    orig_truth_sha = trunk.truth_sha
+    trunk.truth_sha = lambda *a, **k: ""
     try:
         eng.tick()
     finally:
-        trunk.head_sha = orig_head_sha
+        trunk.truth_sha = orig_truth_sha
     ok("T3 a blank trunk sha is flagged a fault for this tick",
        eng._trunk_fault is True)
     ok("T3 the gate never regresses off a blank view",
@@ -268,12 +270,12 @@ def t_empty_trunk_read_recovers_next_good_tick():
     eng = Engine(ctx); started(eng)
     eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
     eng.st.row("A-01")["status"] = "done"
-    orig_head_sha = trunk.head_sha
-    trunk.head_sha = lambda *a, **k: ""
+    orig_truth_sha = trunk.truth_sha
+    trunk.truth_sha = lambda *a, **k: ""
     try:
         eng.tick()
     finally:
-        trunk.head_sha = orig_head_sha
+        trunk.truth_sha = orig_truth_sha
     ok("setup: the fault tick left the fault flag set", eng._trunk_fault is True)
     eng.tick()          # a normal tick with a real trunk read
     ok("T3 the very next good-read tick clears the fault",

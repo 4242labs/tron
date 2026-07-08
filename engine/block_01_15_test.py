@@ -336,6 +336,11 @@ def t_violation_wall_approve_lands_the_range():
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "oops, real code on the close branch")
     _git(d, "checkout", "-q", "main")
+    # T2 (01-32, ADR-0002 D1): local-mode landing now requires the root DETACHED — the
+    # engine's own `_land_violation_range` -> `land_ordered_merge` passes
+    # `require_detached=True` in local mode (no remote configured here), matching the
+    # new seat-time convention (the root never sits on `<main>`).
+    _git(d, "checkout", "-q", "--detach", "HEAD")
 
     eng, g = _eng_with_gate(stage="close")
     eng.dry = False                                    # real land_docs/merge_ff_only run

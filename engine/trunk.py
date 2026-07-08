@@ -10,8 +10,24 @@ what a worker's PR-merge would do in remote mode. Even there it never writes can
 CONTENT — no pipeline/block authoring, no commit body it composed itself — and it
 NEVER blocks the loop on the network: a failed fetch reuses the last good snapshot.
 
-The repo root itself is the trunk checkout — agents build in worktrees off it
-(`<workspace>/worktrees/<repo>--<branch>/`), so the root stays on the trunk branch.
+T2 (01-32, ADR-0002 D1): this module IS the single git wrapper — every engine git
+invocation, engine-wide, funnels through `_run` below (grepped clean: no other engine
+file shells out to `git`). `_run` now keeps an in-process AUDIT TRAIL of every
+invocation (argv, at minimum) so a test can assert the write-boundary directly
+(AC-1's "wrapper audit", AC-9/P3 evidence) — `audit_log()`/`reset_audit()`. Sealing the
+subcommand ALLOWLIST itself (reads + fetch + scratch-scoped `worktree add
+--detach|remove`, nothing else) is 01-32 T3's job (deleting the remaining mutation
+arms); this wrapper is the seam T3 seals.
+
+Root checkout / truth ref (ADR-0002 D1): local no-remote mode keeps the root checkout
+DETACHED at seat (never on `<main>`) — the branch ref advances by `update-ref` CAS
+alone (`merge_ff_only`, below), never a checkout, so a bare `git rev-parse HEAD` no
+longer tracks trunk's position. Every read that used to key off `HEAD` or a literal
+branch NAME now keys off the mode's TRUTH REF (`truth_sha`, `root_head_detached`) —
+remote mode: `refs/remotes/origin/<main>` post-fetch; local mode: `refs/heads/<main>`
+in place. `refresh()`'s old local ff-ADVANCE (a working-tree write) is deleted outright
+— every read is committed-tree-keyed (git archive / rev-parse), never dependent on
+what the working tree happens to hold.
 """
 import os
 import json
@@ -23,24 +39,57 @@ import tempfile
 _TIMEOUT = 20
 _TEST_TIMEOUT = 300     # T2 (01-28): a real declared suite gets real headroom, unlike plumbing calls
 
+# ── the wrapper's audit trail (T2, 01-32): every git invocation this module ever makes,
+# in order — module-level so a test can assert the write-boundary against the WHOLE
+# session, not just one call's return value. Never touched by engine logic itself, only
+# by _run (append) and the two test-facing accessors below (read/reset). ──
+_AUDIT = []
+
+
+def audit_log():
+    """A COPY of every git invocation recorded so far — [(argv, rc), ...]. Read-only:
+    mutate the return value all you like, the live trail is untouched."""
+    return list(_AUDIT)
+
+
+def reset_audit():
+    """Test-only: clear the trail (each test fixture starts from a clean slate)."""
+    _AUDIT.clear()
+
 
 def _run(args, cwd=None, timeout=_TIMEOUT):
+    """THE wrapper (T2, 01-32, ADR-0002 D1): every engine git call is a `git` argv through
+    HERE — the single seam the write-boundary audit reads. Records the invocation before
+    returning (success or failure alike — a refused/failed call is still evidence of what
+    was ATTEMPTED, never dropped from the trail)."""
     try:
         r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        _AUDIT.append((list(args), r.returncode))
         return r.returncode, r.stdout, r.stderr
     except (subprocess.SubprocessError, OSError) as e:
+        _AUDIT.append((list(args), 1))
         return 1, "", str(e)
 
 
 def refresh(repo_root, main_branch="main", dry=False, remote=None):
-    """Fast-forward the trunk checkout to origin. Best-effort: never raises, never
-    blocks the loop. Returns (ok, detail). On failure the caller reuses the last
-    snapshot (the files already on disk).
+    """Bring the trunk READ up to date. Best-effort: never raises, never blocks the loop.
+    Returns (ok, detail). On failure the caller reuses the last snapshot (the files
+    already on disk).
 
-    Local / no-remote mode: when the project declares no remote (`repo.remote`
-    absent or `none`), the root IS the authority — there is nothing to fetch, so we
-    read HEAD in place (mirrors the `not repo_root` branch) instead of treating the
-    missing remote as a boot-fatal fetch failure. The remote path is unchanged."""
+    Local / no-remote mode: when the project declares no remote (`repo.remote` absent or
+    `none`), the root IS the authority — there is nothing to fetch, so we read the local
+    `<main>` ref in place instead of treating the missing remote as a boot-fatal fetch
+    failure.
+
+    T2 (01-32, ADR-0002 D1): the remote-mode local FF-ADVANCE this used to perform
+    (`git merge --ff-only origin/<main>` against the checked-out root) is DELETED, not
+    patched — it was a working-tree WRITE the engine had no business making (P3), and it
+    is no longer needed: `fetch` alone deposits `refs/remotes/origin/<main>`, and every
+    read keys to THAT truth ref directly (`truth_sha`, ancestry, snapshot source) rather
+    than to a local branch this function used to keep in sync. The root's own checkout
+    state (attached/detached, whatever branch it happens to be on) is now irrelevant to
+    what the engine reads — fetch is the only write left here, exactly one of the two
+    named exceptions to the write boundary."""
     if dry or not repo_root:
         return True, "dry/none — read in place"
     if not remote or remote == "none":
@@ -48,21 +97,48 @@ def refresh(repo_root, main_branch="main", dry=False, remote=None):
     rc, _, err = _run(["git", "-C", repo_root, "fetch", "origin", main_branch])
     if rc != 0:
         return False, f"fetch failed: {err.strip()[:120]}"
-    # Only ff — never merge/rebase; the root must stay clean on trunk.
-    rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only",
-                       f"origin/{main_branch}"])
-    if rc != 0:
-        return False, f"ff failed: {err.strip()[:120]}"
-    return True, "ff to origin"
+    return True, "fetched — reads key to origin/<main> (no local ff-advance, ADR-0002 D1)"
 
 
 def head_sha(repo_root, dry=False):
-    """The trunk checkout's current HEAD sha (short) — stamped on every forensic record so a
-    failure pins the exact tree it happened on. Best-effort: '' if unknown (never blocks)."""
+    """The trunk checkout's literal `HEAD` sha (short). RETAINED for callers that
+    genuinely want the working tree's own position (there are none left in the engine —
+    grepped clean); every trunk-position read the engine itself performs now goes through
+    `truth_sha` instead (below), since a detached local-mode root's HEAD no longer moves
+    when the branch ref advances by `update-ref` CAS alone. Best-effort: '' if unknown."""
     if dry or not repo_root:
         return "dry" if dry else ""
     rc, out, _ = _run(["git", "-C", repo_root, "rev-parse", "--short", "HEAD"])
     return out.strip() if rc == 0 else ""
+
+
+def truth_sha(repo_root, ref, dry=False):
+    """T2 (01-32, ADR-0002 D1): the mode's TRUTH REF's current sha (short) — the
+    snapshot-sha source every per-tick read pins to. Callers resolve `ref` themselves
+    (remote mode: `origin/<main>` post-fetch; local mode: `<main>` in place) — this is a
+    plain, mode-agnostic `rev-parse`, never `HEAD` (a detached or stale-attached root's
+    HEAD tracks nothing once the branch advances by ref alone). '' on any unresolvable
+    ref (never blocks the loop)."""
+    if dry or not repo_root or not ref:
+        return "dry" if dry else ""
+    rc, out, _ = _run(["git", "-C", repo_root, "rev-parse", "--short", ref])
+    return out.strip() if rc == 0 else ""
+
+
+def root_head_detached(repo_root, dry=False):
+    """T2 (01-32, ADR-0002 D1 detection arm): True iff the root checkout's HEAD is
+    DETACHED (not on any branch) — `git symbolic-ref -q HEAD` fails exactly when
+    detached. Local no-remote mode requires this permanently true (the root never sits
+    on `<main>`, so the branch ref is free to advance by `update-ref` CAS with no
+    working-tree race); a worker re-attaching it (`git checkout <main>` there) is the
+    violation this verifies every tick, real-git, never inferred. dry / no repo_root ->
+    True (nothing to violate; consistent with every other best-effort read here — a
+    caller gating on this must still condition on being in local mode first, since
+    remote-mode roots are never required to detach at all)."""
+    if dry or not repo_root:
+        return True
+    rc, _, _ = _run(["git", "-C", repo_root, "symbolic-ref", "-q", "HEAD"])
+    return rc != 0
 
 
 def open_prs(repo_root, dry=False):
@@ -197,71 +273,100 @@ def remove_worktree_for_branch(repo_root, branch, dry=False):
         _run(["git", "-C", repo_root, "worktree", "remove", path])
 
 
-def merge_ff_only(repo_root, branch, main_branch="main", dry=False):
-    """Fast-forward trunk to an already-validated block branch — the local/no-remote merge.
-    The engine owns the trunk merge transitionally (ADR-0002 D1/D2, 01-32 T1): with no
-    remote there is no PR to land, so the engine advances trunk itself, but ONLY as a
-    fast-forward — never a merge commit, never a force, and — as of 01-32 T1 — never a
-    rebase either.
+def _delete_landed_branch(repo_root, branch, main_branch, dry=False):
+    """T2 (01-32, ADR-0002 D1): every post-land branch cleanup used to be a plain
+    `git branch -d <branch>` — safe because the OLD checkout-based `merge_ff_only` left
+    HEAD sitting exactly on the new tip, so git's own "-d refuses an unmerged branch"
+    check (which compares against HEAD) always passed for a branch that had in fact just
+    landed. Now that the root stays detached/frozen (no checkout, ever), HEAD no longer
+    reflects the advance — `-d`'s HEAD-relative check would misfire "not fully merged"
+    on a branch that unquestionably IS on trunk. Never blind-force: verify ancestry
+    against the TRUNK ref ourselves (the same `is_ancestor` predicate the whole ratchet
+    already trusts) and only then use `-D` (force) — a branch we've just independently
+    proven is fully contained in trunk can't lose anything by deleting its name. Anything
+    that DOESN'T verify falls back to the safe `-d` (git's own refusal names the reason).
+    Returns (rc, err)."""
+    tip = tip_sha(repo_root, branch, dry)
+    verb = "-D" if tip and is_ancestor(repo_root, tip, main_branch, dry) else "-d"
+    rc, _, err = _run(["git", "-C", repo_root, "branch", verb, branch])
+    return rc, err
 
-    ADR-0002 Decision 1 (01-32 T1): the 01-17 rebase-retry arm that used to live HERE
-    (on a first ff-refusal, silently `git rebase <branch> onto <trunk>` and retry) is
-    RETIRED — a git rebase is a write TRON performs on the worker's own branch content,
-    exactly the class of act the strict/folder-absolute write boundary forbids (P3): TRON
-    may verify, never resolve. Retiring it is also the structural fix for the wave-1b
-    stale-branch pipeline clobber (AC-2, `clobber_dead`) — every rebase, including a
-    conflict-free one, is now the WORKER's ritual act (its DONE-flow rebase-before-close
-    step, engine-observed, never silently substituted by an engine-side auto-rebase whose
-    resolution nobody reviewed). A first ff-refusal now returns the plain non-ff detail,
-    unconditionally — the caller (fsm._drive_gate) already routes this to the worker's own
-    rebase order (`_rebase_line`) and re-attempts only once the worker reports back with
-    fresh evidence (a fresh `on_report`, never a bare idle tick) that it rebased AND
-    re-validated. Historical note: this collapses the two outcomes 01-17 T1 used to name
-    ("first-refusal auto-rebase-and-land" vs. "conflicted rebase still walls") into one —
-    every non-ff refusal, conflict or not, is now the worker's rebase to perform.
+
+def merge_ff_only(repo_root, branch, main_branch="main", dry=False, require_detached=False):
+    """Fast-forward trunk to an already-validated block branch — the local/no-remote merge.
+    The engine owns the trunk merge transitionally (ADR-0002 D1/D2, 01-32 T1/T2), but ONLY
+    as a fast-forward — never a merge commit, never a force, never a rebase (01-32 T1: the
+    01-17 rebase-retry arm is retired — see the block-01-32 spec/history for that story;
+    every non-ff refusal is the WORKER's rebase to perform, engine-observed, never
+    engine-substituted).
+
+    T2 (01-32, ADR-0002 D1): this NO LONGER checks out the root. The prior implementation
+    `git checkout`'d the root onto `main_branch` before merging — exactly the hazard
+    ADR-0002 Decision 1 names ("today's merge_ff_only re-attaches the root at
+    trunk.py:227"), and the thing that made keeping the root permanently detached (Decision
+    1's local-mode fix) impossible. The advance is now a pure ref move: read the branch's
+    own current tip as the CAS's expected old value, verify a real fast-forward
+    (`is_ancestor`), then `git update-ref refs/heads/<main> <new> <old>` — compare-and-swap,
+    atomic, and it never touches the working tree at all. A concurrent advance (another
+    landing racing this one) makes the CAS fail loudly (a non-ff-shaped error), which the
+    caller already routes to the worker's rebase-retry (AC-5).
+
+    `require_detached` (ADR-0002 D1 structural backstop, AC-6): local-mode callers pass
+    True — `update-ref` against a checked-out ref corrupts tree/index consistency (the
+    ADR's own stated hazard), so this refuses outright if the root is currently attached to
+    a branch, structurally enforcing "landing holds until detachment is restored"
+    independent of whatever the engine's own per-tick observation/case state happens to be.
+    Remote-mode callers pass False (or omit it) — a remote-mode root is never required to
+    detach at all (Decision 1 scopes the detached-root cost to local no-remote mode only),
+    so this stays a no-op there, same as before 01-32.
 
     T5 (01-15, tron-16 boot-1 residue): verifies `main_branch` itself exists BEFORE acting —
-    a missing trunk branch (an env fault) used to fall through the checkout silently (git
-    swallowed as a belt-and-suspenders no-op) and merge the block branch onto whatever HEAD
-    happened to be, action and verification going out of sync. Now a missing trunk branch,
-    or a checkout that fails for any other reason, is an `error`-shaped (ok=False) return —
-    never a silent merge onto HEAD. Returns (ok, err).
-
-    Transitional (01-32 T2 note): this still `git checkout`s the root onto `main_branch`
-    before merging — the checkout-attach hazard ADR-0002 Decision 1 names ("today's
-    merge_ff_only re-attaches the root at trunk.py:227") is T2's read-path refactor to
-    replace with a checkout-free `update-ref` CAS advance; out of scope for T1."""
+    a missing trunk branch (an env fault) is an `error`-shaped (ok=False) return, never a
+    silent merge onto the wrong ref. Returns (ok, err)."""
     if dry or not repo_root or not branch:
         return (dry, "")
     if not branch_exists(repo_root, main_branch, dry):
         return False, f"trunk branch '{main_branch}' does not exist"
-    rc, _, err = _run(["git", "-C", repo_root, "checkout", main_branch])
+    if require_detached and not root_head_detached(repo_root, dry):
+        return False, ("root is attached to a branch — write-boundary violation "
+                       "(ADR-0002 D1: the local-mode root must stay detached); "
+                       "refusing to advance trunk until detachment is restored")
+    old = tip_sha(repo_root, main_branch, dry)
+    if not old:
+        return False, f"trunk branch '{main_branch}' has no resolvable tip"
+    new = tip_sha(repo_root, branch, dry)
+    if not new:
+        return False, f"branch '{branch}' has no resolvable tip"
+    if old == new:
+        return True, "already at tip"
+    if not is_ancestor(repo_root, old, branch, dry):
+        return False, "not a fast-forward"
+    rc, _, err = _run(["git", "-C", repo_root, "update-ref",
+                       f"refs/heads/{main_branch}", new, old])
     if rc != 0:
-        return False, f"checkout {main_branch} failed: {err.strip()[:200]}"
-    rc, _, err = _run(["git", "-C", repo_root, "merge", "--ff-only", branch])
-    if rc == 0:
-        return True, err
-    return False, err
+        return False, f"update-ref CAS failed (concurrent advance?): {err.strip()[:200]}"
+    return True, f"ff {old[:7]}..{new[:7]} via update-ref CAS"
 
 
-def land_ordered_merge(repo_root, branch, main_branch="main", dry=False):
+def land_ordered_merge(repo_root, branch, main_branch="main", dry=False, require_detached=False):
     """T6 (01-15): the violation-wall `approve` settle's landing primitive — an EXPLICIT
     operator-ordered merge of the WHOLE named branch (no paperwork allowlist: the operator
     already saw and approved the range naming it a landable fix, tron-16 CASE-003's residue
     — post-close code with no landing path otherwise). Same ff-only discipline as every
     other merge here, then the SAME lander cleanup `land_docs` runs on success (worktree
     gone first, D-15-4, then the branch ref) — one physical landing mechanism, reused, never
-    a second one. Returns (ok, detail)."""
+    a second one. `require_detached` forwards to `merge_ff_only` (01-32 T2, ADR-0002 D1 —
+    the caller passes True in local mode only). Returns (ok, detail)."""
     if dry or not repo_root or not branch or branch == main_branch:
         return False, "dry/none"
     if not branch_exists(repo_root, branch, dry):
         return False, f"no branch {branch}"
-    okm, err = merge_ff_only(repo_root, branch, main_branch, dry)
+    okm, err = merge_ff_only(repo_root, branch, main_branch, dry, require_detached=require_detached)
     if not okm:
         return False, err.strip()
-    sha = head_sha(repo_root)
+    sha = tip_sha(repo_root, main_branch, dry)   # T2 (01-32): the ref, never HEAD (detached root)
     remove_worktree_for_branch(repo_root, branch, dry)       # D-15-4: worktree gone first
-    rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+    rc, derr = _delete_landed_branch(repo_root, branch, main_branch, dry)
     note = f"; ref survives: {derr.strip()}" if rc != 0 else ""
     return True, f"landed @ {sha[:7]}{note}"
 
@@ -386,7 +491,7 @@ def _path_allowed(path, allowlist):
 
 
 def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
-              denylist=None, line_scoped=None):
+              denylist=None, line_scoped=None, require_detached=False):
     """The unified paperwork lander (F-1/S-3+R-6, tron-13 D1): the ENGINE lands every
     role's parked paperwork branch on trunk — content-checked, ff-only, then deletes the
     branch (the engine owns the merge, so it owns the cleanup). The engine NEVER rebases:
@@ -416,7 +521,7 @@ def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
     if not files:
         # Nothing beyond trunk (or already landed): delete the empty branch and be done.
         remove_worktree_for_branch(repo_root, branch, dry)   # D-15-4: worktree gone first
-        rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+        rc, derr = _delete_landed_branch(repo_root, branch, main_branch, dry)
         if rc != 0:
             # W10 rider: a worktree still holding the branch blocks -d — the ref must
             # not vanish from every net; name it (the residue sweep owns worktrees).
@@ -442,12 +547,12 @@ def land_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
     # T5 (01-15): a missing/unresolvable main_branch already surfaces as "error" above
     # (the name-only diff against it fails the same way); merge_ff_only's own fix covers
     # the remaining case (main_branch resolves but the checkout itself fails).
-    okm, err = merge_ff_only(repo_root, branch, main_branch)
+    okm, err = merge_ff_only(repo_root, branch, main_branch, dry, require_detached=require_detached)
     if not okm:
         return "non-ff", err.strip()
-    sha = head_sha(repo_root)
+    sha = tip_sha(repo_root, main_branch, dry)   # T2 (01-32): the ref, never HEAD (detached root)
     remove_worktree_for_branch(repo_root, branch, dry)       # D-15-4: worktree gone first
-    rc, _, derr = _run(["git", "-C", repo_root, "branch", "-d", branch])
+    rc, derr = _delete_landed_branch(repo_root, branch, main_branch, dry)
     note = f"; ref survives: {derr.strip()}" if rc != 0 else ""
     return "landed", f"{len(files)} file(s) @ {sha[:7]}{note}"
 
@@ -538,7 +643,7 @@ def merge_base(repo_root, ref_a, ref_b, dry=False):
 
 
 def validate_trunk(repo_root, merged_sha, test_command, test_env=None,
-                    ci_check_name=None, dry=False):
+                    ci_check_name=None, dry=False, scratch_root=None):
     """Block 01-28 (T1-T4): the trunk-stage TRUSTED-VERDICT model, replacing the old
     post-merge test RE-RUN seam (`run_block_tests`, retired — F-3/wave-1's false-wall
     source: it computed an empty `base..merged_sha` range on a fast-forward landing,
@@ -568,7 +673,15 @@ def validate_trunk(repo_root, merged_sha, test_command, test_env=None,
     Mode selection: `ci_check_name` present -> read CI's verdict for `merged_sha`
     (T4), no engine re-run. Otherwise -> run `test_command` once, in a clean checkout
     (T2). Neither `test_command` nor `ci_check_name` declared -> unconfirmed (never a
-    silent free pass, never a wall)."""
+    silent free pass, never a wall).
+
+    `scratch_root` (01-32 T2, ADR-0002 D1): where the clean validation checkout is
+    carved — Decision 1 names these "the engine's validation checkouts (for the
+    retained declared-command trunk verdict)" as the scratch-worktree-admin exception,
+    scoped to `meta/agents/tron/scratch/`. The caller (fsm.py) passes `ctx.scratch_dir`;
+    None falls back to the system tempdir (pre-01-32 behavior — never a hard
+    requirement, since a project that hasn't seated the scratch convention must still
+    validate)."""
     if dry:
         return "pass", "dry"
     if not repo_root or not merged_sha:
@@ -578,10 +691,10 @@ def validate_trunk(repo_root, merged_sha, test_command, test_env=None,
     if not test_command:
         return ("unconfirmed", "no test.command declared (project.yaml `test:`) — "
                 "cannot confirm what to validate")
-    return _run_declared_command(repo_root, merged_sha, test_command, test_env)
+    return _run_declared_command(repo_root, merged_sha, test_command, test_env, scratch_root)
 
 
-def _run_declared_command(repo_root, sha, command, env=None):
+def _run_declared_command(repo_root, sha, command, env=None, scratch_root=None):
     """T2: the single authoritative run — `command` executed ONCE, in a clean, detached
     `git worktree` at `sha` that the worker never controls (never the worker's own
     worktree, never a say-so). `env` (project.yaml `test.env`, a flat {str: str} dict) is
@@ -595,7 +708,9 @@ def _run_declared_command(repo_root, sha, command, env=None):
     rc, _, _ = _run(["git", "-C", repo_root, "cat-file", "-e", str(sha)])
     if rc != 0:
         return "unconfirmed", f"{str(sha)[:7]}: unresolvable in this checkout — cannot confirm"
-    tmp = tempfile.mkdtemp(prefix="tron-trunkval-")
+    if scratch_root:
+        os.makedirs(scratch_root, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix="tron-trunkval-", dir=scratch_root or None)
     try:
         rc, _, err = _run(["git", "-C", repo_root, "worktree", "add", "--detach", "-q",
                            tmp, str(sha)], timeout=60)

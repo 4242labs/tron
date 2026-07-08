@@ -32,6 +32,9 @@ knobs:                             # REQUIRED
                                    # unread before it escalates to exactly ONE ordinary case (bounded-
                                    # window backstop; the flag itself is delivered on the architect's
                                    # next dispatched touchpoint, whichever comes first). default 60.
+  carve_observe_ticks: 5           # ADR-0002 D1 (01-32 T2): ticks of budget from dispatch before an
+                                   # engineer that hasn't carved its own worktree+branch in its scratch
+                                   # dir becomes a bootstrap wall (architect-first). default 5.
 
 # ── Reviewer cadence (PULL) — <type> -> blocks between reviews ──
 cadence:                           # REQUIRED (may be empty {}). Types are open.
