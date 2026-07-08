@@ -81,8 +81,8 @@ def t_purge_done_gate_confirm_closes_on_evidence():
                            "session_id": "s1", "status": "working"})
     # No real runner-store record exists for ENG-A-01 -> jobs.is_alive reads dead by
     # default (the natural fixture, not a monkeypatch — a fresh test ctx never spawned it).
-    orig_land, orig_clean = trunk.land_docs, trunk.replica_clean
-    trunk.land_docs = lambda *a, **k: ("landed", "0 file(s)")
+    orig_land, orig_clean = trunk.verify_docs, trunk.replica_clean
+    trunk.verify_docs = lambda *a, **k: ("landed", "0 file(s)")
     trunk.replica_clean = lambda *a, **k: (True, "")
     try:
         alive, purged = eng.recover()
@@ -100,7 +100,7 @@ def t_purge_done_gate_confirm_closes_on_evidence():
         ok("T1 no gate-orphaned escalation needed — the evidence was there",
            not any(f.get("code") == "gate-orphaned" for f in _failures(eng)))
     finally:
-        trunk.land_docs, trunk.replica_clean = orig_land, orig_clean
+        trunk.verify_docs, trunk.replica_clean = orig_land, orig_clean
 
 
 def t_purge_not_done_gate_escalates_gate_orphaned():
@@ -142,8 +142,8 @@ def t_resume_missing_worker_confirm_closes_done_gate():
     # exact gap) — simulated directly: the roster entry is simply gone by the time the
     # operator's reply lands.
     eng.st.workers[:] = [w for w in eng.st.workers if w["id"] != "ENG-A-01"]
-    orig_land, orig_clean = trunk.land_docs, trunk.replica_clean
-    trunk.land_docs = lambda *a, **k: ("landed", "0 file(s)")
+    orig_land, orig_clean = trunk.verify_docs, trunk.replica_clean
+    trunk.verify_docs = lambda *a, **k: ("landed", "0 file(s)")
     trunk.replica_clean = lambda *a, **k: (True, "")
     try:
         eng._h_apply_decision({"case": cid, "decision": "resume"})
@@ -152,7 +152,7 @@ def t_resume_missing_worker_confirm_closes_done_gate():
            "A-01" not in eng.st.gate, f"gate={eng.st.gate}")
         ok("T2 the block leaves the blocked/parked set", "A-01" not in eng.st.blocked)
     finally:
-        trunk.land_docs, trunk.replica_clean = orig_land, orig_clean
+        trunk.verify_docs, trunk.replica_clean = orig_land, orig_clean
 
 
 def t_resume_missing_worker_not_done_escalates():
@@ -472,8 +472,8 @@ def t_winddown_stranded_gate_resolves_and_settles():
     eng.dry = False
     ok("setup: the only block is already done", eng.st.row("A-01")["status"] == "done")
     eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})   # workerless from the start
-    orig_land = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: ("non-ff", "trunk moved under the parked paperwork")
+    orig_land = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: ("non-ff", "trunk moved under the parked paperwork")
     clock = {"t": 1000.0}
     eng._now_s = lambda: clock["t"]
     try:
@@ -489,7 +489,7 @@ def t_winddown_stranded_gate_resolves_and_settles():
         ok("T4 wind-down now agrees — nothing left in flight, session settles",
            eng._all_settled())
     finally:
-        trunk.land_docs = orig_land
+        trunk.verify_docs = orig_land
 
 
 def main():

@@ -505,7 +505,11 @@ def t2_a_stage_advance_always_sends():
     eng.dry = False
     wid = "ENG-A-01"
     eng.st.branches["A-01"] = "feat/A-01"
-    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
+    # T3 (01-32, ADR-0002 D2): a grantless already-merged branch is now a bypass
+    # VIOLATION on its own (AC-3) — this test is about _send_gate_order's
+    # composition mechanics, not violation detection, so `approved_merge` marks the
+    # landing as gate-authorized (the exact OR-clause the bypass check exempts).
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None, "approved_merge": True})
     # An undelivered gate.local sits in the mailbox from the current stage…
     eng._send_gate_order("A-01", g, "local", wid, force=True)
     orig, _ = _stub_trunk(merged=True, exists=True, tip="MERGED123")
@@ -527,7 +531,10 @@ def t2_stage_advance_while_walled_no_send_unhold_delivers_new_stage():
     eng = _eng()
     wid = "ENG-A-01"
     eng.st.branches["A-01"] = "feat/A-01"
-    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
+    # T3 (01-32, ADR-0002 D2): see the sibling test above — `approved_merge` marks
+    # this as a gate-authorized landing so the bypass check (AC-3) doesn't fire;
+    # this test is about walled-worker send suppression, not violation detection.
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None, "approved_merge": True})
     _wall(eng, "A-01", wid)
     sent = _capture(eng)
     tw = _capture_to_worker(eng)

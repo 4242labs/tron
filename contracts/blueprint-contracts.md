@@ -307,9 +307,14 @@ The pipeline is the project's **git-tracked** canon, written by agents via PR �
 holds only a **disposable read cache** (`manifest.yaml › pipeline`), rebuilt every wake from trunk
 + open PRs + alive workers, so a crash, an off-session, or tron→no-tron→tron leaves **no drift** — and a
 failed refresh halts **loud** rather than caching a stale snapshot (§5). TRON
-writes **nothing** to git: it never sets status. A block is done only when it shows `✅` on trunk
-(merged, re-validated, deployed-clean — all landed by an agent). Status *history* is version-controlled
-in the project repo, as it should be.
+writes **nothing** to git: it never sets status, never merges, never rebases, never advances a ref. A
+block is done only when it shows `✅` on trunk (merged, re-validated, deployed-clean — all landed by an
+agent). Since 01-32 (ADR-0002 D1) this is **enforced in code, not convention**: every engine git call
+goes through one wrapper with a sealed subcommand allowlist (reads, `fetch` transport, and scratch-scoped
+`worktree add --detach`/`remove` — the two named exceptions); an off-list command raises, structurally.
+Trunk advances only via a worker running `meta/scripts/land.sh` under a TRON-minted, patch-id-bound
+grant (D2: grant → land-script → observe). Status *history* is version-controlled in the project repo,
+as it should be.
 
 ---
 

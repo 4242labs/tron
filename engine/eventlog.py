@@ -71,12 +71,19 @@ FAILURE_CLASSES = {
 #                   pending text (01-31, AC-5b): forensic, never silent.
 #   unknown_worker_send — an engine->worker send named a worker no longer on the roster
 #                   (01-31, MED inventory): forensic, never a silent no-op.
+#   grant_minted  — T3 (01-32, ADR-0002 D2): a patch-id-bound merge/close grant was
+#                   minted in TRON's own folder (case · block · branch · patch_id) —
+#                   the authorize half of grant -> land.sh -> observe.
+#   grant_consumed — T3 (01-32, ADR-0002 D2): a live grant was consumed
+#                   ADMINISTRATIVELY by the engine (the land.sh-crashed-before-consume
+#                   window: trunk advanced, patch-id matched over the observed range) —
+#                   a write in TRON's own folder, forensic, never silent.
 EVENT_TYPES = {
     "tick", "model_call", "dispatch", "gate_advance", "settle", "release",
     "escalate", "case_reping", "case_safe_parked", "docs_landed", "block_done",
     "session_start", "session_end", "halt",
     "wall_auto_settled", "abandon", "abandon_flag_delivered",
-    "triage_dedup_dropped", "unknown_worker_send",
+    "triage_dedup_dropped", "unknown_worker_send", "grant_minted", "grant_consumed",
 }
 
 

@@ -367,7 +367,7 @@ def t_admission_is_declarative():
        got is not None, f"got={got}")
 
 
-# ── D1/F-1: the unified paperwork lander (real git — trunk.land_docs) ──
+# ── D1/F-1: the unified paperwork lander (real git — trunk.verify_docs) ──
 def _git(cwd, *args):
     r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
     return r.returncode, r.stdout.strip()
@@ -416,14 +416,14 @@ def t_lander_lands_paperwork():
         with open(os.path.join(d, "meta", "logs", "log-1.md"), "w") as fh:
             fh.write("session log\n")
     _on_branch(d, "docs/close", w)
-    code, detail = trunk.land_docs(d, "docs/close", ALLOW, "main", False, denylist=DENY)
-    ok("D1 paperwork-only branch lands", code == "landed", f"{code}: {detail}")
-    ok("D1 landed branch is deleted", not trunk.branch_exists(d, "docs/close"))
-    # T2 (01-32, ADR-0002 D1): merge_ff_only advances trunk by `update-ref` CAS, never a
-    # checkout — the root's WORKING TREE no longer reflects the new tip (by design; the
-    # working tree is never authoritative). Verify the committed ref content instead.
-    ok("D1 paperwork is on trunk",
-       _git(d, "show", "main:meta/logs/log-1.md")[0] == 0)
+    code, detail = trunk.verify_docs(d, "docs/close", ALLOW, "main", False, denylist=DENY)
+    ok("D1 paperwork-only branch verdict is 'ok' (clean, ff-able)",
+       code == "ok", f"{code}: {detail}")
+    # T3 (01-32, ADR-0002 D1): verify_docs is READ-ONLY now — it never lands or
+    # deletes anything; that's `land.sh`'s job under a grant.
+    ok("D1 verify_docs never deletes the branch itself", trunk.branch_exists(d, "docs/close"))
+    ok("D1 the paperwork is NOT yet on trunk (verify_docs never lands it)",
+       _git(d, "show", "main:meta/logs/log-1.md")[0] != 0)
 
 
 def t_lander_code_violation():
@@ -435,7 +435,7 @@ def t_lander_code_violation():
         with open(os.path.join(d, "meta", "logs", "log.md"), "w") as fh:
             fh.write("log\n")
     _on_branch(d, "docs/dirty", w)
-    code, detail = trunk.land_docs(d, "docs/dirty", ALLOW, "main", False, denylist=DENY)
+    code, detail = trunk.verify_docs(d, "docs/dirty", ALLOW, "main", False, denylist=DENY)
     ok("D1 code on a paperwork branch is a violation",
        code == "violation" and "src/sneak.txt" in detail, f"{code}: {detail}")
     ok("D1 violating branch is NOT landed or deleted",
@@ -460,15 +460,14 @@ def t_lander_own_block_exceptions():
             fh.write("log\n")
     _on_branch(d, "feat/a-01", w)
     allow = ALLOW + ["meta/blocks/A-01.md", "meta/blocks/archive/A-01.md"]
-    code, detail = trunk.land_docs(d, "feat/a-01", allow, "main", False,
+    code, detail = trunk.verify_docs(d, "feat/a-01", allow, "main", False,
                                    denylist=DENY,
                                    line_scoped={"meta/pipeline.md": "A-01"})
-    ok("D1 own-block archival + Completed + own pipeline line lands",
-       code == "landed", f"{code}: {detail}")
-    # T2 (01-32, ADR-0002 D1): same rekey — check the committed ref, not the (unmoved,
-    # by design) working tree.
-    ok("D1 archive move is on trunk",
-       _git(d, "show", "main:meta/blocks/archive/A-01.md")[0] == 0)
+    ok("D1 own-block archival + Completed + own pipeline line verdicts 'ok'",
+       code == "ok", f"{code}: {detail}")
+    # T3 (01-32, ADR-0002 D1): verify_docs never lands it — that's land.sh's job.
+    ok("D1 archive move is NOT yet on trunk (verify_docs is read-only)",
+       _git(d, "show", "main:meta/blocks/archive/A-01.md")[0] != 0)
 
 
 def t_lander_foreign_pipeline_line():
@@ -481,7 +480,7 @@ def t_lander_foreign_pipeline_line():
         with open(p, "w") as fh:
             fh.write(txt.replace("| A-02 | ui | 📋 |", "| A-02 | ui | ✅ |"))
     _on_branch(d, "feat/a-01-sneaky", w)
-    code, detail = trunk.land_docs(d, "feat/a-01-sneaky", ALLOW, "main", False,
+    code, detail = trunk.verify_docs(d, "feat/a-01-sneaky", ALLOW, "main", False,
                                    denylist=DENY,
                                    line_scoped={"meta/pipeline.md": "A-01"})
     ok("D1 a pipeline line naming ANOTHER block is a violation",
@@ -508,7 +507,7 @@ def t_lander_nonff_rebases_and_lands():
         fh.write("moved\n")
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "trunk moved")
-    code, detail = trunk.land_docs(d, "docs/behind", ALLOW, "main", False, denylist=DENY)
+    code, detail = trunk.verify_docs(d, "docs/behind", ALLOW, "main", False, denylist=DENY)
     ok("01-32 T1: a moved trunk is non-ff — the engine never rebases, even a "
        "conflict-free disjoint-file race", code == "non-ff", f"{code}: {detail}")
     ok("01-32 T1: the branch survives, untouched, for its owner to rebase",
@@ -529,7 +528,7 @@ def t_lander_nonff_conflict_still_walls():
         fh.write("readme - trunk change\n")
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "trunk moved (conflicting)")
-    code, detail = trunk.land_docs(d, "docs/conflict", ALLOW, "main", False, denylist=DENY)
+    code, detail = trunk.verify_docs(d, "docs/conflict", ALLOW, "main", False, denylist=DENY)
     ok("T1 a CONFLICTED rebase still walls non-ff",
        code == "non-ff", f"{code}: {detail}")
     ok("T1 conflicted-rebase branch survives for its owner to resolve",
@@ -549,9 +548,9 @@ def t_lander_architect_union():
             fh.write("| B-01 | adhoc | 📋 |\n")
     _on_branch(d, "chore/adhoc", w)
     allow = ALLOW + ["meta/blocks/", "meta/pipeline.md"]     # explicit union, no deny
-    code, detail = trunk.land_docs(d, "chore/adhoc", allow, "main", False)
-    ok("D1 architect union lands block files + pipeline edits",
-       code == "landed", f"{code}: {detail}")
+    code, detail = trunk.verify_docs(d, "chore/adhoc", allow, "main", False)
+    ok("D1 architect union verdicts 'ok' for block files + pipeline edits",
+       code == "ok", f"{code}: {detail}")
     # Reviewer strictness over the same content:
     d2 = _mkrepo()
 
@@ -559,22 +558,22 @@ def t_lander_architect_union():
         with open(os.path.join(d2, "meta", "blocks", "B-01.md"), "w") as fh:
             fh.write("# B-01\n")
     _on_branch(d2, "docs/rev", w2)
-    code, detail = trunk.land_docs(d2, "docs/rev", ALLOW, "main", False, denylist=DENY)
+    code, detail = trunk.verify_docs(d2, "docs/rev", ALLOW, "main", False, denylist=DENY)
     ok("D1 reviewer stays strict on pipeline content",
        code == "violation", f"{code}: {detail}")
 
 
 # ── D1 flow: the landing points (dry engine, lander mocked) ──
 def _mock_land(code, detail=""):
-    orig = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: (code, detail)
-    return lambda: setattr(sys.modules["trunk"], "land_docs", orig)
+    orig = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: (code, detail)
+    return lambda: setattr(sys.modules["trunk"], "verify_docs", orig)
 
 
 def t_close_lands_first():
     eng = _eng()
     g = eng.st.gate.setdefault("A-01", {"stage": "close"})
-    restore = _mock_land("landed", "2 file(s) @ abc1234")
+    restore = _mock_land("ok", "2 file(s) @ abc1234")
     orig_rc = trunk.replica_clean
     trunk.replica_clean = lambda *a, **k: (True, "")
     try:
@@ -653,7 +652,7 @@ def t_review_landing_holds_then_releases():
            g and g.get("stage") == "landing", f"g={g}")
     finally:
         restore()
-    restore = _mock_land("landed", "1 file(s) @ abc1234")
+    restore = _mock_land("ok", "1 file(s) @ abc1234")
     try:
         eng._drive_review_landing("review:code", eng.st.gate["review:code"])
         ok("D1 the driver lands and releases the reviewer",
@@ -823,20 +822,28 @@ def t_worktree_residue_named():
 
 
 def t_lander_deletes_already_merged_branch():
-    # The empty-diff path (branch fully on trunk) still deletes the branch — a landed
-    # declaration never leaves an orphan ref behind.
+    # T3 (01-32, ADR-0002 D1): re-scoped — verify_docs never deletes anything any
+    # more (branch cleanup is the WORKER's close ritual; stragglers are a hygiene
+    # note, never an engine `branch -d`). What survives of W10: an already-merged
+    # (empty-diff) declaration is a clean no-op verdict ("none"), never a violation
+    # or a spurious non-ff — so the caller's FIFO pops it and moves on.
     d = _mkrepo()
 
     def w():
         with open(os.path.join(d, "meta", "logs", "log.md"), "w") as fh:
             fh.write("log\n")
     _on_branch(d, "docs/dup", w)
-    code, _ = trunk.land_docs(d, "docs/dup", ALLOW, "main", False, denylist=DENY)
-    ok("W10 first landing lands", code == "landed")
-    _git(d, "branch", "docs/dup")                       # re-declare the same (merged) ref
-    code, detail = trunk.land_docs(d, "docs/dup", ALLOW, "main", False, denylist=DENY)
-    ok("W10 an already-merged declaration lands as no-op and deletes the ref",
-       code == "landed" and not trunk.branch_exists(d, "docs/dup"),
+    code, _ = trunk.verify_docs(d, "docs/dup", ALLOW, "main", False, denylist=DENY)
+    ok("W10 a clean paperwork branch verdicts 'ok' (landable)", code == "ok")
+    # Land it for real the way the protocol now lands things: simulate land.sh's ff
+    # advance, then re-declare the same (now fully-merged) ref.
+    tip = _git(d, "rev-parse", "docs/dup")[1]
+    old = _git(d, "rev-parse", "main")[1]
+    _git(d, "update-ref", "refs/heads/main", tip, old)
+    code, detail = trunk.verify_docs(d, "docs/dup", ALLOW, "main", False, denylist=DENY)
+    ok("W10 an already-merged declaration is a clean 'none' no-op (never deleted by "
+       "the engine — the worker's own close ritual owns cleanup now)",
+       code == "none" and trunk.branch_exists(d, "docs/dup"),
        f"{code}: {detail}")
 
 
@@ -1019,7 +1026,7 @@ def t_architect_fifo_never_deadlocks():
            f"arch={arch} failed={eng.st.data.get('failed_landings')}")
     finally:
         restore()
-    restore = _mock_land("landed", "ok")
+    restore = _mock_land("ok", "ok")
     try:
         eng._drive_landings()
         ok("D1/FS-1 the queue keeps draining after the cap",

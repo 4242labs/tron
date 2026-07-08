@@ -144,7 +144,7 @@ def t_land_docs_rebases_and_lands_the_dominant_wall_class():
         fh.write("readme v2\n")
     _git(d, "add", "-A")
     _git(d, "commit", "-qm", "another lander moved trunk first")
-    code, detail = trunk.land_docs(d, "docs/late", ["meta/"], "main")
+    code, detail = trunk.verify_docs(d, "docs/late", ["meta/"], "main")
     ok("01-32 T1: land_docs no longer auto-rebases either — a timing race is 'non-ff', "
        "never a silent land", code == "non-ff", f"{code}: {detail}")
     ok("01-32 T1: the branch survives, untouched, for its owner to rebase",
@@ -209,9 +209,9 @@ def _eng_with_violation_wall(block="A-01"):
 
 
 def _mock_land(code, detail=""):
-    orig = trunk.land_docs
-    trunk.land_docs = lambda *a, **k: (code, detail)
-    return lambda: setattr(sys.modules["trunk"], "land_docs", orig)
+    orig = trunk.verify_docs
+    trunk.verify_docs = lambda *a, **k: (code, detail)
+    return lambda: setattr(sys.modules["trunk"], "verify_docs", orig)
 
 
 def t_violation_land_failure_reopens_the_same_case():

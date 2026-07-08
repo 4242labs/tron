@@ -11,15 +11,21 @@ The engine that drives the canon flow. Two layers, both deterministic code
 
 Truth is the project's canon trunk, not TRON (realign §A): each wake rebuilds the
 pipeline view from `git` trunk (pipeline.md + blocks/*.md) plus in-flight PRs plus
-alive workers. TRON reads; agents write. Rider (01-18): "TRON writes nothing to git"
-predates local-mode landing — in LOCAL mode (no remote) the engine lands paperwork
-and merges ff-only itself (trunk.merge_ff_only / land_docs, called from the DONE
-gate) as the gate's own act, standing in for the PR-merge a worker performs in remote
-mode. It still never writes canon CONTENT — no pipeline/block text is ever the
-engine's own authorship — and its only durable STATE is the gitignored runtime
-cache. A worker's "done" is a trigger, not truth: it launches the canon DONE gate
-(§F), and a block is done only when it shows `✅` on trunk (merged, re-validated,
-deployed-clean — agents land all of it via PR, or the engine ff-merges it locally).
+alive workers. TRON reads; agents write — and since 01-32 T3 (ADR-0002 D1/D2) that
+is literally, structurally true again: the 01-18 local-mode rider (the engine
+performing ff-merges/paperwork lands itself) is RETIRED. Every landing — merge,
+paperwork, record, violation repair — is grant → land-script → observe: on gate
+approval the engine mints a one-time, patch-id-bound grant in its OWN folder
+(grants.py, `meta/agents/tron/grants/`), the WORKER runs the scaffold's
+`meta/scripts/land.sh` (flock + live-grant validation + strict-ff + `update-ref`
+CAS + consume/receipt), and the engine observes the committed result (ancestry
+reads) before advancing anything. The engine's only git writes, engine-wide, are
+the two Decision-1 exceptions (fetch transport; scratch-scoped worktree admin for
+validation checkouts) — sealed in code by trunk.py's wrapper allowlist, not by
+convention. Its only durable STATE is the gitignored runtime cache. A worker's
+"done" is a trigger, not truth: it launches the canon DONE gate (§F), and a block
+is done only when it shows `✅` on trunk (merged, re-validated, deployed-clean —
+agents land all of it; the engine lands none of it).
 
 The reactive layer is the event TABLE (`trigger -> handler`). The engine emits
 trigger strings and routes them most-specific-wins; inbound worker/operator
@@ -43,6 +49,7 @@ import jobs
 import judge
 import reader
 import trunk
+import grants
 import eventlog
 from state import State, DEFAULT_APPROVALS
 from render import Renderer
@@ -383,7 +390,15 @@ class Engine:
             # T2 (01-32, ADR-0002 D1): truth_sha, never head_sha — a detached (or
             # stale-attached remote-mode) root's literal HEAD no longer tracks trunk's
             # position once the branch advances by ref alone (update-ref CAS, no checkout).
+            prev = self._trunk_sha
             self._trunk_sha = trunk.truth_sha(self.paths["root"], self._truth_ref(), self.dry)
+            # T3 (01-32, ADR-0002 D2 crash window): trunk advanced since the last
+            # observation while grants are live -> the land.sh-crashed-before-consume
+            # window. Consume administratively (a write in TRON's own grants folder)
+            # by matching each advance step's patch-id against the live grants —
+            # first-parent walk over <last-observed>..<tip>, per the ADR.
+            if prev and self._trunk_sha and prev != self._trunk_sha:
+                self._sweep_grant_consume(prev, self._trunk_sha)
         else:
             # Fail LOUD, never silent (T6/S1-10): a swallowed ff-failure leaves a stale snapshot
             # -> duplicate dispatch. Count consecutive failures; bootup (count=False) has no
@@ -1379,7 +1394,7 @@ class Engine:
             if block in self.st.blocked:
                 self.st.blocked.remove(block)
             landed = self._land_violation_range(block, vg, self._worker_id_for_block(block))
-            if not landed:
+            if not landed and not vg.get("violation_landing_case"):
                 # T2 (01-17, D-22-1): the land didn't complete (git-layer failure, or a
                 # moved tip re-pinned for a fresh approve) — never spend the case that is
                 # this parked gate's ONLY reachable handle. Put the block back on the wall
@@ -1389,6 +1404,12 @@ class Engine:
                 violation_reopen = True
                 if block not in self.st.blocked:
                     self.st.blocked.append(block)
+            # T3 (01-32, ADR-0002 D2): a REPAIR-scoped grant minted + the worker ordered
+            # to run land.sh (violation_landing_case set) is a genuine "handled" outcome
+            # even though `landed` is False until the NEXT tick observes it — the
+            # approval already happened once; never re-ask the operator for it (the
+            # per-tick `_check_violation_landing`, from `_drive_close`, finalizes it the
+            # moment it's observed, with no further operator round-trip).
         elif decision == "resume" and block in self.st.blocked:
             self.st.blocked.remove(block)                 # back in the dispatch pool (still 📋 on trunk)
             # T3 (01-24 F-2a): a content-carrying settle — the operator's answer text (or
@@ -1417,7 +1438,7 @@ class Engine:
             vg2 = self.st.gate.get(block)
             if vg2 and vg2.get("violation_pending"):
                 # T6 (01-15): resume means the worker resolves its own branch — clear the
-                # park so a fresh confirm re-checks land_docs from scratch, never stays
+                # park so a fresh confirm re-checks verify_docs from scratch, never stays
                 # silently held at close forever (_drive_close's violation_pending guard).
                 vg2.pop("violation_pending", None)
                 vg2.pop("violation_branch", None)
@@ -1850,16 +1871,31 @@ class Engine:
                 # seen (an out-of-gate merge) — never silently accept it.
                 if trunk.branch_merged(self.paths["root"], branch,
                                        self._truth_ref(), self.dry):
-                    # T1 (D-15-1): a block whose own ordered merge is IN FLIGHT is exempt —
-                    # merge_in_flight is true only while approved_merge/self_merge holds
-                    # (set at approval, cleared the moment it lands or the grant is voided),
-                    # so this is already covered by the existing exemption below; named
-                    # explicitly per the tron-15 fix spec (bypass detection must SKIP an
-                    # in-flight block, never just happen to miss it).
-                    if g.get("case_merge") and not (g.get("approved_merge") or g.get("self_merge")
-                                                     or g.get("merge_in_flight")):
+                    # T3 (01-32, ADR-0002 D1/D2/D3, AC-3): a landing observed here is
+                    # ALWAYS bypass-checked against a grant now — not only when
+                    # `case_merge` happens to be set (that only covered ASK-mode holds;
+                    # auto-approved blocks got a grant too, T3, and need the same
+                    # check). "No matching grant, live or consumed" is the MG-01-shaped
+                    # violation: a trunk advance carrying this block's branch that the
+                    # engine never authorized. A matching grant that's still LIVE is
+                    # the crash-window arm (ADR-0002 D2): land.sh advanced the ref but
+                    # crashed before its own consume — the engine consumes it
+                    # administratively here (a write strictly inside its own grants
+                    # folder, never a project write).
+                    case_id = g.get("landing_case") or g.get("case_merge")
+                    grant_matches = False
+                    if case_id:
+                        live = grants.read_live(self.ctx.grants_dir, case_id)
+                        consumed = grants.read_consumed(self.ctx.grants_dir, case_id)
+                        if live or consumed:
+                            grant_matches = True
+                            if live:
+                                self._consume_grant_administratively(case_id)
+                    if not grant_matches and not (g.get("approved_merge") or g.get("self_merge")
+                                                   or g.get("merge_in_flight")):
                         self._gate_giveup(block, g, wid,
-                                          "merged to trunk outside the gate (bypassed a pending merge hold)",
+                                          "merged to trunk outside the gate (no matching grant — "
+                                          "ADR-0002 D2 violation: bypassed a pending merge hold)",
                                           "gate-bypass", "audit the out-of-gate merge; re-validate on trunk")
                         return
                     stage, msg = "trunk", "gate.trunk"   # already merged -> skip local, re-validate on trunk
@@ -1874,12 +1910,15 @@ class Engine:
                     # nothing left to collapse.
                     g.pop("merge_in_flight", None)       # T1: landed -> in-flight window closed
                     g.pop("rebase_pending", None)        # T1 (01-19): on trunk -> nothing left to rebase
+                    g.pop("landing_case", None)          # T3: the grant's job is done, observed landed
                 else:
                     # No PR, not yet on trunk. REMOTE mode: the worker opens a PR and the merge
                     # lands via the pr path below. LOCAL mode (no remote): there is no PR to wait
-                    # on, so once local validation is back the ENGINE performs the merge itself —
-                    # ff-only, ASK-gated — exactly as the remote merge step does (MG-01: the engine
-                    # owns the trunk merge, never the worker).
+                    # on, so once local validation is back the gate verifies ff-ability, mints a
+                    # patch-id-bound GRANT (ASK-gated exactly as before), and orders the WORKER
+                    # to run land.sh — then observes the committed result (T3, 01-32, ADR-0002
+                    # D2: grant -> land-script -> observe; MG-01's "engine owns the merge" is
+                    # superseded — the worker's hands, the engine's eyes).
                     local_mode = self._local_mode()
                     # `branch` is the worker-declared name, else the convention (_block_branch). In local
                     # mode we merge it only when it REALLY exists in git — the verified local analog of
@@ -1946,35 +1985,51 @@ class Engine:
                             # here any more (the 01-25 review fix this comment used to
                             # describe fed exactly that base into the now-retired
                             # run_block_tests seam).
-                            ok, err = trunk.merge_ff_only(
+                            ok, err = trunk.merge_ff_only(   # T3: a PURE ff-ability check now
                                 self.paths["root"], branch,
                                 self.paths.get("main_branch", "main"), self.dry,
                                 require_detached=self._local_mode())
                             if ok:
-                                # A-5: anchor the held-stage predicate to the EXACT sha this
-                                # merge landed — paperwork commits after this never touch it.
-                                # T1 (01-18, the F1 false-contradiction wall): `cur_tip` above was
-                                # read BEFORE this merge — merge_ff_only (trunk.py T1, 01-17) may
-                                # have internally rebased `branch` onto trunk and retried on a
-                                # first ff-refusal, rewriting branch's tip out from under that
-                                # pre-image read. Anchoring to the stale `cur_tip` here dangled the
-                                # A-5 predicate: the next tick's is_ancestor check (~1299) read the
-                                # rebased-away pre-image as "force-push or reset?" and gate-gave-up
-                                # a clean landing. Always re-read the tip AFTER merge_ff_only
-                                # returns ok — post-ff, branch tip == rebased tip == trunk HEAD,
-                                # the same invariant the post-hoc anchors at ~1331/~1430 already
-                                # rely on. `cur_tip` keeps its own job above (the pre-merge
-                                # patch-id/re-pin check) and is never reused for this anchor.
-                                g["merged_sha"] = trunk.tip_sha(
-                                    self.paths["root"], branch, self.dry)
-                                # tron-07 W2: one approval = one EXECUTED merge. Consume the
-                                # grant here (not on the order) so a non-ff retry — the same
-                                # unexecuted merge — keeps it, but nothing after execution can
-                                # ride it into a second un-asked merge.
-                                g.pop("approved_merge", None)
-                                g.pop("merge_in_flight", None)    # T1: landed -> in-flight window closed
-                                g.pop("rebase_pending", None)     # T1 (01-19): the ff landed -> clear the flag
-                                stage, msg = "trunk", "gate.trunk"    # merged -> re-validate on trunk
+                                # T3 (01-32, ADR-0002 D2): the engine no longer performs the
+                                # advance — the sealed wrapper allowlist would refuse the
+                                # write outright. Mint (or reuse, if content is unchanged
+                                # since a prior grant, AC-5) a patch-id-bound grant and order
+                                # the worker to run `land.sh` itself; OBSERVE the committed
+                                # result rather than trusting our own write. A patch-id of
+                                # "" (unresolvable — grants.mint's fail-closed rider) never
+                                # mints; the caller falls through to holding at 'local'.
+                                case_id = g.get("landing_case") or g.get("case_merge") or f"auto-{block}"
+                                pid = trunk.patch_id(self.paths["root"], branch,
+                                                     self._truth_ref(), self.dry)
+                                self._mint_or_reuse_grant(case_id, block, branch, pid)
+                                first_order = g.get("landing_case") != case_id
+                                g["landing_case"] = case_id
+                                if self._observe_landed(branch, self._truth_ref()):
+                                    # land.sh already ran (real non-dry) — or, dry/test
+                                    # fixtures, the mode's own vacuous-pass convention.
+                                    # A-5: anchor the held-stage predicate to the EXACT sha
+                                    # this landed — paperwork commits after this never touch
+                                    # it (same anchor discipline as every other landing site).
+                                    self._consume_grant_administratively(case_id)
+                                    g["merged_sha"] = trunk.tip_sha(
+                                        self.paths["root"], branch, self.dry)
+                                    g.pop("approved_merge", None)
+                                    g.pop("merge_in_flight", None)    # T1: landed -> in-flight window closed
+                                    g.pop("rebase_pending", None)     # T1 (01-19): the ff landed -> clear the flag
+                                    g.pop("landing_case", None)
+                                    stage, msg = "trunk", "gate.trunk"    # merged -> re-validate on trunk
+                                else:
+                                    # Grant minted/live, worker ordered — hold at 'local'
+                                    # until the NEXT tick's branch_merged/is_ancestor
+                                    # observation picks up the real advance. A live-but-
+                                    # not-yet-expired grant re-sends the SAME order through
+                                    # the ONE composer's dedupe (never a per-tick spam); an
+                                    # expired one loudly re-opens (checked below).
+                                    if self._grant_expired_reopen(block, g, case_id, wid):
+                                        return
+                                    if first_order:
+                                        self._order_land(wid, block, case_id, branch)
+                                    stage, msg = "local", None
                             else:
                                 self.log("flow", f"gate[{block}] local ff-merge non-ff: {err.strip()}")
                                 # T1 (01-19, F4/R1): trunk moved -> the ENGINE retries the
@@ -2134,7 +2189,7 @@ class Engine:
         re-merge path outside stage=='local'; the worker refuses to record; the operator
         hand-merges). Git-only, never prose: rev-parse ancestry (`trunk.is_descendant` — a
         STRICT descendant of the already-landed tip; a divergent/rewritten history is the
-        contradiction arm's job, above) AND the existing land_docs path classifier
+        contradiction arm's job, above) AND the existing verify_docs path classifier
         (`trunk.delta_has_code` — a code-lane path in the delta; a paperwork-only
         descendant keeps landing via the ordinary paperwork lane, untouched by this path).
 
@@ -2177,18 +2232,31 @@ class Engine:
                 g.pop("merge_in_flight", None)
         if self._merge_gated(block, g, wid):
             return "gated"
-        ok, err = trunk.merge_ff_only(self.paths["root"], branch,
+        ok, err = trunk.merge_ff_only(self.paths["root"], branch,   # T3: pure ff-ability check
                                       self.paths.get("main_branch", "main"), self.dry,
                                       require_detached=self._local_mode())
         if not ok:
             self.log("flow", f"gate[{block}] record-redrive non-ff: {err.strip()}")
             return None
+        # T3 (01-32, ADR-0002 D2): mint-order-observe, same protocol as the ordinary
+        # merge gate — the engine no longer performs this re-merge itself.
+        case_id = g.get("redrive_case") or f"redrive-{block}-{cur_tip[:8]}"
+        pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
+        self._mint_or_reuse_grant(case_id, block, branch, pid)
+        first_order = g.get("redrive_case") != case_id
+        g["redrive_case"] = case_id
+        if not self._observe_landed(branch, self._truth_ref()):
+            if first_order:
+                self._order_land(wid, block, case_id, branch)
+            return None            # granted + ordered; the next tick's re-check picks it up
+        self._consume_grant_administratively(case_id)
         # Block 01-28 (T1): no base/range bookkeeping needed — trunk.validate_trunk
         # re-validates the NEW merged_sha directly (declared command or CI verdict),
         # never a diff over `merged..new merged_sha`.
         g["merged_sha"] = trunk.tip_sha(self.paths["root"], branch, self.dry)
         g.pop("approved_merge", None)
         g.pop("merge_in_flight", None)
+        g.pop("redrive_case", None)
         # The caller's own bookkeeping (stage write, flow log, gate_advance event) fires
         # uniformly right after this returns — never duplicated here.
         self.log("flow", f"gate[{block}] record-stage code-bearing descendant landed "
@@ -2207,13 +2275,136 @@ class Engine:
         post-fetch (the local `<main>` ref is never advanced by `refresh()` any more — its
         old ff-advance is deleted, so reading the bare local name would go stale forever).
         Local mode: `<main>` itself, read in place (the root stays detached — Decision 1 —
-        so the branch ref is the live truth with no working-tree race). The local-mode-only
-        WRITE targets (`merge_ff_only`/`land_docs`/`land_ordered_merge` — the transitional
-        engine-owned landing acts) still pass the literal `main_branch` name, never this:
-        they're always the local branch being advanced, and in local mode that IS the
-        truth ref anyway."""
+        so the branch ref is the live truth with no working-tree race). T3 rider: the
+        local-mode-only landing CHECKS (`would_ff`/`verify_docs`/`land_ordered_merge` —
+        pure reads since T3 deleted every mutation arm) still take the literal
+        `main_branch` name, never this: they judge the local branch being advanced (by
+        land.sh), and in local mode that IS the truth ref anyway."""
         main = self.paths.get("main_branch", "main")
         return main if self._local_mode() else f"origin/{main}"
+
+    # ── T3 (01-32, ADR-0002 D2): grant -> land.sh -> observe. The engine never
+    # advances trunk itself any more (the sealed wrapper allowlist would refuse the
+    # write outright) — it mints a patch-id-bound grant in its OWN folder, orders the
+    # responsible agent to run the scaffold's `land.sh`, and observes the committed
+    # result exactly the way every other ratchet predicate here already does
+    # (`tip_sha` + `is_ancestor`, never a working-tree read or a say-so). Every
+    # landing site (merge, record-redrive, paperwork, violation-repair) shares these
+    # four seams — one mechanism, reused, never re-invented per call site. ──
+    def _grant_ttl(self):
+        return float(self.knobs.get("grant_ttl", 60))
+
+    def _sweep_grant_consume(self, old, new):
+        """T3 (01-32, ADR-0002 D2): the ADMINISTRATIVE consume — trunk advanced between
+        observations while grants are LIVE (land.sh crashed after its `update-ref` but
+        before its own consume, or simply hasn't retried yet). Per the ADR: compute the
+        patch-id over `<last-observed>..<tip>` (the engine's own persisted pre-advance
+        observation — never a merge-base guess) and, when several advances landed in
+        one window, walk the range's first-parent commits as candidate step boundaries
+        (greedy, oldest-first: each match consumes its grant and starts the next step).
+        Consuming is a write strictly inside TRON's own grants folder — never a
+        project write. No match for a step is NOT this sweep's problem: the per-block
+        bypass detection (AC-3's arm in _drive_gate) owns naming a grantless land."""
+        if self.dry:
+            return
+        live = grants.list_live(self.ctx.grants_dir)
+        if not live:
+            return
+        steps = trunk.first_parent_commits(self.paths["root"], old, new, self.dry)
+        if not steps:
+            return
+        start = old
+        for c in steps:
+            pid = trunk.patch_id_range(self.paths["root"], start, c, self.dry)
+            if not pid:
+                continue                    # fail-closed: '' never matches anything
+            matched = next((cid for cid, g in live.items() if grants.matches(g, pid)),
+                           None)
+            if matched:
+                grants.consume(self.ctx.grants_dir, matched, result="engine-observed-range")
+                live.pop(matched, None)
+                self.events.event("grant_consumed", case=matched,
+                                  **{"detail": f"administrative consume over "
+                                               f"{start[:7]}..{c[:7]} (crash-window arm)"})
+                self.log("flow", f"grant[{matched}] consumed administratively "
+                                 f"(observed landed {start[:7]}..{c[:7]})")
+                start = c
+                if not live:
+                    return
+
+    def _mint_or_reuse_grant(self, case_id, block, branch, patch_id):
+        """Idempotent per-tick mint: a LIVE grant whose patch-id already matches this
+        branch's CURRENT content is left untouched; anything else (missing, expired,
+        or content-changed — a rebase that altered the diff, AC-5) gets a fresh grant.
+        Fail-closed on `patch_id == ""` (grants.mint's own contract — never mints,
+        the caller must have already run `would_ff`/`verify_docs`)."""
+        if not case_id or not patch_id:
+            return None
+        live = grants.read_live(self.ctx.grants_dir, case_id)
+        if live and live.get("patch_id") == patch_id:
+            return live
+        g = grants.mint(self.ctx.grants_dir, case_id, block, branch, patch_id,
+                        ttl_min=self._grant_ttl())
+        if g:
+            self.events.event("grant_minted", block=block, case=case_id,
+                              branch=branch, patch_id=patch_id)
+            self.log("flow", f"grant[{case_id}] minted for {block} ({branch} "
+                             f"@ patch-id {patch_id[:12]})")
+        return g
+
+    def _order_land(self, wid, block, case_id, branch, kind="gate.land"):
+        """Order the responsible agent to run the scaffold's `land.sh` — the ONLY
+        sanctioned way trunk advances (ADR-0002 D2). Engine-composed, dry-safe
+        (never sends under dry, same convention as every other `_to_worker` line)."""
+        if not wid or self.dry:
+            return
+        self._to_worker(wid, f"[TRON]  {wid} — grant approved (case {case_id}): run "
+                             f"`meta/scripts/land.sh {case_id}` to land {branch} onto "
+                             f"trunk yourself. I observe trunk and pick it up the "
+                             f"moment it lands — no separate report needed.", kind)
+
+    def _observe_landed(self, branch, truth_ref):
+        """Has `branch`'s tip already reached trunk — land.sh actually ran (or, dry /
+        best-effort test fixtures, the mode's own vacuous-pass convention every other
+        ratchet predicate here already uses)? Committed-ref read only, never a
+        working-tree/say-so check — the same discipline `is_ancestor` always applies."""
+        tip = trunk.tip_sha(self.paths["root"], branch, self.dry)
+        return trunk.is_ancestor(self.paths["root"], tip, truth_ref, self.dry)
+
+    def _consume_grant_administratively(self, case_id, result="engine-observed"):
+        """The crash-window arm (ADR-0002 D2, "administrative consume"): a live grant
+        whose landing the ENGINE observed (rather than `land.sh`'s own happy-path
+        consume) is consumed here — idempotent (a no-op if already consumed), a WRITE
+        strictly inside TRON's own folder (the grants dir), never a project write."""
+        if self.dry or not case_id:
+            return
+        grants.consume(self.ctx.grants_dir, case_id, result=result)
+
+    def _grant_expired_reopen(self, block, g, case_id, wid=None):
+        """Loud re-open (ADR-0002 D2): a grant that expires before its landing is
+        observed re-opens the merge gate — never a silent re-mint (the approval
+        already happened once; the window it bought lapsed). Routes architect-first
+        (ADR-0002 D3), same as every other engine-observed fact here. Returns True
+        iff it fired (the caller holds this tick; the NEXT approval mints a fresh
+        grant, same seam as the first one)."""
+        if self.dry or not case_id:
+            return False
+        raw = grants.read_raw(self.ctx.grants_dir, case_id)
+        if not raw or not grants.is_expired(raw):
+            return False
+        self.events.failure("gate-stuck", "gate-grant-expiry",
+                            "land within the grant TTL",
+                            f"merge grant {case_id} for {block} expired before "
+                            f"landing was observed", block=block,
+                            node="DONE gate", next_action="re-approve")
+        g.pop("approved_merge", None)
+        g.pop("case_merge", None)
+        g.pop("merge_in_flight", None)
+        g.pop("landing_case", None)
+        self._triage_to_architect(
+            f"merge[{block}]: grant {case_id} expired before landing was observed "
+            f"— re-opening the merge gate", sender=wid, block=block)
+        return True
 
     def _tick_no(self):
         return int((self.st.data.get("last_sweep") or {}).get("sweeps_this_session", 0))
@@ -2402,6 +2593,15 @@ class Engine:
             kind, line = "gate.branch-gap", self._branch_gap_line(wid, block)
         elif stage == "local" and g.get("rebase_pending"):
             kind, line = "gate.rebase", self._rebase_line(wid, block)
+        elif stage == "local" and g.get("landing_case"):
+            # T3 (01-32, ADR-0002 D2): a grant is live and the worker's been ordered to
+            # run `land.sh` — the idle re-nudge repeats THAT order, never the ordinary
+            # "validate locally" line (branch_gap/rebase_pending precedent).
+            branch = self._block_branch(block)
+            kind, line = "gate.land", (
+                f"[TRON]  {wid} — still waiting on `land.sh` for {branch} (grant "
+                f"{g['landing_case']} is live). Run `meta/scripts/land.sh "
+                f"{g['landing_case']}` if you haven't yet.")
         else:
             kind = self._stage_template(stage)
         if not kind:
@@ -2430,6 +2630,11 @@ class Engine:
         confirmation (_confirm_close). Re-nudge up to a cap, then force-release so a silent worker
         can't strand the slot forever."""
         if g.get("violation_pending"):
+            # T3 (01-32, ADR-0002 D2): a repair-scoped grant already minted (a prior
+            # approve) may land on a LATER tick — check observation before holding
+            # quietly; `_check_violation_landing` finalizes it (pops violation_pending
+            # itself) the moment it's observed, no further operator round-trip.
+            self._check_violation_landing(block, g)
             return           # T6 (01-15): parked on the operator's wall settle; hold quietly
         # T1 (01-25, R-03a): the block invariant, checked ONCE, ref-agnostically, regardless
         # of `stage` — this runs on the FIRST call to _drive_close for this gate, including
@@ -2556,45 +2761,88 @@ class Engine:
         empty(ied), ("blocked", detail) when the head won't land — it STAYS queued; the
         caller paces nudges and caps into a named escalation.
 
+        T3 (01-32, ADR-0002 D1/D2): "the engine never writes docs" — `verify_docs`
+        (renamed from `land_docs`) is now a pure content/ff-ability CHECK; the actual
+        land happens via a grant + `land.sh`, the SAME mint-order-observe protocol the
+        merge gate uses (`_mint_or_reuse_grant`/`_order_land`/`_observe_landed`). A
+        branch already granted (`landing_grants`, keyed by branch — case-scoped per
+        ADR-0002 D2) is checked for OBSERVED landing first, before any re-verify.
+
         T1 (01-20, I1 accelerator): for the architect only, a landing correlated to its
         OWN live job (kind forward|reconcile; the landed branch's diff touches the job's
-        block file — git-only, trunk.branch_touches_path, read BEFORE land_docs deletes
-        the branch) synthesizes the job's completion through the SAME existing handler
-        sender-truth uses (_h_reconcile) the instant the landing lands — an accelerator
-        for the case where the architect's own completion report died, never a second
-        way to write completion. Never FIFO-drain-as-completion (peer MAJOR-5): the job
-        reference is cleared the moment it completes, so a multi-batch FIFO's remaining
-        branches, a `log`-job's landing (no block), and any uncorrelated/residue landing
-        change nothing further this call."""
+        block file — git-only, trunk.branch_touches_path, read BEFORE the grant is
+        minted) synthesizes the job's completion through the SAME existing handler
+        sender-truth uses (_h_reconcile) the instant the landing is OBSERVED — an
+        accelerator for the case where the architect's own completion report died,
+        never a second way to write completion. The correlation is captured at mint
+        time (`landing_correlate`, keyed by branch) so a landing observed on a LATER
+        tick (the worker's `land.sh` run may not land the same tick it's ordered)
+        still completes the right job, never the one live at OBSERVE time instead."""
         fifo = w.setdefault("pending_landings", [])
+        grants_live = w.setdefault("landing_grants", {})
+        correlate = w.setdefault("landing_correlate", {})
         job = w.get("current_job") if role == "architect" and w.get("status") == "busy" else None
         while fifo:
             branch = fifo[0]
+            case_id = grants_live.get(branch)
+            if case_id:
+                if not self._observe_landed(branch, self._truth_ref()):
+                    return "blocked", f"{branch}: awaiting land.sh (grant {case_id})"
+                self._consume_grant_administratively(case_id)
+                grants_live.pop(branch, None)
+                fifo.pop(0)
+                self.events.event("docs_landed", actor=w.get("id"),
+                                  **{"role": role, "branch": branch,
+                                     "detail": f"observed landed (grant {case_id})"})
+                self.log("flow", f"paperwork[{w.get('id')}] landed {branch} (grant {case_id})")
+                cblock = correlate.pop(branch, None)
+                if cblock:
+                    self.log("flow", f"paperwork[{w.get('id')}] landing correlates to "
+                                     f"its live job on {cblock} -> completing via "
+                                     f"_h_reconcile")
+                    self._h_reconcile({"block": cblock})
+                    job = None   # the job just advanced — never complete twice in one batch
+                continue
             allow, deny, scoped = self._paperwork_rules(role)
             correlates = bool(
                 job and job.get("kind") in ("forward", "reconcile") and job.get("block")
                 and trunk.branch_touches_path(
                     self.paths["root"], branch, self._block_relpath(job["block"]),
                     self._truth_ref(), self.dry))
-            code, detail = trunk.land_docs(self.paths["root"], branch, allow,
-                                           self.paths.get("main_branch", "main"),
-                                           self.dry, denylist=deny, line_scoped=scoped,
-                                           require_detached=self._local_mode())
-            if code in ("landed", "none"):
+            code, detail = trunk.verify_docs(self.paths["root"], branch, allow,
+                                             self.paths.get("main_branch", "main"),
+                                             self.dry, denylist=deny, line_scoped=scoped,
+                                             require_detached=self._local_mode())
+            if code == "none":
                 fifo.pop(0)
-                if code == "landed":
-                    self.events.event("docs_landed", actor=w.get("id"),
-                                      **{"role": role, "branch": branch,
-                                         "detail": detail})
-                    self.log("flow", f"paperwork[{w.get('id')}] landed {branch}: {detail}")
-                    if correlates:
-                        self.log("flow", f"paperwork[{w.get('id')}] landing correlates to "
-                                         f"its live job '{job.get('kind')}' on "
-                                         f"{job.get('block')} -> completing via _h_reconcile")
-                        self._h_reconcile({"block": job.get("block")})
-                        job = None   # the job just advanced — never complete twice in one batch
                 continue
-            return "blocked", f"{branch}: {code}: {detail}"
+            if code != "ok":
+                return "blocked", f"{branch}: {code}: {detail}"
+            case_id = f"paperwork-{role}-{branch}"
+            pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
+            self._mint_or_reuse_grant(case_id, None, branch, pid)
+            grants_live[branch] = case_id
+            if correlates and job.get("block"):
+                correlate[branch] = job.get("block")
+            self._order_land(w.get("id"), None, case_id, branch)
+            if not self._observe_landed(branch, self._truth_ref()):
+                return "blocked", f"{branch}: awaiting land.sh (grant {case_id})"
+            # dry / test-fixture short-circuit (or a genuinely instant real land) —
+            # observed landed the SAME tick it was granted; finish right here.
+            self._consume_grant_administratively(case_id)
+            grants_live.pop(branch, None)
+            fifo.pop(0)
+            self.events.event("docs_landed", actor=w.get("id"),
+                              **{"role": role, "branch": branch,
+                                 "detail": f"observed landed (grant {case_id})"})
+            self.log("flow", f"paperwork[{w.get('id')}] landed {branch} (grant {case_id})")
+            if correlates:
+                self.log("flow", f"paperwork[{w.get('id')}] landing correlates to its "
+                                 f"live job '{job.get('kind')}' on {job.get('block')} "
+                                 f"-> completing via _h_reconcile")
+                correlate.pop(branch, None)
+                self._h_reconcile({"block": job.get("block")})
+                job = None
         return "ok", "nothing pending"
 
     def _fail_landing(self, w, role, detail):
@@ -2738,25 +2986,52 @@ class Engine:
         cap -> escalate, never a silent trust-release."""
         wid = self._worker_id_for_block(block)
         branch = self._block_branch(block)
-        allow, deny, scoped = self._paperwork_rules("engineer", block)
-        code, ldetail = trunk.land_docs(self.paths["root"], branch, allow,
-                                        self.paths.get("main_branch", "main"), self.dry,
-                                        denylist=deny, line_scoped=scoped,
-                                        require_detached=self._local_mode())
-        if code == "landed":
+        # T3 (01-32, ADR-0002 D1/D2): "the engine never writes docs" — `verify_docs`
+        # only checks; a grant + `land.sh` (mint-order-observe, the SAME protocol the
+        # merge gate uses) is what actually lands it. A branch already granted is
+        # checked for OBSERVED landing before anything is re-verified.
+        case_id = g.get("close_landing_case")
+        if case_id:
+            if not self._observe_landed(branch, self._truth_ref()):
+                return          # still waiting on land.sh; the caller's idle ladder paces this
+            self._consume_grant_administratively(case_id)
+            g.pop("close_landing_case", None)
             self.events.event("docs_landed", actor=wid, block=block,
                               **{"role": "engineer", "branch": branch,
-                                 "detail": ldetail})
-            self.log("flow", f"paperwork[{block}] landed: {ldetail}")
+                                 "detail": f"observed landed (grant {case_id})"})
+            self.log("flow", f"paperwork[{block}] landed (grant {case_id})")
+            code, ldetail = "none", "landed via grant"   # fall through to replica_clean below
+        else:
+            allow, deny, scoped = self._paperwork_rules("engineer", block)
+            code, ldetail = trunk.verify_docs(self.paths["root"], branch, allow,
+                                              self.paths.get("main_branch", "main"), self.dry,
+                                              denylist=deny, line_scoped=scoped,
+                                              require_detached=self._local_mode())
+        if code == "none":
+            pass
+        elif code == "ok":
+            case_id = f"close-{block}"
+            pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
+            self._mint_or_reuse_grant(case_id, block, branch, pid)
+            g["close_landing_case"] = case_id
+            self._order_land(wid, block, case_id, branch)
+            if not self._observe_landed(branch, self._truth_ref()):
+                return          # granted, ordered — wait for the next confirm/tick
+            self._consume_grant_administratively(case_id)
+            g.pop("close_landing_case", None)
+            self.events.event("docs_landed", actor=wid, block=block,
+                              **{"role": "engineer", "branch": branch,
+                                 "detail": f"observed landed (grant {case_id})"})
+            self.log("flow", f"paperwork[{block}] landed (grant {case_id})")
         elif code == "violation":
             # T6 (01-15, tron-16 CASE-003 residue): a close-time violation names REAL code
-            # left on the branch — land_docs's paperwork-only allowlist can never accept
+            # left on the branch — verify_docs's paperwork-only allowlist can never accept
             # it, so re-nudging the worker toward the same confirm is a dead end (the old
             # cap eventually gate-gave-up with no landing path at all). Park it as an
             # ordinary wall instead — same case kind, same settle verbs, no new mechanism:
             # `approve` lands the named range (ordered merge, same sha-pinned content check
             # as a merge ASK, same lander cleanup after); `resume` means the worker resolves
-            # its own branch (a fresh confirm re-checks land_docs from scratch); `abandon`
+            # its own branch (a fresh confirm re-checks verify_docs from scratch); `abandon`
             # drops the block as always. Idempotent — branch/tip pin once, at park.
             if not g.get("violation_pending"):
                 g["violation_pending"] = True
@@ -2816,24 +3091,68 @@ class Engine:
         self.log("flow", f"{block} close confirmed -> worker released")
         self._emit("pulse")
 
-    def _land_violation_range(self, block, g, wid):
-        """T6 (01-15): the violation-wall `approve` settle IS 'land it' — an ordered merge
-        of the exact branch the wall named, content-pinned exactly like a merge ASK (A-3:
-        the grant binds the sha the operator saw at park; a moved tip voids it UNLESS the
-        move carries an IDENTICAL diff, T1's patch-id rider — never landed blind), then the
-        same lander cleanup `land_docs` runs on success (worktree gone, branch deleted). No
-        new verb, no new case kind: `approve` here means exactly what it means at the
-        ordinary merge gate.
+    def _finalize_violation_landing(self, block, g, wid, case_id):
+        """Shared finalize once a violation-repair grant's landing is OBSERVED — the
+        bookkeeping + worker release, identical whether it fires synchronously (dry /
+        an instantly-observed real land) from the approve settle itself, or on a
+        LATER tick's re-check (`_check_violation_landing`, from `_drive_close`)."""
+        self._consume_grant_administratively(case_id)
+        self.events.event("docs_landed", actor=wid, block=block,
+                          **{"role": "engineer", "branch": g.get("violation_branch"),
+                             "detail": f"observed landed (grant {case_id})",
+                             "via": "violation-approved"})
+        self.log("flow", f"gate[{block}] violation range landed (grant {case_id})")
+        g.pop("violation_pending", None)
+        g.pop("violation_branch", None)
+        g.pop("violation_tip", None)
+        g.pop("violation_landing_case", None)
+        for w in list(self.st.workers):
+            if w.get("role") == "engineer" and w.get("block") == block:
+                self._release_worker(w, notify=False, reason="close-confirmed")
+        self.st.gate.pop(block, None)
+        self.log("flow", f"{block} close confirmed (violation range landed) -> worker released")
+        self._emit("pulse")
 
-        T2 (01-17, D-22-1): returns True iff the range actually landed (release + gate-pop
-        happened). EVERY other outcome — the re-pin (tip moved, divergent diff) and the
-        git-layer land failure alike — returns False, and the caller (_h_apply_decision)
-        must never spend the case that got it here on a False: a parked `violation_pending`
-        gate with a closed case was unreachable by any settle (re-settling a spent case is
-        a no-op; the sweep skips violation-parked gates outright). Never silent, never a
-        dead end."""
+    def _check_violation_landing(self, block, g):
+        """Per-tick re-check (`_drive_close`'s `violation_pending` guard): a
+        repair-scoped grant already minted (a prior `approve` settle) that lands on a
+        LATER tick (land.sh hadn't run yet at approve time) finalizes here — never a
+        second operator round-trip for the same approval."""
+        case_id = g.get("violation_landing_case")
+        if not case_id:
+            return
+        if self._observe_landed(g.get("violation_branch"), self._truth_ref()):
+            self._finalize_violation_landing(block, g, self._worker_id_for_block(block), case_id)
+
+    def _land_violation_range(self, block, g, wid):
+        """T6 (01-15): the violation-wall `approve` settle IS 'land it' — content-pinned
+        exactly like a merge ASK (A-3: the grant binds the sha the operator saw at park;
+        a moved tip voids it UNLESS the move carries an IDENTICAL diff, T1's patch-id
+        rider — never landed blind). No new verb, no new case kind: `approve` here means
+        exactly what it means at the ordinary merge gate.
+
+        T3 (01-32, ADR-0002 D2, the violation REPAIR path): the engine no longer lands
+        this itself — a repair-scoped grant + `land.sh`, the SAME mint-order-observe
+        protocol every other landing site here uses. Returns True iff the range's
+        landing has been OBSERVED (release + gate-pop happened, synchronously in this
+        call). False covers TWO different shapes the caller must tell apart:
+          - a genuine failure (re-pin, git-layer non-ff) — `g['violation_landing_case']`
+            stays unset — the caller reopens the SAME case for a fresh approve (T2,
+            01-17, D-22-1's original contract: never spend the case on a real failure);
+          - a grant minted + the worker ordered, awaiting `land.sh` — never a failure,
+            just not yet observed. `g['violation_landing_case']` is set; the caller
+            must NOT reopen the operator case (the approval already happened once);
+            `_check_violation_landing` finalizes it on a later tick, no further ask."""
         branch = g.get("violation_branch")
         pinned = g.get("violation_tip")
+        case_id = g.get("violation_landing_case")
+        if case_id:
+            # Already granted by a prior approve — this call is a re-check, never a
+            # second grant/order for the same repair.
+            if self._observe_landed(branch, self._truth_ref()):
+                self._finalize_violation_landing(block, g, wid, case_id)
+                return True
+            return False
         cur = trunk.tip_sha(self.paths["root"], branch, self.dry) if branch else ""
         if pinned and cur and cur != pinned and not trunk.patch_id_matches(
                 self.paths["root"], pinned, cur, self._truth_ref(), self.dry):
@@ -2855,20 +3174,15 @@ class Engine:
                                      f"Resolve it; I retry on your next confirm.",
                                 "gate.changes")
             return False
-        self.events.event("docs_landed", actor=wid, block=block,
-                          **{"role": "engineer", "branch": branch, "detail": detail,
-                             "via": "violation-approved"})
-        self.log("flow", f"gate[{block}] violation range landed: {detail}")
-        g.pop("violation_pending", None)
-        g.pop("violation_branch", None)
-        g.pop("violation_tip", None)
-        for w in list(self.st.workers):
-            if w.get("role") == "engineer" and w.get("block") == block:
-                self._release_worker(w, notify=False, reason="close-confirmed")
-        self.st.gate.pop(block, None)
-        self.log("flow", f"{block} close confirmed (violation range landed) -> worker released")
-        self._emit("pulse")
-        return True
+        case_id = f"repair-{block}"
+        pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
+        self._mint_or_reuse_grant(case_id, block, branch, pid)
+        g["violation_landing_case"] = case_id
+        self._order_land(wid, block, case_id, branch)
+        if self._observe_landed(branch, self._truth_ref()):
+            self._finalize_violation_landing(block, g, wid, case_id)
+            return True
+        return False   # granted + ordered; _check_violation_landing picks it up later
 
     def _gate_giveup(self, block, g, wid, detail, code, action):
         """No-silent-stuck: drop the gate + escalate to the operator (forensic record).
@@ -4628,6 +4942,7 @@ class Engine:
             self.st.save()
             return
         self._seed_seen_done()               # pre-existing ✅ are already-counted, never re-reviewed
+        self._declare_enforcement_mode()     # T3 (01-32, AC-8): detect-only floor declared LOUDLY
         self._tq = []
         self.events.event("session_start", scope=self._scope_detail(),
                           worker_count=worker_count)
@@ -4635,6 +4950,53 @@ class Engine:
         self._emit("tron:start")             # _h_bootup now spawns a live architect (no stale record)
         self._drain_triggers()
         self.st.save()
+
+    def _declare_enforcement_mode(self):
+        """T3 (01-32, ADR-0002 D2, AC-8): the accepted-floor declaration — a project
+        that took NEITHER the land-script NOR the reference-transaction hook (or whose
+        git predates 2.26, making the hook uninstallable at all) degrades to
+        DETECT-ONLY enforcement of ask-before-merging: post-hoc observation +
+        refuse-to-close + repair, no mechanical prevention. Per the ADR that floor is
+        operator-ACCEPTED — never a refusal to seat — but it must be "declared loudly
+        at boot ... stated here, not discovered later": a flow log line, a forensic
+        event, and the manifest flag (`enforcement_mode`) the console/renderer can
+        surface. Local mode only (remote mode's prevention is branch protection,
+        deferred with the remote work). Probes are pure reads: script presence on
+        disk, hook presence + executability, `git --version` through the wrapper."""
+        if not self._local_mode():
+            return
+        root = self.paths.get("root") or ""
+        script = os.path.join(root, "meta", "scripts", "land.sh")
+        have_script = bool(root) and os.path.isfile(script)
+        hooks_dir = os.path.join(root, ".git", "hooks")
+        if root and not self.dry:
+            # core.hooksPath may repoint hooks (the scaffold's own setup-repo.sh does);
+            # `rev-parse --git-path hooks` resolves it either way — a pure read on the
+            # sealed allowlist, best-effort like every other read here.
+            rc, out, _ = trunk._run(["git", "-C", root, "rev-parse", "--git-path", "hooks"])
+            if rc == 0 and out.strip():
+                p = out.strip()
+                hooks_dir = p if os.path.isabs(p) else os.path.join(root, p)
+        hook = os.path.join(hooks_dir, "reference-transaction")
+        git_ok = trunk.git_version(self.dry) >= (2, 26)
+        have_hook = bool(root) and os.path.isfile(hook) and os.access(hook, os.X_OK) and git_ok
+        if have_script or have_hook:
+            mode = "prevent+detect"
+            detail = (f"landing enforcement: {mode} (script={'yes' if have_script else 'no'}, "
+                      f"hook={'yes' if have_hook else 'no'}, git>=2.26={'yes' if git_ok else 'no'})")
+            self.log("flow", detail)
+        else:
+            mode = "detect-only"
+            detail = ("landing enforcement: DETECT-ONLY — neither meta/scripts/land.sh nor a "
+                      "reference-transaction hook is installed"
+                      + ("" if git_ok else " (git < 2.26: the hook type does not exist here)")
+                      + "; ask-before-merging is enforced post-hoc only (observe + "
+                        "refuse-to-close + repair) — the operator-accepted floor, ADR-0002 D2")
+            self.log("flow", detail)
+            self.events.failure("session-residue", "detect-only-floor",
+                                "mechanically prevent out-of-gate lands", detail,
+                                node="bootup", next_action="seat land.sh and/or the hook")
+        self.st.data["enforcement_mode"] = mode
 
     # ── bootup gateway + clean-end archive (ND-01 / T3) ──
     def _bootup_gateway(self):

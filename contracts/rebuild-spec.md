@@ -24,7 +24,7 @@ situation absent here is **out of scope for Phase 1**.
 ### A. Bootup (`ND-01 BOOTUP` — once per `tron start`)
 | # | Situation | Node | Behavior |
 |:--|:--|:--|:--|
-| A1 | Refresh trunk + open PRs, build snapshot | ND-01 | read-only (`fetch` + ff-only + `gh pr list`); TRON never writes trunk |
+| A1 | Refresh trunk + open PRs, build snapshot | ND-01 | read-only (`fetch` + truth-ref reads + `gh pr list`); TRON never writes trunk (01-32/ADR-0002 D1: the old local ff-advance is deleted — every read keys to the mode's truth ref; trunk advances only via a worker's `land.sh` under a grant) |
 | A2 | Stale trunk — refresh failed | ND-01 | **halt loud**, operator line sent *synchronously* (no MANIFEST exists yet); never a silent death |
 | A3 | Fresh run — set scope | ND-01-08 SET SCOPE | AIDE converses free-form intent → concrete block ids; validate each exists + deps satisfiable; empty scope is legitimate on a first run |
 | A4 | Fresh run — set counts | ND-01-09 SET COUNTS | `worker_count` (engineers+reviewers, shared pool) + `architect_count` (dedicated, pool-excluded); floor 1 each |
@@ -202,6 +202,10 @@ Flag candidate (ND-02)
 - **Merge to trunk** (`gate.merge`) — the **single gated merge**: PR merged, CI green; CI auto-deploys
   staging (the agent's validation target). ASK-gated when the operator turned on "ask before merging" (T8),
   with four outcomes: approve · operator merges it (agent resumes at trunk) · changes requested · drop.
+  Local mode (01-32, ADR-0002 D2): the merge is the **worker's hands, never the engine's** — on approval
+  TRON mints a one-time, patch-id-bound grant in its own folder and the worker runs `meta/scripts/land.sh`
+  (flock + live-grant validation + strict-ff + `update-ref` CAS + atomic consume/receipt); TRON only
+  observes the committed result and closes on it.
 - **Re-validate on trunk** (`gate.trunk`) — every applicable AC re-run on trunk; a block can't slide from
   merged to done without proving it there.
 - **Record** (`gate.record`, 01-11) — only after the trunk evidence is accepted, the gate orders the worker

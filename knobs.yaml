@@ -80,6 +80,11 @@ knobs:
   # not-yet-carved engineer becomes a bootstrap wall (architect-first, same case
   # machinery as every other violation). Default 5.
   carve_observe_ticks: 5
+  # Grant TTL (ADR-0002 D2, 01-32 T3): wall-clock MINUTES a minted merge/close grant
+  # stays LIVE before it expires. Expiry re-opens the case LOUDLY (architect-first,
+  # forensic failure record) — never a silent re-mint; land.sh refuses an expired
+  # grant on its own read of the same file. Default 60.
+  grant_ttl: 60
 
 # ── Reviewer cadence (PULL): <type> -> blocks between reviews ──
 # Per-type counter +1 on every block:next:done; due at threshold; reset on dispatch.
