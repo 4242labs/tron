@@ -53,6 +53,27 @@ test(s), added in this pass:
   F6 — `land.sh` validates `CASE_ID` against a safe token pattern before any path
        interpolation — `t_f6_land_sh_rejects_unsafe_case_id`.
 
+Review round 2 (adversarial review of PR #118) fixes, each with its own dedicated
+test(s), added in this pass:
+  N1 — `_trunk_sha_prev`/`_trunk_sha` used to be plain Engine instance attrs, reset
+       to "" in `__init__` — but production constructs a FRESH `Engine(ctx)` every
+       tick (wake.py), so the observed-advance window never survived a tick
+       boundary and the crash-window bypass check misfired on every legitimate
+       land. Now persisted in `self.st.trunk_sha_observed` (state.py). The F1 tests
+       above are REWRITTEN to prove it across TWO separate `Engine(ctx)`
+       constructions sharing one state file (never a manually-stubbed window) —
+       `t_f1_live_grant_content_match_authorizes_and_consumes`,
+       `t_f1_live_grant_content_mismatch_is_violation` — plus a dedicated
+       legacy-state/first-tick-safety case,
+       `t_n1_legacy_state_missing_field_degrades_safely_once`.
+  N2 — the F4 sealed-allowlist escalation handler now guards against minting an
+       unbounded case/architect-job per RECURRING trip (an existing undecided case
+       for the same origin is reused; the forensic event still fires every time) —
+       `t_n2_sealed_allowlist_recurring_trip_mints_only_one_case`.
+  N3 — `_under_scratch_root` is now fail-closed (a missing `scratch_root` REFUSES,
+       never passes unconditionally) and real-path-aware (symlinks resolved, not
+       just `..`-collapsed) — `t_n3_scratch_root_fail_closed_and_realpath`.
+
 Run: python3 engine/block_01_32_test.py   (exit 0 = pass). No tokens, no network for
 the FSM cases; the real-git case shells out to a throwaway `git init` repo, same
 convention as block_01_17_test.py/tron13_test.py.
@@ -494,9 +515,15 @@ def t_sealed_allowlist_refuses_offlist_git():
     ok("T3 seal: `worktree add` WITHOUT --detach is refused even though `worktree` "
        "is listed", not trunk._subcommand_allowed(
            ["git", "-C", d, "worktree", "add", "/tmp/x", "somebranch"]))
-    ok("T3 seal: `worktree add --detach` (scratch validation checkouts) passes",
+    # N3 (review round 2): `scratch_root` is now REQUIRED (fail-closed) — a
+    # worktree add/remove with none supplied refuses outright (see
+    # `t_n3_scratch_root_fail_closed_and_realpath`), so this positive case must
+    # supply one that actually contains the target.
+    ok("T3 seal: `worktree add --detach` (scratch validation checkouts) passes "
+       "when the target is scratch-scoped",
        trunk._subcommand_allowed(
-           ["git", "-C", d, "worktree", "add", "--detach", "-q", "/tmp/x", "abc"]))
+           ["git", "-C", d, "worktree", "add", "--detach", "-q", "/tmp/x", "abc"],
+           scratch_root="/tmp"))
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -961,47 +988,110 @@ def _events(eng):
     return util.read_jsonl(eng.ctx.event_log)
 
 
+def _eng_on(ctx, d):
+    """N1 (review round 2): wire a `Engine(ctx)` against the REAL repo `d`, non-dry —
+    the same wiring `_eng_real` does, but callable MULTIPLE TIMES against the SAME
+    ctx, so a test can construct several independent, fresh Engine objects over one
+    persisted state file — the actual production shape (wake.py's `locked_tick` +
+    daemon loop construct a brand-new `Engine(ctx)` every tick, never one long-lived
+    instance, per ADR-0002 D1's deliberate stateless rebuild-from-trunk)."""
+    eng = Engine(ctx)
+    eng.dry = False
+    eng.paths["root"] = d
+    eng.paths["main_branch"] = "main"
+    eng.paths["remote"] = None
+    return eng
+
+
 # ── F1: the per-block grantless-land detection now compares the grant's OWN
 # patch-id against the patch-id of what actually landed — never bare live/consumed
 # existence (the crash-window arm still authorizes on a genuine content match; a
 # grant whose content does NOT match what landed is the gate-bypass violation
 # shape, even though a grant record technically exists) ──
+#
+# N1 (review round 2, ADR-0002 D2): the round-1 version of these two tests proved F1's
+# CONTENT-MATCH logic by manually stubbing `eng._trunk_sha_prev`/`eng._trunk_sha` on
+# one long-lived Engine instance — which could never have caught the N1 bug (those
+# attrs are reset to "" in `__init__` and production constructs a FRESH `Engine(ctx)`
+# every tick, so `_trunk_sha_prev` was ALWAYS "" in reality; a hand-set attr on one
+# surviving instance sails right past that). Rewritten below to prove the window
+# survives the ACTUAL shape: TWO SEPARATE `Engine(ctx)` constructions sharing one
+# ctx/state file, `_refresh_from_trunk()` run for real on each, never a manually
+# stubbed window.
 def t_f1_live_grant_content_match_authorizes_and_consumes():
+    ctx, _ = build(blocks=[("A-01", "🔄", "none")])
     d = _mkrepo_detached("tron-0132-f1-match-")
-    eng = _eng_real(d)
+    # Engine A: the tick that FIRST observes trunk — a real, fresh construction,
+    # exactly like wake.py's first tick of a session.
+    eng_a = _eng_on(ctx, d)
+    eng_a.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                             "session_id": "dry", "status": "working"})
+    eng_a.st.branches["A-01"] = "feat/a-01"
+    eng_a._tq = []
+    eng_a._refresh_from_trunk()          # persists trunk_sha_observed = old_tip
     pid = trunk.patch_id(d, "feat/a-01", "main")
-    _, old_tip, _ = _git(d, "rev-parse", "main")
+    # `trunk.truth_sha` (what `_refresh_from_trunk` persists) is a SHORT sha
+    # (`rev-parse --short`) — read the observation back from the engine itself
+    # rather than re-deriving a full-length one that would never string-equal it.
+    old_tip = eng_a.st.trunk_sha_observed
     _, branch_tip, _ = _git(d, "rev-parse", "feat/a-01")
-    # Simulate land.sh having advanced the ref but crashed BEFORE its own consume:
-    # a raw update-ref (never through land.sh), grant left LIVE.
+    grants.mint(eng_a.ctx.grants_dir, "CASE-F1-OK", "A-01", "feat/a-01", pid)
+    eng_a.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
+                                      "landing_case": "CASE-F1-OK"})
+    eng_a.st.save()                       # persist gate + trunk_sha_observed to disk
+    ok("N1 setup: Engine A observed and durably persisted the pre-land trunk sha",
+       bool(old_tip), f"observed={old_tip}")
+
+    # Land: land.sh advances the ref but crashes BEFORE its own consume — a raw
+    # update-ref (never through land.sh), grant left LIVE.
     _git(d, "update-ref", "refs/heads/main", branch_tip, old_tip)
-    grants.mint(eng.ctx.grants_dir, "CASE-F1-OK", "A-01", "feat/a-01", pid)
-    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
-                                        "landing_case": "CASE-F1-OK"})
-    # What `_refresh_from_trunk` would have set this tick (the observed window).
-    eng._trunk_sha_prev = old_tip
-    eng._trunk_sha = branch_tip
-    eng._tq = []
-    eng._drive_gate("A-01", g)
-    ok("F1: a LIVE grant whose content matches the observed window still "
-       "authorizes the crash-window land (no false violation)",
-       g.get("stage") == "trunk" and "A-01" not in eng.st.blocked,
-       f"g={g} blocked={eng.st.blocked}")
+
+    # Engine B: a COMPLETELY FRESH Engine(ctx) — same ctx, but NO in-memory attr
+    # carries over from Engine A. Only `self.st` (re-read from disk) can supply the
+    # pre-advance baseline.
+    eng_b = _eng_on(ctx, d)
+    ok("N1: Engine B starts with NO in-memory trunk-sha window (a truly fresh instance)",
+       eng_b._trunk_sha_prev == "" and eng_b._trunk_sha == "")
+    eng_b._tq = []
+    eng_b._refresh_from_trunk()          # must recover old_tip from st, never from ""
+    ok("N1: Engine B's own refresh recovers the DURABLE prior observation, not ''",
+       eng_b._trunk_sha_prev == old_tip, f"prev={eng_b._trunk_sha_prev}")
+    g = eng_b.st.gate.get("A-01")
+    eng_b._drive_gate("A-01", g)
+    ok("F1/N1: a LIVE grant whose content matches the observed window still "
+       "authorizes the crash-window land (no false violation) — proven across TWO "
+       "fresh Engine(ctx) constructions, never a manually-stubbed window",
+       g.get("stage") == "trunk" and "A-01" not in eng_b.st.blocked,
+       f"g={g} blocked={eng_b.st.blocked}")
     ok("F1: the grant is consumed administratively once content is confirmed",
-       grants.read_consumed(eng.ctx.grants_dir, "CASE-F1-OK") is not None
-       and grants.read_live(eng.ctx.grants_dir, "CASE-F1-OK") is None)
+       grants.read_consumed(eng_b.ctx.grants_dir, "CASE-F1-OK") is not None
+       and grants.read_live(eng_b.ctx.grants_dir, "CASE-F1-OK") is None)
     shutil.rmtree(d, ignore_errors=True)
 
 
 def t_f1_live_grant_content_mismatch_is_violation():
+    ctx, _ = build(blocks=[("A-01", "🔄", "none")])
     d = _mkrepo_detached("tron-0132-f1-mismatch-")
-    eng = _eng_real(d)
-    arch = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
-           "status": "idle", "current_job": None, "block": None, "mbox_seq": 0}
-    eng.st.workers.append(arch)
+    eng_a = _eng_on(ctx, d)
+    eng_a.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                             "session_id": "dry", "status": "working"})
+    eng_a.st.workers.append({"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
+                             "status": "idle", "current_job": None, "block": None, "mbox_seq": 0})
+    eng_a.st.branches["A-01"] = "feat/a-01"
+    eng_a._tq = []
+    eng_a._refresh_from_trunk()
     pid = trunk.patch_id(d, "feat/a-01", "main")
-    _, old_tip, _ = _git(d, "rev-parse", "main")
-    grants.mint(eng.ctx.grants_dir, "CASE-F1-BAD", "A-01", "feat/a-01", pid)
+    # `trunk.truth_sha` (what `_refresh_from_trunk` persists) is a SHORT sha
+    # (`rev-parse --short`) — read the observation back from the engine itself
+    # rather than re-deriving a full-length one that would never string-equal it.
+    old_tip = eng_a.st.trunk_sha_observed
+    grants.mint(eng_a.ctx.grants_dir, "CASE-F1-BAD", "A-01", "feat/a-01", pid)
+    eng_a.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
+                                      "landing_case": "CASE-F1-BAD"})
+    eng_a.st.save()
+    ok("N1 setup: Engine A observed and durably persisted the pre-land trunk sha",
+       bool(old_tip), f"observed={old_tip}")
+
     # SUBSTITUTE the content before it lands: amend feat/a-01 with DIFFERENT
     # content, then force-land the tampered tip via a raw update-ref (never
     # land.sh) — the still-live grant names the ORIGINAL (now-stale) patch-id.
@@ -1012,27 +1102,68 @@ def t_f1_live_grant_content_mismatch_is_violation():
     _git(d, "checkout", "-q", "--detach", "HEAD")         # restore the detached-root seat
     _, tampered_tip, _ = _git(d, "rev-parse", "feat/a-01")
     _git(d, "update-ref", "refs/heads/main", tampered_tip, old_tip)
-    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
-                                        "landing_case": "CASE-F1-BAD"})
-    eng._trunk_sha_prev = old_tip
-    eng._trunk_sha = tampered_tip
-    eng._tq = []
-    eng._drive_gate("A-01", g)
-    eng._drain_triggers()
-    case = next((c for c in eng.st.pending_cases.values()
+
+    # Engine B: a COMPLETELY FRESH Engine(ctx) — proves the violation is caught even
+    # though NOTHING in-memory survived from Engine A's observation.
+    eng_b = _eng_on(ctx, d)
+    eng_b._tq = []
+    eng_b._refresh_from_trunk()
+    ok("N1: Engine B recovers the durable prior observation across a fresh construction",
+       eng_b._trunk_sha_prev == old_tip, f"prev={eng_b._trunk_sha_prev}")
+    g = eng_b.st.gate.get("A-01")
+    eng_b._drive_gate("A-01", g)
+    eng_b._drain_triggers()
+    case = next((c for c in eng_b.st.pending_cases.values()
                 if c.get("block") == "A-01"), None)
-    ok("F1: existing grant + substituted content landed via raw update-ref -> "
-       "detected as a violation, never authorized by the grant's bare existence",
-       case is not None and "A-01" not in eng.st.gate, f"case={case} gate={eng.st.gate}")
+    ok("F1/N1: existing grant + substituted content landed via raw update-ref -> "
+       "detected as a violation, never authorized by the grant's bare existence — "
+       "proven across TWO fresh Engine(ctx) constructions",
+       case is not None and "A-01" not in eng_b.st.gate, f"case={case} gate={eng_b.st.gate}")
     ok("F1: the case names the gate-bypass shape",
        bool(case) and case.get("kind") == "gate-bypass", f"case={case}")
+    arch_b = next(w for w in eng_b.st.workers if w.get("role") == "architect")
     ok("F1: routed architect-first",
-       (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
+       (arch_b.get("current_job") or {}).get("kind") == "triage", f"arch={arch_b}")
     ok("F1: the block never closes on it (blocked, no gate)",
-       "A-01" in eng.st.blocked, f"blocked={eng.st.blocked}")
+       "A-01" in eng_b.st.blocked, f"blocked={eng_b.st.blocked}")
     ok("F1: the stale grant is left untouched — never falsely consumed",
-       grants.read_live(eng.ctx.grants_dir, "CASE-F1-BAD") is not None
-       and grants.read_consumed(eng.ctx.grants_dir, "CASE-F1-BAD") is None)
+       grants.read_live(eng_b.ctx.grants_dir, "CASE-F1-BAD") is not None
+       and grants.read_consumed(eng_b.ctx.grants_dir, "CASE-F1-BAD") is None)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── N1 (review round 2): a state file that predates `trunk_sha_observed` (or a
+# genuine first-ever tick) must degrade SAFELY — adopt the current tip as baseline
+# (an empty window this tick: nothing to sweep, no bypass check misfires), never
+# treat the absent field as a literal "" that could misfire repeatedly. Because the
+# observation is persisted immediately, the gap is a ONE-TIME event, never a
+# repeating violation storm. ──
+def t_n1_legacy_state_missing_field_degrades_safely_once():
+    ctx, _ = build(blocks=[("A-01", "🔄", "none")])
+    d = _mkrepo_detached("tron-0132-n1-legacy-")
+    eng = _eng_on(ctx, d)
+    eng.st.workers.append({"id": "ENG-A-01", "role": "engineer", "block": "A-01",
+                           "session_id": "dry", "status": "working"})
+    eng.st.branches["A-01"] = "feat/a-01"
+    ok("N1 legacy: a fresh/legacy state file has no trunk_sha_observed key at all",
+       "trunk_sha_observed" not in eng.st.data)
+    eng._tq = []
+    eng._refresh_from_trunk()
+    ok("N1 legacy: the first tick with an absent field adopts the CURRENT tip as "
+       "baseline (old==new) rather than leaving a bogus empty-string prev",
+       eng._trunk_sha_prev == eng._trunk_sha and bool(eng._trunk_sha),
+       f"prev={eng._trunk_sha_prev} new={eng._trunk_sha}")
+    ok("N1 legacy: the observation is persisted immediately — the gap is ONE-TIME",
+       eng.st.trunk_sha_observed == eng._trunk_sha)
+    baseline = eng.st.trunk_sha_observed
+
+    # A second tick (nothing advanced) proves the gap never repeats: the SAME
+    # persisted value feeds `prev`, not another "adopt baseline" pass.
+    eng._tq = []
+    eng._refresh_from_trunk()
+    ok("N1 legacy: the second tick has a REAL persisted prev, confirming the "
+       "degrade-safely path only ever fires once",
+       eng._trunk_sha_prev == baseline)
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -1114,6 +1245,60 @@ def t_f3_worktree_add_remove_scoped_to_scratch_root():
     shutil.rmtree(d, ignore_errors=True)
 
 
+# ── N3 (review round 2): `_under_scratch_root` is (a) now FAIL-CLOSED — a missing
+# `scratch_root` REFUSES rather than passing unconditionally — and (b) REAL, not
+# lexical: both sides are realpath'd (symlinks resolved) before the containment
+# compare, so a symlink physically inside scratch_root that points outside it can't
+# talk its way past a bare `normpath` check either. ──
+def t_n3_scratch_root_fail_closed_and_realpath():
+    d = _mkrepo("tron-0132-n3-")
+    scratch = os.path.join(d, "meta", "agents", "tron", "scratch")
+    os.makedirs(scratch, exist_ok=True)
+
+    # (a) NO scratch_root supplied at all -> REFUSE (fail-closed), never the old
+    # unconditional pass-through.
+    noroot_target = os.path.join(scratch, "wt-noroot")
+    raised_missing = False
+    try:
+        trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q", noroot_target, "HEAD"])
+    except trunk.SealedAllowlistViolation:
+        raised_missing = True
+    ok("N3: worktree add/remove with NO scratch_root supplied is REFUSED "
+       "(fail-closed, not an unconditional pass)", raised_missing)
+    ok("N3: the refused add never materialized a worktree", not os.path.exists(noroot_target))
+
+    # (b) a symlink PHYSICALLY inside scratch_root but pointing OUTSIDE it -> refused.
+    # A lexical-only check (bare os.path.normpath) never resolves the symlink and
+    # would see this path as textually contained; realpath must catch it.
+    outside_real = os.path.join(d, "outside-real")
+    os.makedirs(outside_real, exist_ok=True)
+    escape_link = os.path.join(scratch, "escape-link")
+    os.symlink(outside_real, escape_link)
+    target_via_symlink = os.path.join(escape_link, "wt")
+    raised_symlink = False
+    try:
+        trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q",
+                   target_via_symlink, "HEAD"], scratch_root=scratch)
+    except trunk.SealedAllowlistViolation:
+        raised_symlink = True
+    ok("N3: a symlink INSIDE scratch_root pointing OUTSIDE it is refused "
+       "(realpath, not lexical normpath alone)", raised_symlink)
+    ok("N3: the refused symlink-escape add never materialized a worktree",
+       not os.path.exists(os.path.join(outside_real, "wt")))
+
+    # (c) a legitimate scratch-scoped add/remove (a real scratch_root, no symlink
+    # trickery) is still allowed — the fail-closed default doesn't break the one
+    # real caller.
+    legit = os.path.join(scratch, "wt-legit")
+    okc, _, errc = trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q",
+                               legit, "HEAD"], scratch_root=scratch)
+    ok("N3: a legitimate scratch-scoped worktree add is still allowed", okc == 0, f"err={errc}")
+    okr, _, errr = trunk._run(["git", "-C", d, "worktree", "remove", "--force", legit],
+                              scratch_root=scratch)
+    ok("N3: a legitimate scratch-scoped worktree remove is still allowed", okr == 0, f"err={errr}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 # ── F4: a tripped seal escalates as its OWN distinct forensic kind + VIOLATION
 # case, never the generic handler-raised/handler-exception bucket ──
 def t_f4_sealed_allowlist_violation_escalates_distinctly():
@@ -1143,6 +1328,54 @@ def t_f4_sealed_allowlist_violation_escalates_distinctly():
        case is not None, f"cases={eng.st.pending_cases}")
     ok("F4: routed architect-first",
        (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
+
+
+# ── N2 (review round 2): the F4 handler must not mint an unbounded case/architect
+# job per trip — a RECURRING trip (same origin, still undecided) reuses the existing
+# case; the forensic event is still recorded on EVERY trip, only the case/job MINT
+# is guarded (contrast `_h_escalate`'s own `if block in self.st.blocked: return`). ──
+def t_n2_sealed_allowlist_recurring_trip_mints_only_one_case():
+    eng = _eng()
+    arch = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
+           "status": "idle", "current_job": None, "block": None, "mbox_seq": 0}
+    eng.st.workers.append(arch)
+    orig_route = eng._route
+
+    def _boom(trig, slots):
+        raise trunk.SealedAllowlistViolation("git subcommand refused: update-ref")
+    eng._route = _boom
+    try:
+        eng._tq = [("some:trigger", {"block": "A-01"})]
+        eng._drain_triggers()
+        eng._tq = [("some:trigger", {"block": "A-01"})]   # a SECOND, recurring trip
+        eng._drain_triggers()
+    finally:
+        eng._route = orig_route
+    fails = [e for e in _events(eng) if e.get("kind") == "failure"
+            and e.get("code") == "sealed-allowlist-tripped"]
+    ok("N2: the forensic event is still recorded on EVERY trip, never silenced",
+       len(fails) == 2, f"fails={fails}")
+    cases = [c for c in eng.st.pending_cases.values()
+            if c.get("kind") == "sealed-allowlist-tripped"]
+    ok("N2: two consecutive trips for the SAME origin mint only ONE case (idempotent)",
+       len(cases) == 1, f"cases={eng.st.pending_cases}")
+
+    # Once the open case is DECIDED, a further trip is a genuinely NEW episode and
+    # mints its own case again — the guard is against an UNDECIDED duplicate only,
+    # never a permanent one-case-ever cap.
+    cid = next(c for c in eng.st.pending_cases)
+    eng.st.pending_cases[cid]["decision"] = "ack"
+    eng._route = _boom
+    try:
+        eng._tq = [("some:trigger", {"block": "A-01"})]
+        eng._drain_triggers()
+    finally:
+        eng._route = orig_route
+    cases_after = [c for c in eng.st.pending_cases.values()
+                  if c.get("kind") == "sealed-allowlist-tripped"]
+    ok("N2: once the open case is decided, a further trip mints a fresh one "
+       "(the guard targets an undecided duplicate, not a lifetime cap)",
+       len(cases_after) == 2, f"cases={eng.st.pending_cases}")
 
 
 # ── F5 (AC-4 update): the already-landed arm must confirm the grant's content is
@@ -1212,10 +1445,13 @@ def main():
               t_detect_only_floor,
               t_f1_live_grant_content_match_authorizes_and_consumes,
               t_f1_live_grant_content_mismatch_is_violation,
+              t_n1_legacy_state_missing_field_degrades_safely_once,
               t_f2_plain_wall_autosettles_on_observed_done,
               t_f2_violation_case_never_autosettles_hold_stays,
               t_f3_worktree_add_remove_scoped_to_scratch_root,
+              t_n3_scratch_root_fail_closed_and_realpath,
               t_f4_sealed_allowlist_violation_escalates_distinctly,
+              t_n2_sealed_allowlist_recurring_trip_mints_only_one_case,
               t_f5_stale_regressed_branch_refuses_false_already_landed,
               t_f6_land_sh_rejects_unsafe_case_id):
         fn()

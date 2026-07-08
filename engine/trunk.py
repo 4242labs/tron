@@ -80,29 +80,45 @@ class SealedAllowlistViolation(RuntimeError):
 
 
 def _resolve_under(repo_root, path):
-    """Normalize `path` to an absolute, `..`-collapsed form — relative to `repo_root`
-    if not already absolute (both shapes are valid `git worktree add/remove` targets).
-    F3 (review round 1): `os.path.normpath` collapses a `../` traversal trick BEFORE
-    any prefix comparison, so a path that merely LOOKS like it's under the scratch
-    root on its face can't talk its way past the check by walking back out of it."""
+    """Resolve `path` to an absolute, `..`-collapsed, SYMLINK-RESOLVED form — relative
+    to `repo_root` if not already absolute (both shapes are valid `git worktree
+    add/remove` targets).
+    F3 (review round 1): `..`-traversal collapsed BEFORE any prefix comparison, so a
+    path that merely LOOKS like it's under the scratch root on its face can't talk its
+    way past the check by walking back out of it.
+    N3 (review round 2): `os.path.realpath` (not bare `normpath`) — realpath collapses
+    `..` too, but ALSO resolves symlinks. A lexical-only check can be defeated by a
+    symlink that sits (textually) inside the scratch root but physically points
+    outside it; the path must be REAL, not just textually contained."""
     if not path:
         return None
     p = path if os.path.isabs(path) else os.path.join(repo_root or "", path)
-    return os.path.normpath(p)
+    return os.path.realpath(p)
 
 
 def _under_scratch_root(repo_root, target, scratch_root):
-    """F3 (review round 1, ADR-0002 D1): is `target` (a worktree add/remove path)
-    resolved-and-collapsed under `scratch_root`? `scratch_root` absent/falsy is the
-    documented pre-01-32 floor (`validate_trunk`'s own "never a hard requirement" —
-    a project that hasn't seated the scratch convention still validates) — every
-    PRODUCTION call site (fsm.py) always supplies `ctx.scratch_dir`, so this fallback
-    is exercised only by direct trunk.py-level unit tests (e.g. block_01_28_test.py)
-    that predate the scratch convention entirely, never by the engine itself."""
+    """F3 (review round 1, ADR-0002 D1) / N3 (review round 2): is `target` (a worktree
+    add/remove path) resolved, symlink-followed, and `..`-collapsed under
+    `scratch_root`?
+
+    N3 fail-closed fix: `scratch_root` absent/falsy used to be an unconditional PASS
+    (the pre-01-32 floor, "a project that hasn't seated the scratch convention still
+    validates") — but that meant ANY caller that simply forgot to pass `scratch_root`
+    got a worktree add/remove allowed ANYWHERE, silently. Every PRODUCTION call site
+    (fsm.py) always supplies `ctx.scratch_dir` (never falsy), so refusing outright on
+    a missing `scratch_root` costs production nothing and closes the opt-in gap:
+    a worktree add/remove with NO scratch_root is now REFUSED, not waved through.
+    `worktree list` (no path target at all — a pure read) never reaches this function
+    in the first place (`_subcommand_allowed` returns before calling it), so it stays
+    free regardless, per the ADR.
+
+    N3 real-path fix: both sides are resolved via `_resolve_under` (realpath, symlinks
+    followed) before the containment compare — a symlink physically escaping
+    `scratch_root` is caught even if its own path textually looks contained."""
     if not scratch_root:
-        return True
+        return False
     resolved = _resolve_under(repo_root, target)
-    root = os.path.normpath(scratch_root)
+    root = os.path.realpath(os.path.normpath(scratch_root))
     return resolved is not None and (resolved == root or resolved.startswith(root + os.sep))
 
 
@@ -793,10 +809,11 @@ def validate_trunk(repo_root, merged_sha, test_command, test_env=None,
     `scratch_root` (01-32 T2, ADR-0002 D1): where the clean validation checkout is
     carved — Decision 1 names these "the engine's validation checkouts (for the
     retained declared-command trunk verdict)" as the scratch-worktree-admin exception,
-    scoped to `meta/agents/tron/scratch/`. The caller (fsm.py) passes `ctx.scratch_dir`;
-    None falls back to the system tempdir (pre-01-32 behavior — never a hard
-    requirement, since a project that hasn't seated the scratch convention must still
-    validate)."""
+    scoped to `meta/agents/tron/scratch/`. The caller (fsm.py) passes `ctx.scratch_dir`
+    (never falsy in production). N3 (review round 2): a missing `scratch_root` is now a
+    FAIL-CLOSED refusal, not a silent fallback to the system tempdir — `_run`'s sealed
+    allowlist raises `SealedAllowlistViolation` for the worktree add underneath this
+    call. Any caller that needs a real validation run MUST supply `scratch_root`."""
     if dry:
         return "pass", "dry"
     if not repo_root or not merged_sha:

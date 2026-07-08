@@ -200,6 +200,15 @@ class Engine:
                                                        # independently re-derive "the patch-id of the
                                                        # landed range" over the SAME observed window,
                                                        # never just trusting a grant's bare existence.
+                                                       # N1 (review round 2): this in-memory attr is
+                                                       # STILL reset to "" here every construction —
+                                                       # that's fine now, because `_refresh_from_trunk`
+                                                       # no longer seeds `prev` from this attr; it reads
+                                                       # the durable `self.st.trunk_sha_observed` instead
+                                                       # (see there), which is the one that actually
+                                                       # survives the fresh-Engine-per-tick reconstruction
+                                                       # (ADR-0002 D1). This attr is now purely a same-tick
+                                                       # convenience mirror of that value.
         self._snapshot_hash = ""                      # hash of the rebuilt trunk-read snapshot (per-tick provenance)
         self._trunk_fault = False                     # T3 (01-16): this tick's trunk read came back blank
         self.events = eventlog.EventLog(ctx, self._log_env)
@@ -407,8 +416,27 @@ class Engine:
             # T2 (01-32, ADR-0002 D1): truth_sha, never head_sha — a detached (or
             # stale-attached remote-mode) root's literal HEAD no longer tracks trunk's
             # position once the branch advances by ref alone (update-ref CAS, no checkout).
-            prev = self._trunk_sha
+            # N1 (review round 2, ADR-0002 D2): read the DURABLE last-observed sha, never
+            # the plain instance attr — production constructs a fresh `Engine(ctx)` every
+            # tick (wake.py `locked_tick` + daemon loop, deliberate stateless
+            # rebuild-from-trunk per ADR-0002 D1), so an attr reset in `__init__` would
+            # ALWAYS read "" here regardless of what any prior tick observed. `self.st`
+            # is the one thing that actually survives both the next tick's fresh Engine
+            # and a process restart (it's `self.st.save()`'d at the end of every tick).
+            prev = self.st.trunk_sha_observed
             self._trunk_sha = trunk.truth_sha(self.paths["root"], self._truth_ref(), self.dry)
+            if not prev and self._trunk_sha:
+                # N1: never observed before — either a genuine first tick, or a state
+                # file saved before `trunk_sha_observed` existed (legacy upgrade). There
+                # is no real "last observed" position to window against in either case;
+                # treating an absent `prev` as a literal empty string (as the old bug
+                # effectively did every tick) would make the fail-closed branches below
+                # look like a window against "the dawn of history" is expected, when
+                # really nothing is known. Adopt the CURRENT tip as the baseline instead:
+                # this tick's own window collapses to old==new (empty — nothing to sweep,
+                # no bypass check misfires), and the NEXT tick gets a real, one-tick-wide
+                # window from here. Deliberately safe-by-default, never a violation storm.
+                prev = self._trunk_sha
             # F1 (review round 1): persist the PRE-advance sha past this call — the
             # per-block bypass check in `_drive_gate` (later THIS SAME tick) needs the
             # identical (old, new) window to independently verify a grant's content,
@@ -421,6 +449,9 @@ class Engine:
             # first-parent walk over <last-observed>..<tip>, per the ADR.
             if prev and self._trunk_sha and prev != self._trunk_sha:
                 self._sweep_grant_consume(prev, self._trunk_sha)
+            # N1: persist THIS tick's observation durably so the NEXT tick's fresh
+            # Engine (or a restart) can recover the real window, not "".
+            self.st.trunk_sha_observed = self._trunk_sha
         else:
             # Fail LOUD, never silent (T6/S1-10): a swallowed ff-failure leaves a stale snapshot
             # -> duplicate dispatch. Count consecutive failures; bootup (count=False) has no
@@ -630,8 +661,25 @@ class Engine:
                     inputs={"trigger": trig, "slots": {k: str(v)[:200] for k, v in slots.items()}},
                     next_action="architect: audit the caller that attempted the "
                                 "off-allowlist git subcommand")
-                cid = self._open_case(slots.get("block"), "sealed-allowlist-tripped", None, detail)
-                self._triage_to_architect(detail, block=slots.get("block"), case=cid)
+                # N2 (review round 2): idempotency guard — a RECURRING trip (the same
+                # caller tripping the seal again before the operator/architect has
+                # resolved the first one) must never mint a second case + a second
+                # architect job; that's unbounded duplicate cases for one ongoing fault.
+                # Same discipline `_h_escalate` already uses for its own dedupe
+                # (`if block in self.st.blocked: return`), applied here against the
+                # correlating "origin" — the block this trip is attributed to (`None`
+                # is its own valid origin: block-less trips dedupe against each other
+                # the same way). The forensic event above is recorded on EVERY trip
+                # regardless — only the case/architect-job MINT is guarded, so a
+                # recurring trip stays fully visible in the event log, just never
+                # duplicated into unbounded operator-facing cases.
+                origin = slots.get("block")
+                already_open = any(c.get("kind") == "sealed-allowlist-tripped"
+                                   and c.get("block") == origin and c.get("decision") is None
+                                   for c in self.st.pending_cases.values())
+                if not already_open:
+                    cid = self._open_case(origin, "sealed-allowlist-tripped", None, detail)
+                    self._triage_to_architect(detail, block=origin, case=cid)
             except Exception as e:
                 self.log("flow", f"handler for '{trig}' raised: {e}")
                 self.events.failure(
