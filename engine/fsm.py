@@ -2410,7 +2410,21 @@ class Engine:
         allow, deny, _ = self._paperwork_rules(self.st.block_roles.get(block), block)
         if not trunk.delta_has_code(self.paths["root"], merged, cur_tip, allow,
                                     self.dry, denylist=deny):
-            return None                      # paperwork-only descendant -> the paperwork lane owns it
+            # ADR-0002 D2 completeness (closed 260708, live-wave hard fail): at the
+            # RECORD stage this paperwork-only descendant IS the ordered status-flip
+            # (PMT-DONE-RECORD: "this one commit is gate-authorized") — and under D2
+            # the ONLY path to trunk is land.sh + a live grant, which nothing minted:
+            # both reset-wave-1b/2b runs wedged exactly here, workers walling
+            # "land.sh is grant-gated and no grant exists". Mint-order-observe, the
+            # SAME protocol as every other landing site; the delta is already
+            # guaranteed paperwork-only by delta_has_code's fail-closed allowlist,
+            # and close-time record_commit_ok still content-checks the commit itself.
+            # Any other held stage keeps the old hold (the flip is only ever ordered
+            # at record). The ghost_ladder drill (tron-meta) is this arm's
+            # acceptance test.
+            if g.get("stage") == "record":
+                self._drive_record_paperwork_landing(block, g, wid, branch, cur_tip)
+            return None                      # never a stage change — the ✅ advances via trunk truth
         if g.get("approved_merge") and g.get("case_tip") and cur_tip != g.get("case_tip"):
             if trunk.patch_id_matches(self.paths["root"], g["case_tip"], cur_tip,
                                       self._truth_ref(), self.dry):
@@ -2459,6 +2473,52 @@ class Engine:
                          f"({str(merged)[:7]} -> {str(g['merged_sha'])[:7]}) -> "
                          f"re-validate on trunk")
         return "trunk"
+
+    def _drive_record_paperwork_landing(self, block, g, wid, branch, cur_tip):
+        """The RECORD-stage paperwork landing (ADR-0002 D2 completeness, 260708):
+        mint (or reuse) a patch-id-bound grant for the ordered status-flip parked on
+        the worker's branch and order the WORKER to land it — the engine's eyes, the
+        worker's hands, identical to the merge gate's own mint-order-observe. Never
+        advances the stage: the record's own advance is trunk truth (the refreshed
+        row reading ✅ -> _h_worker_recorded -> close), same as before. Fail-closed:
+        an unresolvable patch-id ("") never mints (grants.mint's rider), a non-ff
+        branch holds quietly (the worker's rebase ritual re-enters on its next
+        report), an expired grant re-opens loudly via the same shared arm.
+        Observation comes FIRST when a case is already in flight (_confirm_close's
+        own ordering) — an already-landed flip must consume, never re-run the
+        ff-ability check against a branch that IS the trunk tip now."""
+        case_id = g.get("record_landing_case")
+        if case_id:
+            if self._observe_landed(branch, self._truth_ref()):
+                self._consume_grant_administratively(case_id)
+                g.pop("record_landing_case", None)
+                self.log("flow", f"gate[{block}] record paperwork landed "
+                                 f"({cur_tip[:7]}) — the ✅ advances on refresh")
+                return
+            if self._grant_expired_reopen(block, g, case_id, wid):
+                return
+            return                       # granted + ordered; observed on a later tick
+        ok, err = trunk.merge_ff_only(self.paths["root"], branch,   # pure ff-ability check
+                                      self.paths.get("main_branch", "main"), self.dry,
+                                      require_detached=self._local_mode())
+        if not ok:
+            self.log("flow", f"gate[{block}] record paperwork non-ff: {err.strip()}")
+            return
+        case_id = f"record-{block}-{cur_tip[:8]}"
+        pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
+        if not pid and not self.dry:
+            self.log("flow", f"gate[{block}] record paperwork: unresolvable patch-id, "
+                             f"no grant minted (fail-closed)")
+            return
+        self._mint_or_reuse_grant(case_id, block, branch, pid)
+        g["record_landing_case"] = case_id
+        if self._observe_landed(branch, self._truth_ref()):
+            self._consume_grant_administratively(case_id)   # landed same-tick (race)
+            g.pop("record_landing_case", None)
+            self.log("flow", f"gate[{block}] record paperwork landed ({cur_tip[:7]}) — "
+                             f"the ✅ advances on refresh")
+            return
+        self._order_land(wid, block, case_id, branch)
 
     def _local_mode(self):
         """No remote declared -> the root checkout IS the authority (local mode, #89)."""
@@ -2882,7 +2942,8 @@ class Engine:
         # out-of-gate change wearing the record's clothes -> escalate, don't close.
         if g.get("stage") == "record" and not g.get("record_checked"):
             okc, detail = trunk.record_commit_ok(
-                self.paths["root"], self._block_relpath(block), self.dry)
+                self.paths["root"], self._block_relpath(block), self.dry,
+                truth_ref=self._truth_ref())
             if not okc:
                 self._gate_giveup(block, g, wid,
                                   f"record commit non-conforming: {detail}",

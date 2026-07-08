@@ -704,7 +704,7 @@ def _lines_scoped_ok(repo_root, branch, path, token, main_branch="main"):
     return True
 
 
-def record_commit_ok(repo_root, block_file, dry=False):
+def record_commit_ok(repo_root, block_file, dry=False, truth_ref="main"):
     """The record-commit content check (01-11 FX-3): inspect the LAST commit that touched the
     block doc — its OWN diff, never a trunk range (with worker_count > 1 another block's merge
     can land between merge-accept and record; a range check would false-positive a legitimate
@@ -712,11 +712,16 @@ def record_commit_ok(repo_root, block_file, dry=False):
     path — a same-named file elsewhere never passes) and every changed line is the
     `**Status:**` field. Anything else is an out-of-gate change wearing the record's clothes.
     `block_file` must be the repo-relative path (the caller resolves it from the blocks dir).
-    Returns (ok, detail)."""
+
+    T2-parity (01-32 truth-ref rekeying, closed 260708): the log walk is keyed to
+    `truth_ref`, never the bare working checkout — on the D1 detached-root seat a
+    rev-less `git log` walks the STALE detached HEAD's history and reads the base
+    commit as the doc's last toucher (found by the ghost_ladder drill; unreachable
+    live until the record-stage mint arm existed). Returns (ok, detail)."""
     if dry or not repo_root or not block_file:
         return True, "dry/none"
     rc, out, err = _run(["git", "-C", repo_root, "log", "-n", "1", "--format=%H",
-                         "--", block_file])
+                         truth_ref, "--", block_file])
     sha = out.strip()
     if rc != 0 or not sha:
         return False, f"no commit found touching {block_file}"
