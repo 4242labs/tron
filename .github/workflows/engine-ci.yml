@@ -30,6 +30,12 @@ jobs:
           git config --global user.email "ci@tron.local"
           git config --global user.name "tron-ci"
 
+      - name: Install dependencies
+        # No requirements.txt exists in this repo (never needed one — every prior dev
+        # environment had it installed globally). PyYAML is the engine's one third-party
+        # import (util.py); everything else it imports is stdlib or a local module.
+        run: pip install pyyaml
+
       - name: Run the full engine test suite
         run: |
           set -euo pipefail
