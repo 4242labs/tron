@@ -3136,7 +3136,11 @@ class Engine:
                 continue
             if code != "ok":
                 return "blocked", f"{branch}: {code}: {detail}"
-            case_id = f"paperwork-{role}-{branch}"
+            # Case id must stay inside land.sh's safe-token alphabet — branch names
+            # carry '/' (arch/01-02-forward), which the script refuses before any
+            # path interpolation (260708 wedge: a minted-but-unlandable grant).
+            case_id = "paperwork-{}-{}".format(
+                role, re.sub(r"[^A-Za-z0-9._-]", "-", str(branch)))
             pid = trunk.patch_id(self.paths["root"], branch, self._truth_ref(), self.dry)
             self._mint_or_reuse_grant(case_id, None, branch, pid)
             grants_live[branch] = case_id
