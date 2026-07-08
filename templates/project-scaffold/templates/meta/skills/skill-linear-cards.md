@@ -118,13 +118,14 @@ back to the agent, model, host, and session that produced it:
 
 ```markdown
 ---
-🤖 _<AGENT_ROLE> · <MODEL> @ <HOST> · Session `<SESSION_ID>`_
+🤖 _<AGENT_ROLE> · <MODEL> @ <HOST> · Session `<SESSION_ID>` · <YYYY-MM-DD HH:MM UTC>_
 ```
 
 - `<MODEL>` — human name of the model running (e.g. `Claude Opus 4.8`).
 - `<HOST>` — the machine the agent is running on (e.g. its hostname).
 - `<SESSION_ID>` — the current session id (short prefix is enough); this is the traceability
   anchor — it ties the card to the exact transcript that created it.
+- `<YYYY-MM-DD HH:MM UTC>` — legible timestamp, always in **UTC** (e.g. `2026-07-08 13:07 UTC`).
 
 Fill these from the live runtime at create time, not from the placeholder literals. On an
 **update** that materially changes the card, you may append a second signature line rather than
