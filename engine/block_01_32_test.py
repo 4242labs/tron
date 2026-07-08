@@ -1,9 +1,9 @@
-"""block_01_32_test — merge inversion T1+T2 (ADR-0002 D1+D2).
+"""block_01_32_test — merge inversion T1+T2+T3 (ADR-0002 D1+D2).
 
-T1 (worker close rituals) + T2 (read-path refactor) coverage this session reaches
-(block doc `blocks/01-32-merge-inversion.md`); T3 (grants, land.sh, hook, verify_docs,
-mutation-arm deletion, docs reconciliation) is NOT covered here — see the PR body /
-final report for exactly what remains out of scope this session.
+T1 (worker close rituals), T2 (read-path refactor), AND T3 (grants, land.sh, the
+sealed wrapper allowlist, verify_docs, mutation-arm deletion) all have coverage in
+this file — see the AC-1..AC-8 tests in the T3 section below (grants.py, land.sh,
+the reference-transaction hook). Docs reconciliation is not code and carries no test.
 
   AC-2 test:clobber_dead — the wave-1b stale-branch pipeline clobber cannot land stale
        content: `trunk.merge_ff_only`'s 01-17 auto-rebase-and-retry arm is retired
@@ -21,6 +21,37 @@ final report for exactly what remains out of scope this session.
   AC-6 test:<root_reattach_detected> (T2) — both halves: `merge_ff_only`'s own
        structural refusal while the root is attached (landing holds), and the engine's
        per-tick detection (same tick, existing case machinery, self-clearing).
+
+  AC-3/AC-4/AC-5/AC-7/AC-8 (T3) — grant lifecycle (mint/consume/expire/administrative
+       consume), land.sh's own protocol (lock, CAS, already-landed arm), concurrent
+       closes, verify_docs parity, and the detect-only floor.
+
+Review round 1 (adversarial review of PR #118) fixes, each with its own dedicated
+test(s), added in this pass:
+  F1 — the per-block grantless-land detection now compares the grant's OWN patch-id
+       against the patch-id of what actually landed (never bare live/consumed
+       existence) — `t_f1_live_grant_content_match_authorizes_and_consumes` (the
+       legitimate crash-window shape still authorizes) and
+       `t_f1_live_grant_content_mismatch_is_violation` (an existing grant + substituted
+       content landed via a raw `update-ref` is caught as a gate-bypass violation, the
+       block never closes on it).
+  F2 — `_auto_settle_walls_for_block`/`_on_block_done` now exempt VIOLATION_KINDS from
+       auto-settle and the hold-release — `t_f2_plain_wall_autosettles_on_observed_done`
+       (regression: a plain mis-tagged wall still self-heals) and
+       `t_f2_violation_case_never_autosettles_hold_stays` (a gate-bypass case survives
+       observed-done, the block stays held).
+  F3 — `trunk._subcommand_allowed` now scopes `worktree add/remove` to the scratch
+       root structurally (normalize + reject `..` traversal), not caller convention —
+       `t_f3_worktree_add_remove_scoped_to_scratch_root`.
+  F4 — a `SealedAllowlistViolation` raised inside a handler now escalates as its own
+       distinct forensic kind + an architect-routed VIOLATION case, never the generic
+       `handler-raised`/`handler-exception` bucket —
+       `t_f4_sealed_allowlist_violation_escalates_distinctly`.
+  F5 — `land.sh`'s already-landed arm now confirms the grant's content is actually
+       present in the branch's own history before trusting bare ancestry —
+       `t_f5_stale_regressed_branch_refuses_false_already_landed`.
+  F6 — `land.sh` validates `CASE_ID` against a safe token pattern before any path
+       interpolation — `t_f6_land_sh_rejects_unsafe_case_id`.
 
 Run: python3 engine/block_01_32_test.py   (exit 0 = pass). No tokens, no network for
 the FSM cases; the real-git case shells out to a throwaway `git init` repo, same
@@ -919,6 +950,248 @@ def t_detect_only_floor():
     shutil.rmtree(d, ignore_errors=True)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Review round 1 (adversarial review of PR #118): F1–F6, each with its own test(s).
+# F7 (the stale module docstring) is the docstring update above — no test of its own.
+# ══════════════════════════════════════════════════════════════════════════════
+import util                                                # noqa: E402
+
+
+def _events(eng):
+    return util.read_jsonl(eng.ctx.event_log)
+
+
+# ── F1: the per-block grantless-land detection now compares the grant's OWN
+# patch-id against the patch-id of what actually landed — never bare live/consumed
+# existence (the crash-window arm still authorizes on a genuine content match; a
+# grant whose content does NOT match what landed is the gate-bypass violation
+# shape, even though a grant record technically exists) ──
+def t_f1_live_grant_content_match_authorizes_and_consumes():
+    d = _mkrepo_detached("tron-0132-f1-match-")
+    eng = _eng_real(d)
+    pid = trunk.patch_id(d, "feat/a-01", "main")
+    _, old_tip, _ = _git(d, "rev-parse", "main")
+    _, branch_tip, _ = _git(d, "rev-parse", "feat/a-01")
+    # Simulate land.sh having advanced the ref but crashed BEFORE its own consume:
+    # a raw update-ref (never through land.sh), grant left LIVE.
+    _git(d, "update-ref", "refs/heads/main", branch_tip, old_tip)
+    grants.mint(eng.ctx.grants_dir, "CASE-F1-OK", "A-01", "feat/a-01", pid)
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
+                                        "landing_case": "CASE-F1-OK"})
+    # What `_refresh_from_trunk` would have set this tick (the observed window).
+    eng._trunk_sha_prev = old_tip
+    eng._trunk_sha = branch_tip
+    eng._tq = []
+    eng._drive_gate("A-01", g)
+    ok("F1: a LIVE grant whose content matches the observed window still "
+       "authorizes the crash-window land (no false violation)",
+       g.get("stage") == "trunk" and "A-01" not in eng.st.blocked,
+       f"g={g} blocked={eng.st.blocked}")
+    ok("F1: the grant is consumed administratively once content is confirmed",
+       grants.read_consumed(eng.ctx.grants_dir, "CASE-F1-OK") is not None
+       and grants.read_live(eng.ctx.grants_dir, "CASE-F1-OK") is None)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_f1_live_grant_content_mismatch_is_violation():
+    d = _mkrepo_detached("tron-0132-f1-mismatch-")
+    eng = _eng_real(d)
+    arch = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
+           "status": "idle", "current_job": None, "block": None, "mbox_seq": 0}
+    eng.st.workers.append(arch)
+    pid = trunk.patch_id(d, "feat/a-01", "main")
+    _, old_tip, _ = _git(d, "rev-parse", "main")
+    grants.mint(eng.ctx.grants_dir, "CASE-F1-BAD", "A-01", "feat/a-01", pid)
+    # SUBSTITUTE the content before it lands: amend feat/a-01 with DIFFERENT
+    # content, then force-land the tampered tip via a raw update-ref (never
+    # land.sh) — the still-live grant names the ORIGINAL (now-stale) patch-id.
+    _git(d, "checkout", "-q", "feat/a-01")
+    with open(os.path.join(d, "meta", "pipeline.md"), "w") as fh:
+        fh.write("| A-01 | done |\n| A-02 | done |\n")   # sneaks A-02 done too
+    _git(d, "commit", "-aqm", "A-01 done (tampered)", "--amend")
+    _git(d, "checkout", "-q", "--detach", "HEAD")         # restore the detached-root seat
+    _, tampered_tip, _ = _git(d, "rev-parse", "feat/a-01")
+    _git(d, "update-ref", "refs/heads/main", tampered_tip, old_tip)
+    g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None,
+                                        "landing_case": "CASE-F1-BAD"})
+    eng._trunk_sha_prev = old_tip
+    eng._trunk_sha = tampered_tip
+    eng._tq = []
+    eng._drive_gate("A-01", g)
+    eng._drain_triggers()
+    case = next((c for c in eng.st.pending_cases.values()
+                if c.get("block") == "A-01"), None)
+    ok("F1: existing grant + substituted content landed via raw update-ref -> "
+       "detected as a violation, never authorized by the grant's bare existence",
+       case is not None and "A-01" not in eng.st.gate, f"case={case} gate={eng.st.gate}")
+    ok("F1: the case names the gate-bypass shape",
+       bool(case) and case.get("kind") == "gate-bypass", f"case={case}")
+    ok("F1: routed architect-first",
+       (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
+    ok("F1: the block never closes on it (blocked, no gate)",
+       "A-01" in eng.st.blocked, f"blocked={eng.st.blocked}")
+    ok("F1: the stale grant is left untouched — never falsely consumed",
+       grants.read_live(eng.ctx.grants_dir, "CASE-F1-BAD") is not None
+       and grants.read_consumed(eng.ctx.grants_dir, "CASE-F1-BAD") is None)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── F2: auto-settle/hold-release now exempt VIOLATION_KINDS — a plain mis-tagged
+# wall still self-heals; a gate-bypass (or any GATE_GIVEUP_SPLIT_CODES) case never
+# does, and the block stays held even once the row reads done ──
+def t_f2_plain_wall_autosettles_on_observed_done():
+    eng = _eng()
+    wid = "ENG-A-01"
+    eng._tq = []
+    eng._h_escalate({"block": "A-01", "worker_id": wid,
+                     "detail": "mis-tagged — actually done"})
+    cid = next(iter(eng.st.pending_cases))
+    ok("F2 setup: a plain wall case is open, undecided",
+       eng.st.pending_cases[cid].get("kind") == "wall"
+       and eng.st.pending_cases[cid].get("decision") is None)
+    eng._on_block_done("A-01")
+    ok("F2: a plain mis-tagged wall STILL auto-settles on observed-done "
+       "(regression guard — F-1 self-healing survives the VIOLATION_KINDS split)",
+       cid not in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+    ok("F2: the hold releases too", "A-01" not in eng.st.blocked,
+       f"blocked={eng.st.blocked}")
+
+
+def t_f2_violation_case_never_autosettles_hold_stays():
+    eng = _eng()
+    wid = "ENG-A-01"
+    eng._tq = []
+    eng._h_escalate({"block": "A-01", "worker_id": wid,
+                     "detail": "merged outside the gate (no matching grant)",
+                     "code": "gate-bypass"})
+    cid = next(iter(eng.st.pending_cases))
+    ok("F2 setup: the case is a VIOLATION kind (gate-bypass), undecided",
+       eng.st.pending_cases[cid].get("kind") == "gate-bypass"
+       and eng.st.pending_cases[cid].get("decision") is None)
+    ok("F2 setup: the block is held", "A-01" in eng.st.blocked)
+    eng._on_block_done("A-01")
+    ok("F2: the VIOLATION case survives — never auto-settled by observed-done",
+       cid in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+    ok("F2: the block STAYS held even though the row reads done (ADR-0002 D2)",
+       "A-01" in eng.st.blocked, f"blocked={eng.st.blocked}")
+
+
+# ── F3: `worktree add/remove` scoped to the scratch root STRUCTURALLY — normalize
+# + reject `..` traversal, never caller convention alone ──
+def t_f3_worktree_add_remove_scoped_to_scratch_root():
+    d = _mkrepo("tron-0132-f3-scratch-")
+    scratch = os.path.join(d, "meta", "agents", "tron", "scratch")
+    os.makedirs(scratch, exist_ok=True)
+    inside = os.path.join(scratch, "wt1")
+    outside = os.path.join(d, "outside-wt")
+    raised = False
+    try:
+        trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q", outside, "HEAD"],
+                  scratch_root=scratch)
+    except trunk.SealedAllowlistViolation:
+        raised = True
+    ok("F3: worktree add OUTSIDE the scratch root raises SealedAllowlistViolation", raised)
+    ok("F3: the refused add never materialized a worktree", not os.path.exists(outside))
+
+    traversal = os.path.join(scratch, "..", "..", "..", "escape-wt")
+    raised2 = False
+    try:
+        trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q", traversal, "HEAD"],
+                  scratch_root=scratch)
+    except trunk.SealedAllowlistViolation:
+        raised2 = True
+    ok("F3: a `../` traversal trick resolving outside scratch is refused", raised2)
+
+    okc, _, errc = trunk._run(["git", "-C", d, "worktree", "add", "--detach", "-q", inside, "HEAD"],
+                              scratch_root=scratch)
+    ok("F3: a scratch-scoped `worktree add --detach` is allowed", okc == 0, f"err={errc}")
+    okr, _, errr = trunk._run(["git", "-C", d, "worktree", "remove", "--force", inside],
+                              scratch_root=scratch)
+    ok("F3: a scratch-scoped `worktree remove` is allowed", okr == 0, f"err={errr}")
+    ok("F3: `worktree list` stays free regardless of scratch_root",
+       trunk._subcommand_allowed(["git", "-C", d, "worktree", "list", "--porcelain"],
+                                 scratch_root=scratch))
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# ── F4: a tripped seal escalates as its OWN distinct forensic kind + VIOLATION
+# case, never the generic handler-raised/handler-exception bucket ──
+def t_f4_sealed_allowlist_violation_escalates_distinctly():
+    eng = _eng()
+    arch = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
+           "status": "idle", "current_job": None, "block": None, "mbox_seq": 0}
+    eng.st.workers.append(arch)
+    orig_route = eng._route
+
+    def _boom(trig, slots):
+        raise trunk.SealedAllowlistViolation("git subcommand refused: update-ref")
+    eng._route = _boom
+    try:
+        eng._tq = [("some:trigger", {"block": "A-01"})]
+        eng._drain_triggers()
+    finally:
+        eng._route = orig_route
+    fails = [e for e in _events(eng) if e.get("kind") == "failure"]
+    ok("F4: a tripped seal produces the DISTINCT code, never the generic "
+       "'handler-exception' bucket",
+       any(e.get("code") == "sealed-allowlist-tripped" for e in fails), f"fails={fails}")
+    ok("F4: NOT filed as an ordinary handler-raised event",
+       not any(e.get("code") == "handler-exception" for e in fails), f"fails={fails}")
+    case = next((c for c in eng.st.pending_cases.values()
+                if c.get("kind") == "sealed-allowlist-tripped"), None)
+    ok("F4: a VIOLATION-kind case is opened for the tripped seal",
+       case is not None, f"cases={eng.st.pending_cases}")
+    ok("F4: routed architect-first",
+       (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
+
+
+# ── F5 (AC-4 update): the already-landed arm must confirm the grant's content is
+# actually present, never trust bare ancestry — a regressed branch tip refuses
+# loudly instead of a false "already landed, exit 0" ──
+def t_f5_stale_regressed_branch_refuses_false_already_landed():
+    d = _mkrepo_detached("tron-0132-f5-stale-")
+    gd = tempfile.mkdtemp(prefix="tron-0132-f5-grants-")
+    pid = trunk.patch_id(d, "feat/a-01", "main")
+    grants.mint(gd, "CASE-STALE", "A-01", "feat/a-01", pid)
+    # Regress the branch: force it back onto trunk's OWN unchanged tip — it now
+    # carries NOTHING new, yet is (trivially) an ancestor of trunk.
+    _git(d, "branch", "-f", "feat/a-01", "main")
+    r = _run_land(d, "CASE-STALE", gd)
+    ok("F5: a regressed branch tip (no new content) is REFUSED, never a false "
+       "already-landed exit 0",
+       r.returncode != 0, f"rc={r.returncode} out={r.stdout} err={r.stderr}")
+    ok("F5: the refusal names the unconfirmed-content shape (never a silent pass)",
+       "could not be confirmed" in r.stderr, f"err={r.stderr}")
+    ok("F5: the grant is untouched — neither consumed nor deleted",
+       grants.read_live(gd, "CASE-STALE") is not None
+       and grants.read_consumed(gd, "CASE-STALE") is None,
+       f"live={grants.read_live(gd, 'CASE-STALE')}")
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(gd, ignore_errors=True)
+
+
+# ── F6: CASE_ID validated against a safe token pattern BEFORE any path
+# interpolation ──
+def t_f6_land_sh_rejects_unsafe_case_id():
+    d = _mkrepo_detached("tron-0132-f6-")
+    gd = tempfile.mkdtemp(prefix="tron-0132-f6-grants-")
+    for bad_id in ("../../etc/passwd", "case/with/slash", "case;rm -rf", "case id"):
+        r = _run_land(d, bad_id, gd)
+        ok(f"F6: unsafe case id {bad_id!r} is rejected before any path use",
+           r.returncode == 2 and "invalid case id" in r.stderr,
+           f"rc={r.returncode} err={r.stderr}")
+    ok("F6: rejecting an unsafe case id never creates anything under the grants dir",
+       not os.listdir(gd) if os.path.isdir(gd) else True)
+    # A safe token still works normally (regression guard).
+    pid = trunk.patch_id(d, "feat/a-01", "main")
+    grants.mint(gd, "CASE-OK.1_2-3", "A-01", "feat/a-01", pid)
+    r = _run_land(d, "CASE-OK.1_2-3", gd)
+    ok("F6: a safe case id (letters/digits/._-) still lands normally",
+       r.returncode == 0, f"rc={r.returncode} err={r.stderr}")
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(gd, ignore_errors=True)
+
+
 def main():
     for fn in (t_clobber_dead_real_git, t_non_ff_orders_rebase_not_wall,
               t_held_approval_never_retries_without_fresh_report,
@@ -936,7 +1209,15 @@ def main():
               t_administrative_consume_first_parent_walk,
               t_concurrent_closes_cas,
               t_verify_docs_parity,
-              t_detect_only_floor):
+              t_detect_only_floor,
+              t_f1_live_grant_content_match_authorizes_and_consumes,
+              t_f1_live_grant_content_mismatch_is_violation,
+              t_f2_plain_wall_autosettles_on_observed_done,
+              t_f2_violation_case_never_autosettles_hold_stays,
+              t_f3_worktree_add_remove_scoped_to_scratch_root,
+              t_f4_sealed_allowlist_violation_escalates_distinctly,
+              t_f5_stale_regressed_branch_refuses_false_already_landed,
+              t_f6_land_sh_rejects_unsafe_case_id):
         fn()
     bad = [r for r in _results if not r[1]]
     for name, good, detail in _results:
