@@ -354,8 +354,14 @@ def t_admission_is_declarative():
                      {"kind": "worker", "id": "ENG-A-01"})
     ok("S-2 table admits the receipt AT record", got is not None, f"got={got}")
     # worker.wall pre-gate: `block: True` means canon block, never "gate open".
+    # `detail` carries the stated reason (01-31, ADR-0002 D3: a contentless wall is
+    # NAK'd at this same checkpoint — this fixture is testing the block/gate axis, not
+    # content-integrity, so it carries a real reason exactly like a real report would
+    # via _structured's own detail-from-text carry).
     eng2 = _eng()
-    got = eng2._admit("worker.wall", {"block": "A-01", "_raw": "walled: npm broken"},
+    got = eng2._admit("worker.wall",
+                      {"block": "A-01", "detail": "walled: npm broken",
+                       "_raw": "walled: npm broken"},
                       {"kind": "worker", "id": "ENG-A-01"})
     ok("S-2 a pre-gate wall still fires (block means canon row, not open gate)",
        got is not None, f"got={got}")

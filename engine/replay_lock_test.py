@@ -28,12 +28,20 @@ past-defect stream produces the SAME outcome pre- and post-consolidation"):
      unchanged by 01-26, so both Engine classes share them unmodified — fsm.py is the
      only moving part, which is exactly what a differential needs to isolate. The
      comparison then asserts case-kind, escalation, and pacing-decision outcomes are
-     IDENTICAL between the two versions — with ONE deliberate, named exception: T2
+     IDENTICAL between the two versions — with TWO deliberate, named exceptions: T2
      (R-05) intentionally renames a gate-giveup case's `kind` from the pre-consolidation
      generic `'wall'` bucket to its own code (e.g. `'gate-contradiction'`) — that is the
      block's own stated purpose, not a regression, and the differential asserts that
      exact narrow divergence rather than pretending it doesn't exist. `gate-step-cap`,
      deliberately left unsplit, IS asserted byte-identical (kind=='wall' in both).
+     SECOND exception (block 01-31, ADR-0002 D3): every wall now routes architect-first
+     — with no architect online (this fixture's shape), `_h_escalate`'s fallback is
+     `_triage_to_architect`'s own no-architect arm, which pages via
+     `escalate.unclassified` rather than the pre-01-31 direct `escalate.wall`. The
+     differential asserts case count and held-worker status stay byte-identical, and
+     that exactly ONE page fires either way — naming the page-EVENT-NAME divergence
+     explicitly rather than silently reconciling it (see
+     `t_ab_treadmill_identical_pre_post`).
 
   `git show 28224cb:...` reads a LOCAL git object already fetched into this repo's
   ODB (no network at test time — same "no tokens, no network" guarantee as every other
@@ -172,8 +180,13 @@ def t_treadmill_stream_collapses_to_one_case():
                  if c.get("kind") in WALL_KINDS and c.get("block") == "01-adhoc-review-fixes"]
     ok(f"T3 {_TRON26_TREADMILL_CASES} recorded re-observations collapse to exactly ONE "
        f"case (never the historical treadmill)", len(wall_cases) == 1, f"cases={wall_cases}")
+    # 01-31 (ADR-0002 D3): architect-first, always — with no architect online (this
+    # fixture's shape), the page fires via _triage_to_architect's no-architect fallback
+    # (escalate.unclassified), never the pre-01-31 direct escalate.wall. Either way,
+    # exactly ONE page for the whole collapsed treadmill, never once per re-observation.
     ok("T3 the operator was paged exactly once, not once per re-observation",
-       sum(1 for tid, _ in sent if tid == "escalate.wall") == 1, f"sent={sent}")
+       sum(1 for tid, _ in sent if tid in ("escalate.wall", "escalate.unclassified")) == 1,
+       f"sent={sent}")
     w = next(x for x in eng.st.workers if x["id"] == wid)
     ok("T3 the worker is held exactly once (never re-held on each repeat)",
        w.get("status") == "walled", f"w={w}")
@@ -254,8 +267,13 @@ def _replay_treadmill(engine_cls):
     wall_cases = [c for c in eng.st.pending_cases.values()
                  if c.get("kind") == "wall" and c.get("block") == "01-adhoc-review-fixes"]
     w = next(x for x in eng.st.workers if x["id"] == wid)
+    # 01-31 (ADR-0002 D3, the SECOND named divergence — see module docstring): the
+    # post-engine pages via escalate.unclassified (architect-first, no-architect
+    # fallback), the pre-engine via the direct escalate.wall. n_pages counts either —
+    # the divergence itself is asserted separately, by engine_cls, in the caller.
     return {"n_cases": len(wall_cases),
-            "n_pages": sum(1 for tid, _ in sent if tid == "escalate.wall"),
+            "n_pages": sum(1 for tid, _ in sent
+                          if tid in ("escalate.wall", "escalate.unclassified")),
             "worker_status": w.get("status")}
 
 

@@ -475,6 +475,73 @@ def _admission_table(ctx, routing):
                    "; ".join(problems))]
 
 
+# ── Content-integrity lint (01-31, ADR-0002 Decision 5; P8) ──
+# "Content-bearing slots are schema-required; missing content is a loud protocol error;
+# no substitution, no truncation, no silent discard." The class of bug this repo actually
+# shipped: `detail = m.get("detail", "wall")` (fsm.py:1053, wave-1b) laundered a MISSING
+# worker-reported reason into a fake literal that reached a case as if the worker said it.
+# `require_content(field)` (fsm.py) is the one sanctioned choke-point primitive; a caller
+# reaching for `.get(field, <non-empty default>)` on a content-bearing field is reaching
+# for the exact banned pattern instead. `.get(field, "")` / `.get(field, None)` / a bare
+# `.get(field)` are the sanctioned idioms (an explicit "treat missing as empty, then
+# require/branch on it" — never mistaken for a value the sender actually said) and are
+# NOT flagged. CONTENT_FIELDS names every schema-marked content-bearing slot
+# (messages.schema.yaml: `detail` is the one slot a sender may fill with free prose).
+CONTENT_FIELDS = ("detail",)
+# Allowlist for genuinely optional slots some caller may legitimately backstop with a
+# literal default — keyed (basename, exact stripped source line) so an allowed line is
+# named explicitly here, never inferred/pattern-matched away. Empty by design: every
+# current content-field default in the engine uses the sanctioned ""/None idiom instead.
+CONTENT_LINT_ALLOWLIST = set()
+
+_CONTENT_GET_RE = re.compile(
+    r"""\.get\(\s*["'](%s)["']\s*,\s*([^)]+?)\s*\)""" % "|".join(CONTENT_FIELDS))
+
+
+def content_field_lint(paths):
+    """Greppable pattern (AC-6): flag `.get("<content-field>", <default>)` for every
+    schema-marked content-bearing field, wherever `default` is anything other than the
+    sanctioned `""`/`None` idiom. Returns (ok, violations) — violations is a list of
+    "path:lineno: source" strings, empty when clean. `paths` is the caller-supplied file
+    list (kept explicit, not auto-discovered, so a fixture file can be scanned in
+    isolation for the RED/GREEN proof without touching the real tree)."""
+    violations = []
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for i, line in enumerate(fh, 1):
+                if line.strip().startswith("#"):
+                    continue                      # a whole-line comment, never live code
+                for m in _CONTENT_GET_RE.finditer(line):
+                    default = m.group(2).strip()
+                    if default in ('""', "''", "None"):
+                        continue
+                    if (os.path.basename(path), line.strip()) in CONTENT_LINT_ALLOWLIST:
+                        continue
+                    violations.append(f"{path}:{i}: {line.strip()}")
+    return not violations, violations
+
+
+def _engine_source_files():
+    """Every engine source module (never the *_test.py files — a test legitimately
+    WRITES the banned pattern as its own RED fixture). Glob, not a hand-kept list, so a
+    new engine module is scanned the day it lands."""
+    import glob
+    here = os.path.dirname(os.path.abspath(__file__))
+    return sorted(p for p in glob.glob(os.path.join(here, "*.py"))
+                  if not os.path.basename(p).endswith("_test.py"))
+
+
+def _content_integrity():
+    # L26 (01-31, AC-6): the no-default content-field lint, wired into the full-lint run
+    # over the engine's own source (never a project instance's — this is an engine-repo
+    # class rule, not per-project composition).
+    ok26, violations = content_field_lint(_engine_source_files())
+    return [Result("L26 no-default content-field lint (ADR-0002 D5)", ok26,
+                   "; ".join(violations))]
+
+
 # ── VERSION rule (M-06): the instance's stamped tron_version vs its own copied
 # canon VERSION — the two are written from the same source at every seed, so any
 # gap means the instance was patched or partially re-seeded, not fully. A canon
@@ -507,7 +574,7 @@ def run(ctx, project=None):
                + _version(ctx, project) + _reply_contract(ctx)
                + _reply_prefixes(ctx) + _emit_only_renders(ctx)
                + _admission_table(ctx, routing) + _paperwork_sanity(project)
-               + _worker_contract(ctx))
+               + _worker_contract(ctx) + _content_integrity())
     return all(x.ok for x in results), results
 
 

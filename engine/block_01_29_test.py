@@ -11,9 +11,15 @@ ADR-tron-post-wave1-enhancements.md §C).
       line it used to gate survived untouched (still fires on every `worker.wall`,
       stamped or not — there is no other caller of `_own_wall` left anywhere).
   T3  F-1 (a stale wall on already-settled/already-done work must self-clear, zero
-      operator page) stays closed WITHOUT retract: the real fix was always the
-      engine-OBSERVED `_sweep_wall_invariant` (fsm.py ~3488), independent of
-      `_h_retract` — untouched by this block, proven here.
+      operator page) stayed closed WITHOUT retract via the engine-OBSERVED
+      `_sweep_wall_invariant`, independent of `_h_retract` — proven here at the time.
+      SUPERSEDED (block 01-31, ADR-0002 D3/D5): `_sweep_wall_invariant` is retired
+      entirely (both its arms became structurally unreachable once `_close_case` owns
+      every worker-hold release by construction); F-1 self-healing now lives in
+      `_auto_settle_walls_for_block` (called from `_on_block_done` the instant the
+      evidence-ratchet observes ✅ on trunk), never a sweep tick. Full depth for the new
+      mechanism lives in block_01_31_test.py; the tests below only prove the OLD
+      mechanism is gone and `_sweep()` no longer touches a walled worker at all.
 
 AC-2 (exact grep, must be EMPTY):
   grep -n "_own_wall\|_h_retract\|worker.retract\|retract_own_wall" \
@@ -197,71 +203,50 @@ def t2_no_other_caller_of_own_wall_remains():
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# AC-3: F-1 stays closed WITHOUT retract — the engine-observed sweep, not a verb
+# AC-3: F-1 stays closed WITHOUT retract — SUPERSEDED by block 01-31 (ADR-0002 D3/D5):
+# `_sweep_wall_invariant` is retired outright. These tests now only prove the OLD
+# mechanism is gone; the NEW mechanism's full depth lives in block_01_31_test.py.
 # ══════════════════════════════════════════════════════════════════════════════════
 
-def ac3_f1_autoclear_fires_zero_operator_page():
-    """The real F-1 protection was always `_sweep_wall_invariant` arm (a): a worker
-    walled on ALREADY-DONE work whose case already carries a decision (settled by some
-    other path) but was never un-held self-clears at the next sweep pass — case closed,
-    worker released, queued verbs replayed — with ZERO operator page (no escalate.wall,
-    no tg.escalate) anywhere across the whole episode. This is the untouched T3
-    guarantee this block depends on; `_h_retract` was never load-bearing for it."""
-    eng = _eng()
-    eng.st.row("A-01")["status"] = "done"       # already-done work
-    # A live gate (close-out still pending on trunk) — the realistic shape of "done
-    # work" mid-close, and keeps _all_settled() from cascading into an unrelated
-    # session-end teardown of the still-walled worker (block_01_27_test's own note on
-    # this exact seam: never let an unrelated session-lifecycle concern into a sweep test).
-    eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
-    wid = "ENG-A-01"
-    cid = _wall(eng, "A-01", wid, detail="stale wall on already-done work")
-    sent = _capture(eng)
-    # The case settles via some other path (operator/architect/anything) but nothing
-    # ever un-held the worker — the exact inconsistency the sweep exists to repair.
-    eng.st.pending_cases[cid]["decision"] = "resume"
-    eng.dry = False
-    clock = {"t": 1000.0}
-    eng._now_s = lambda: clock["t"]
-    try:
-        eng._sweep()                       # anchors wall_bad_since; too soon to repair
-        w = next(x for x in eng.st.workers if x["id"] == wid)
-        ok("AC-3 setup: the sweep does not act inside one silence window",
-           w.get("status") == "walled", f"w={w}")
-        clock["t"] += 6 * 60 + 1           # past silence_ping_min (default 6)
-        eng._sweep()                       # cap fires -> arm (a) repairs
-    finally:
-        eng.dry = True
-    ok("AC-3 the case is closed", cid not in eng.st.pending_cases,
-       f"cases={eng.st.pending_cases}")
-    w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("AC-3 the worker is un-held", w.get("status") != "walled", f"w={w}")
-    ok("AC-3 ZERO operator page across the whole episode (no escalate.wall / "
-       "tg.escalate — engine-observed, never a page)",
-       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
+def ac3_sweep_wall_invariant_is_retired():
+    """01-31 (ADR-0002 D5): `_sweep_wall_invariant` (both arms) is deleted outright, not
+    kept as a backstop — the case that opens a worker's hold is now the ONLY thing that
+    can close it (`_close_case`/`_release_case_hold`), so the drift this sweep used to
+    repair can no longer occur. Structural proof, mirroring T2's own _own_wall check."""
+    ok("AC-3 _sweep_wall_invariant no longer exists as an Engine attribute/method",
+       not any(n == "_sweep_wall_invariant" for n in dir(Engine)))
 
 
-def ac3_undecided_wall_on_done_work_still_waits_never_a_false_autoclear():
-    """Regression guard: a wall whose case is still UNDECIDED must never auto-clear just
-    because the underlying block happens to be 'done' — arm (a) keys strictly on
-    case-decision state, never block status."""
+def ac3_sweep_no_longer_touches_a_walled_worker():
+    """Regression guard for the retirement: `_sweep()` must simply SKIP a walled worker
+    now (no repair, no un-hold, no re-raise) — a directly-mutated `decision` field on a
+    case that bypassed `_close_case` (the old arm-(a) shape) stays inert forever under
+    `_sweep()` alone, because closing a case is no longer sweep's job. The real F-1
+    replacement (`_auto_settle_walls_for_block`, driven by `_on_block_done` observing ✅
+    on trunk) is exercised in block_01_31_test.py, not here."""
     eng = _eng()
     eng.st.row("A-01")["status"] = "done"
     eng.st.gate.setdefault("A-01", {"stage": "close", "pr": None})
     wid = "ENG-A-01"
-    _wall(eng, "A-01", wid, detail="a real, still-undecided wall")
+    cid = _wall(eng, "A-01", wid, detail="stale wall on already-done work")
+    eng.st.pending_cases[cid]["decision"] = "resume"   # bypasses _close_case, on purpose
+    sent = _capture(eng)
     eng.dry = False
     clock = {"t": 1000.0}
     eng._now_s = lambda: clock["t"]
     try:
         eng._sweep()
         clock["t"] += 6 * 60 + 1
-        eng._sweep()
+        eng._sweep()                       # no arm (a) left to fire
     finally:
         eng.dry = True
     w = next(x for x in eng.st.workers if x["id"] == wid)
-    ok("AC-3 regression: a still-UNDECIDED wall on done work stays walled "
-       "(never a false autoclear)", w.get("status") == "walled", f"w={w}")
+    ok("AC-3 the worker stays walled — sweep alone never un-holds it anymore",
+       w.get("status") == "walled", f"w={w}")
+    ok("AC-3 the case stays open — sweep alone never closes it anymore",
+       cid in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
+    ok("AC-3 zero operator page from the sweep itself either way",
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════

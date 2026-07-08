@@ -11,10 +11,16 @@
      worker on release (raise-and-resolve), delivered through the same worker-inbox
      path every settle-driven notice uses. A spec-ownable decision-wall (kind ∈
      scope/blueprint/design) routes to the architect first — same kind vocabulary
-     _h_await already reads — never a new case kind; an operator-only wall still
-     pages the operator directly. The architect's own answer to a routed wall IS the
-     content-carrying settle (architect-relayed), released through the SAME
-     close-case/unhold/replay seam.
+     _h_await already reads — never a new case kind. The architect's own answer to a
+     routed wall IS the content-carrying settle (architect-relayed), released through
+     the SAME close-case/unhold/replay seam.
+     SUPERSEDED by block 01-31 (ADR-0002 D3/T3): SPEC_OWNABLE_KINDS is no longer the
+     gate on architect-first routing — EVERY wall kind routes architect-first now
+     (universal rule); the two tests that used to prove "operator-only" kinds page the
+     operator directly (`ac4_operator_only_wall_pages_the_operator_directly`,
+     `ac4_no_kind_wall_pages_the_operator_directly_default_unchanged`) are updated below
+     to prove the new architect-first behavior instead. Direct operator paging survives
+     only for architect raise/dead/fleet-hold/TRIAGE-self (block_01_31_test.py's AC-2).
   T4 (AC-5) settle parsing is ONE deterministic point (_settle_regex): a negating
      settle ("don't approve CASE-7") never matches the affirmative handler — fail-
      closed, re-prompts with the accepted forms instead of guessing; a bare
@@ -321,27 +327,38 @@ def ac4_spec_ownable_wall_routes_to_the_architect_first():
        and "design" in SPEC_OWNABLE_KINDS)
 
 
-def ac4_operator_only_wall_pages_the_operator_directly():
+def ac4_non_spec_ownable_wall_now_also_routes_architect_first():
+    """SUPERSEDED by block 01-31 (ADR-0002 D3/T3): SPEC_OWNABLE_KINDS stopped being a
+    special case — every wall kind routes architect-first now, this one included. What
+    used to be "operator-only" (kind not in scope/blueprint/design) reaches the
+    architect exactly like a spec-ownable wall when one is online; direct operator
+    paging is reserved for architect raise/dead/fleet-hold/TRIAGE-self only (proven in
+    block_01_31_test.py's AC-2)."""
     eng = _eng()
     wid = "ENG-A-01"
-    _arch_idle(eng)                       # an architect being online must not matter here
+    arch = _arch_idle(eng)
     sent = _capture(eng)
     cid = _wall(eng, "A-01", wid, detail="the CI provider is down", kind="policy")
-    ok("AC-4 an operator-only wall (kind not in SPEC_OWNABLE_KINDS) pages the operator",
-       any(tid == "escalate.wall" and s.get("case") == cid for tid, s in sent), f"sent={sent}")
-    arch = next(w for w in eng.st.workers if w.get("role") == "architect")
-    ok("AC-4 the architect is NOT dispatched this wall",
-       arch.get("current_job") is None, f"arch={arch}")
+    ok("AC-4 (01-31) a non-spec-ownable wall routes to the architect, not the operator",
+       (arch.get("current_job") or {}).get("kind") == "triage"
+       and arch["current_job"].get("case") == cid, f"arch={arch}")
+    ok("AC-4 (01-31) no direct operator page for this wall",
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
 
 
-def ac4_no_kind_wall_pages_the_operator_directly_default_unchanged():
+def ac4_no_kind_wall_now_also_routes_architect_first():
+    """SUPERSEDED by block 01-31 (same rationale as above): a kindless wall is no longer
+    a special "default to operator" case either — architect-first is universal."""
     eng = _eng()
     wid = "ENG-A-01"
-    _arch_idle(eng)
+    arch = _arch_idle(eng)
     sent = _capture(eng)
     cid = _wall(eng, "A-01", wid, detail="stuck, no kind given")
-    ok("AC-4 a wall with no declared kind keeps today's default (operator, direct)",
-       any(tid == "escalate.wall" and s.get("case") == cid for tid, s in sent), f"sent={sent}")
+    ok("AC-4 (01-31) a kindless wall routes to the architect when one is online",
+       (arch.get("current_job") or {}).get("kind") == "triage"
+       and arch["current_job"].get("case") == cid, f"arch={arch}")
+    ok("AC-4 (01-31) no direct operator page",
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
 
 
 def ac4_architect_relayed_answer_settles_the_routed_wall():
