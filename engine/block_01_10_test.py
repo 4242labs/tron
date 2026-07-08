@@ -35,6 +35,7 @@ import judge           # noqa: E402
 import jobs            # noqa: E402
 from ctx import Ctx    # noqa: E402
 from fsm import Engine  # noqa: E402
+from sentry_test import seed_trivial_roles  # noqa: E402
 
 _results = []
 
@@ -117,6 +118,7 @@ def _mini_ctx(remote="__omit__"):
             repo["remote"] = remote
         with open(os.path.join(d, "project.yaml"), "w") as fh:
             json.dump({"repo": repo}, fh)          # JSON is valid YAML -> the loader reads it
+    seed_trivial_roles(d)   # ADR-0002 D4: Engine(ctx) fails closed without roles.yaml
     return Ctx(d)
 
 

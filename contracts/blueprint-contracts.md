@@ -340,7 +340,8 @@ Runs in `validate` / `doctor` (D3, implemented in `engine/lint.py`). A malformed
 ### Composition-level (over `knobs.yaml` against `project.yaml`)
 - **L10** `worker_count` knob is declared (value may be null → asked at runtime).
 - **L11** Every cadence `<type>` maps to a positive-int threshold.
-- **L12** Session shape valid (`persistent_architect` is a bool).
+- **L12** (retired, ADR-0002 D4/01-33 — `persistent_architect` moved to roles.yaml's
+  per-role `persistent:`, fail-closed validated at Engine construction, not here).
 - **L13** Project roles sane (skipped if no `project.yaml › agents`).
 - **L14** WAKE timing knobs are positive ints.
 - **L15** WAKE cooldown floor ≤ ceiling.

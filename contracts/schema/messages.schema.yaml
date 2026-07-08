@@ -40,11 +40,10 @@ templates:
 
   # dispatch / spawn (worker channel) — each references a PMT id, never inline copy.
   # SPAWN is identity-only (01-07): every role uses PMT-SPAWN; the work follows on `online` (assign.*).
-  spawn.engineer:   {channel: worker,   slots: [worker_id, role, persona, report], pmt: PMT-SPAWN}
-  spawn.architect:  {channel: worker,   slots: [worker_id, role, persona, report], pmt: PMT-SPAWN}
-  spawn.reviewer:   {channel: worker,   slots: [worker_id, role, persona, report], pmt: PMT-SPAWN}
-  assign.engineer:  {channel: worker,   slots: [worker_id, assignment, merge_path, report], pmt: PMT-ASSIGN}   # work, after engineer reports online
-  assign.reviewer:  {channel: worker,   slots: [worker_id, assignment, merge_path, report], pmt: PMT-ASSIGN}   # work, after reviewer reports online
+  # ADR-0002 D4 (01-33 T4): one role-generic template each — `{role}` rides as slot DATA,
+  # never as part of the template id — so an injected project role needs no new entry here.
+  spawn.worker:     {channel: worker,   slots: [worker_id, role, persona, report], pmt: PMT-SPAWN}
+  assign.worker:    {channel: worker,   slots: [worker_id, assignment, merge_path, report], pmt: PMT-ASSIGN}   # work, after any role reports online
   arch.forward:     {channel: worker,   slots: [block, worker_id, report],  pmt: PMT-SCOPE}          # architect scope-forward job
   arch.reconcile:   {channel: worker,   slots: [block, after, worker_id, report], pmt: PMT-RECONCILE}      # architect reconcile-ahead job
   arch.remediation: {channel: worker,   slots: [type, worker_id, report],   pmt: PMT-SCOPE-REMEDIATION} # architect review-remediation job

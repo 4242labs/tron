@@ -189,7 +189,7 @@ def t1_uncorrelated_landing_is_inert():
 def t1_reviewer_landing_never_completes_the_architects_job():
     eng = _eng()
     arch = _arch(eng, job={"kind": "reconcile", "block": "A-01"})
-    rev = {"id": "REV-code", "role": "reviewer", "rtype": "code", "session_id": "dry",
+    rev = {"id": "REV-code", "role": "reviewer-code", "rtype": "code", "session_id": "dry",
           "status": "working", "block": "review:code", "pending_landings": ["rev-findings"]}
     eng.st.workers.append(rev)
     calls = _capture_reconcile(eng)
@@ -676,13 +676,15 @@ def t3b_canary_probe_is_role_agnostic_and_bypasses_the_gate():
     jobs.is_alive = lambda wid, idx=None: False
     try:
         # a REVIEWER refusal death elects a role-tagged reviewer canary (its rtype)
+        # ADR-0002 D4: the fixture's REVIEW-bound role is "reviewer-code" (the trivial
+        # scaffold's roles.yaml), never a bare "reviewer" literal.
         eng._fleet_refusal_hold()["active"] = True
-        eng._drive_fleet_refusal_hold({"id": "REV-code", "role": "reviewer",
+        eng._drive_fleet_refusal_hold({"id": "REV-code", "role": "reviewer-code",
                                        "rtype": "code", "session_id": "real"})
         hold = eng._fleet_refusal_hold()
         ok("T3b(MAJOR-2) a reviewer death elects a role-tagged reviewer canary keyed on rtype "
            "(an engineer-only election would wedge the hold when the deaths are reviewers)",
-           hold.get("canary") == "code" and hold.get("canary_role") == "reviewer", f"hold={hold}")
+           hold.get("canary") == "code" and hold.get("canary_role") == "reviewer-code", f"hold={hold}")
         eng._sweep_fleet_refusal_canary({})
         ok("T3b(MAJOR-2) the reviewer canary probes via _dispatch_reviewer, never _redispatch",
            reviewer == ["code"] and redispatch == [], f"rev={reviewer} rd={redispatch}")
@@ -1110,7 +1112,7 @@ def t5_architect_review_done_on_forward_job_also_flips():
 
 def t5_reviewer_role_review_done_unaffected():
     eng = _eng()
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                           "session_id": "dry", "status": "working", "block": "review:code"})
     tag, slots = eng._resolve_by_sender("worker.done", {}, {"kind": "worker", "id": "REV-code"})
     ok("T5 a reviewer's plain done still flips to worker.review_done, unaffected",

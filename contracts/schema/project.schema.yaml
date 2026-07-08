@@ -18,23 +18,26 @@ pointers:
 pipeline_path: <path>       # REQUIRED. e.g. meta/pipeline.md
 blocks_dir:    <path>       # REQUIRED. e.g. meta/blocks/
 archive_dir:   <path>       # REQUIRED. e.g. meta/blocks/archive/
+roles_path:    <path>       # OPTIONAL. Default meta/tron/roles.yaml (ADR-0002 D4/01-33).
+                            # The project-authored fleet: capability-class binding, personas,
+                            # models, selectors, paperwork scopes — TRON ships none of it and
+                            # hardcodes no role name. Fail-closed validated at Engine
+                            # construction; see roles.schema.yaml. This is now the ONE AND
+                            # ONLY fleet-composition source — superseding `agents:` below for
+                            # anything the engine dispatches against.
 
-# ── Agents available (roles found at pointers.agents) ───────────────
-# Seeder enumerates files present by scanning pointers.agents (role = file stem);
-# it never creates them and TRON ships none. lint L13 hardcodes no roster — it only
-# checks that the roles TRON's own knobs.yaml references resolve here: each cadence
-# lens to a `reviewer-<lens>` or a generic `reviewer`, and every peer_consult role to a
-# listed role. Omit this block entirely and L13 skips.
+# ── Agents (LEGACY seeder bookkeeping only — informational, not read for dispatch) ──
+# Historically the seeder enumerated files present by scanning pointers.agents (role =
+# file stem) here; since ADR-0002 D4 (01-33) the engine reads roles.yaml exclusively for
+# persona paths, models, and dispatch — this block is no longer consulted for any of
+# that. lint L13 still cross-checks it against knobs.yaml's cadence/peer_consults
+# (pre-dating this block); omit it and L13 skips.
 agents:                     # OPTIONAL (seeder-populated by scanning pointers.agents)
   - role: <name>            # e.g. engineer | architect | reviewer | <custom>
     file: <path>            # e.g. meta/agents/engineer.md
-    model: <str>            # OPTIONAL (block 01-30). A per-role RECOMMENDED default the bootup
-                            # model question (console.py) offers for confirm/override — NEVER
-                            # itself the fail-closed resolution path. That is knobs.yaml's
-                            # per-role `worker_model` map (architect / other), read by
-                            # fsm._spawn — this field only seeds what the prompt suggests.
-                            # Absent -> the engine's own built-in suggestion is shown instead
-                            # (architect: a strong tier; every other role: a fast tier).
+    model: <str>            # OPTIONAL, INFORMATIONAL ONLY — the engine's per-role model
+                            # resolution is roles.yaml's `model:` field (ADR-0002 D4),
+                            # fail-closed, no default; this key is not read for that anymore.
 
 # ── Detected repo facts (auto; only matter to workflows that use them) ──
 repo:                       # OPTIONAL block; present when a git workflow is used

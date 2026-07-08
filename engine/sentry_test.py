@@ -69,6 +69,64 @@ def _block_md(bid, status="📋", deps="none", deploy="none"):
             f"**Merge approval:** auto\n**Deploy:** {deploy}\n\n---\n\n## Body\n")
 
 
+# ADR-0002 D4 (01-33): the engine now hard-requires a valid meta/tron/roles.yaml at
+# construction (fail-closed boot — RolesConfig.load raises loud/named otherwise). This
+# is the ONE shared fixture every test in the suite gets via build(): the
+# trivial scaffold's default fleet (engineer/reviewer-code/architect), matching AC-1's
+# "runs unchanged from roles.yaml alone." Tests exercising 01-33's OWN mechanics
+# (injected roles, boot-fatal arms, CLOSE affinity) build their own bespoke roles.yaml
+# instead — see block_01_33_test.py.
+TRIVIAL_ROLES = {
+    "roles": {
+        "engineer": {
+            "persona": "meta/agents/engineer.md",
+            "model": "test-model",
+            "binds": ["BUILD", "CLOSE"],
+            "paperwork": {
+                "allow": ["{block_doc}", "{archive}"],
+                "deny": ["{pipeline}", "{blocks_dir}"],
+                "line_scoped": {"{pipeline}": "{block_id}"},
+            },
+        },
+        "reviewer-code": {
+            "persona": "meta/agents/reviewer-code.md",
+            "model": "test-model",
+            "binds": ["REVIEW"],
+        },
+        "architect": {
+            "persona": "meta/agents/architect.md",
+            "model": "test-model",
+            "binds": ["TRIAGE"],
+            "persistent": True,
+            "cardinality": 1,
+            "spec_owner": True,
+            "paperwork": {"allow": ["{pipeline}", "{blocks_dir}"]},
+        },
+    }
+}
+
+
+def seed_trivial_roles(repo, roles_doc=None):
+    """Write meta/tron/roles.yaml + stub persona files under `repo` (a fixture repo
+    root) so RolesConfig's fail-closed boot validation passes. `roles_doc` overrides
+    the trivial default wholesale (a test exercising 01-33's own selector/boot-fatal
+    mechanics builds its own)."""
+    doc = roles_doc if roles_doc is not None else TRIVIAL_ROLES
+    agents_dir = os.path.join(repo, "meta", "agents")
+    os.makedirs(agents_dir, exist_ok=True)
+    for name, r in doc.get("roles", {}).items():
+        persona = r.get("persona")
+        if not persona:
+            continue
+        p = os.path.join(repo, persona)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        if not os.path.isfile(p):
+            util.atomic_write(p, f"# {name} persona (test stub)\n")
+    roles_dir = os.path.join(repo, "meta", "tron")
+    os.makedirs(roles_dir, exist_ok=True)
+    util.save_yaml(os.path.join(roles_dir, "roles.yaml"), doc)
+
+
 def build(blocks=None, scope=None):
     """blocks: list of (id, status, deploy). Returns (ctx, repo_root)."""
     blocks = blocks if blocks is not None else [("A-01", "📋", "none"),
@@ -85,6 +143,7 @@ def build(blocks=None, scope=None):
                    {"repo": {"root": repo, "main_branch": "main", "staging": "none"},
                     "pipeline_path": "meta/pipeline.md", "blocks_dir": "meta/blocks/"})
     util.atomic_write(os.path.join(d, "manifest.yaml"), "{}\n")
+    seed_trivial_roles(repo)
     rows = ["## Roadmap", "### Phase 1: Test", "| ID | Task | Status | Notes |",
             "|:--|:--|:--|:--|"]
     for bid, status, deploy in blocks:

@@ -8,7 +8,9 @@ via PR. This module is the deterministic reader over that canon (NEVER an LLM):
                          `ID | Task | Status | Notes` tables, emoji status, and
                          the block-file ref (Block `blocks/<id>.md`) out of Notes.
   parse_block(path)      one block file's fixed `**Key:** value` headers
-                         (Status, Depends on, Reviewer class, Merge approval, Deploy, Phase).
+                         (Status, Depends on, Reviewer class, Merge approval, Deploy, Phase),
+                         plus the two OPTIONAL headers roles.yaml's selector reads
+                         (ADR-0002 D4/T2): Role, Tags — absent means default binding match.
   load(pipeline, blocks) the merged dispatch view: each pipeline row enriched
                          with its block file's headers. Dispatch truth is the
                          block file (canon §3); the living doc gives order only.
@@ -108,13 +110,17 @@ def parse_pipeline(path):
 def parse_block(path):
     """Parse one block file's fixed headers. Returns {} if absent.
 
-    Keys: id, title, phase, status, depends_on (list), reviewer_class, merge_approval, deploy.
-    Header lines are `**Key:** value`; a trailing `← comment` annotation is dropped.
-    """
+    Keys: id, title, phase, status, depends_on (list), reviewer_class, merge_approval, deploy,
+    role_hdr, tags (list). Header lines are `**Key:** value`; a trailing `← comment`
+    annotation is dropped. `Role:`/`Tags:` (ADR-0002 D4/T2) are OPTIONAL — absent on
+    (nearly) every block, they feed roles.yaml's deterministic selector (block_tag
+    matches, or an explicit role override); their absence means "default binding
+    match" (today's behavior, unchanged)."""
     if not os.path.isfile(path):
         return {}
     out = {"id": None, "title": None, "phase": None, "status": "unknown",
-           "depends_on": [], "reviewer_class": None, "merge_approval": "auto", "deploy": None}
+           "depends_on": [], "reviewer_class": None, "merge_approval": "auto", "deploy": None,
+           "role_hdr": None, "tags": []}
     with open(path) as fh:
         in_headers = True
         for line in fh:
@@ -147,6 +153,10 @@ def parse_block(path):
                 out["merge_approval"] = (val or "auto").lower()
             elif key == "deploy":
                 out["deploy"] = _none_or(val)
+            elif key == "role":
+                out["role_hdr"] = _none_or(val)
+            elif key == "tags":
+                out["tags"] = _id_list(val)
     return out
 
 
@@ -201,12 +211,16 @@ def load(pipeline_path, blocks_dir):
             row["reviewer_class"] = b.get("reviewer_class")
             row["merge_approval"] = b.get("merge_approval", "auto")
             row["deploy"] = b.get("deploy")
+            row["role_hdr"] = b.get("role_hdr")
+            row["tags"] = b.get("tags") or []
             row["has_block_file"] = True
         else:
             row["depends_on"] = []
             row["reviewer_class"] = None
             row["merge_approval"] = "auto"
             row["deploy"] = None
+            row["role_hdr"] = None
+            row["tags"] = []
             row["has_block_file"] = False
         view.append(row)
     return view

@@ -4,6 +4,19 @@ Versions the meta/app/workspace template payload. Every entry pairs with the SUP
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 
+## 1.5.0 — 2026-07-08
+
+Adds **`meta/tron/roles.yaml`** (ADR-0002 Decision 4, "fleet as config"): the
+project-authored binding of the fleet's roles to TRON's sealed capability-class enum
+(BUILD/REVIEW/TRIAGE/CLOSE) — model, persona path, dispatch-selector, paperwork scope,
+`spec_owner`/`persistent`/`close_fallback`, per role. TRON ships zero personas and
+hardcodes no role name; this file (plus the existing `meta/agents/*.md` personas) is the
+one and only fleet-composition source the engine reads. Ships pre-populated with the
+scaffold's trivial default fleet (`engineer` / `reviewer-code` / `architect`) so an
+un-edited scaffold boots exactly as before. `meta/blocks/block-template.md` gains the
+two OPTIONAL block headers `**Role:**` / `**Tags:**` feeding the same selector — absent
+on (nearly) every block, meaning "default binding match" (unchanged behavior).
+
 ## 1.4.0 — 2026-07-01
 
 Renames the block header field `**Merge:** self | needs-user` → `**Merge approval:** auto |

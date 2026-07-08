@@ -9,24 +9,15 @@
 # ── Knobs (per-project tunables the engine reads by name) ──
 knobs:
   worker_count: ~          # REQUIRED per-session input: max concurrent workers
-                           # (engineers + reviewers share this pool; architect EXCLUDED).
+                           # (every BUILD-/REVIEW-bound role shares this pool; the persistent
+                           # TRIAGE/spec_owner role is EXCLUDED).
                            # NO baked default — start refuses until the operator sets it.
-  worker_model:             # REQUIRED, engine-owned, FAIL-CLOSED input (01-21, made PER-ROLE
-                           # by 01-30): a map, NOT a single global string. `architect` covers
-                           # the persistent architect only; `other` covers every non-architect
-                           # role (engineer, reviewer, ...) — T2's decided split (architect =
-                           # a strong tier, other = a fast tier). fsm._spawn resolves each
-                           # role independently via fsm._model_for_role. NO baked default for
-                           # EITHER key — the bootup model question (console.py) writes the
-                           # operator's per-role answer here before any worker spawns; a
-                           # headless caller (eng.start() directly, bypassing the prompt) must
-                           # have this pre-populated the same way. Either key null/absent ->
-                           # that role's spawn path refuses outright (jobs.WorkerModelUnconfigured)
-                           # rather than silently inherit the host CLI's own ambient default
-                           # (the credit-drain root cause this knob closes) — never a fallback
-                           # from `other` to `architect` or vice versa.
-    architect: ~
-    other: ~
+  # NOTE (ADR-0002 D4, 01-33): the 01-21/01-30 `worker_model` knob ({architect, other}) is
+  # RETIRED — the model source is now `meta/tron/roles.yaml`'s per-role `model:` field,
+  # resolved by fsm._model_for_role and validated fail-closed at Engine construction
+  # (roles.RolesError: absent/unknown is boot-fatal, no default, ever). There is no
+  # per-role model knob here anymore; it "subsumes the per-role model question into
+  # config" — config is never silent, because a bad roles.yaml refuses to boot at all.
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
   git: on                  # whether the build commits via git (drives R8 + any ci availability)
   ask_before_merging: false  # ON -> the trunk-merge step pauses for the operator (T8); the bootup
@@ -95,6 +86,7 @@ cadence:
 # ── Peer-consult pairs (R2) — canon ships none; the seeder sets them per project ──
 peer_consults: []
 
-# ── Session lifecycle ──
-session:
-  persistent_architect: true   # one architect spawned at bootup, alive until session end
+# NOTE (ADR-0002 D4, 01-33): the `session.persistent_architect` knob is RETIRED — whether
+# the spec_owner role is spawned once at boot and kept alive for the session is now that
+# role's OWN `persistent:` flag in roles.yaml (fsm._spec_owner_persistent), exactly like
+# every other per-role fact. No `session:` block ships here anymore.

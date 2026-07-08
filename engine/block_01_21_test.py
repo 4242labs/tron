@@ -10,10 +10,12 @@ Covers:
       (WorkerModelUnconfigured); the host-CLI adapter's own argv carries --model too and
       refuses independently (defense in depth); worker_runner.py's CLI requires --model
       (a direct/manual invocation with none refuses, argparse); fsm._spawn resolves the
-      model from knobs.yaml (project config) and threads it explicitly — never an
-      ambient default; lint L25 flags a knobs.yaml with the `worker_model` key missing
-      entirely (a null VALUE, as canon ships, still passes — the real enforcement is
-      spawn-time).
+      model from PROJECT CONFIG (roles.yaml's per-role `model:` since ADR-0002 D4/01-33 —
+      formerly knobs.yaml's `worker_model` map) and threads it explicitly — never an
+      ambient default. (The former lint L25, which flagged a knobs.yaml with the
+      `worker_model` key missing, is retired along with the knob: roles.yaml's own
+      fail-closed boot validation — RolesConfig._validate, at Engine construction — now
+      covers this, strictly stronger than a lint presence-check.)
   T2 (AC-3/AC-4) orphan-proof teardown: release/kill_hard target the runner's WHOLE
       PROCESS GROUP (a forked child dies with it, never just the runner pid);
       jobs.reap_all() group-kills every worker alive in ITS OWN store only — a sibling
@@ -175,14 +177,15 @@ def t1_hostcli_adapter_argv_carries_model():
 
 
 def t1_fsm_spawn_threads_knobs_worker_model_into_spawn_runner():
-    # NOTE (01-30): worker_model is now a per-role MAP ({"architect": ..., "other": ...}),
-    # not a single global string — see block_01_30_test.py for the full per-role coverage
-    # (AC-4). This case keeps proving the original 01-21 intent: fsm._spawn resolves from
-    # knobs.yaml (project config) and threads it explicitly, never an ambient default.
+    # NOTE (01-33, ADR-0002 D4): the model source moved from knobs.yaml's `worker_model`
+    # map to roles.yaml's per-role `model:` field entirely — see block_01_33_test.py for
+    # the full fail-closed/per-role coverage. This case keeps proving the original 01-21
+    # intent: fsm._spawn resolves from PROJECT CONFIG (now roles.yaml) and threads it
+    # explicitly, never an ambient default.
     ctx, _ = build()
     eng = Engine(ctx); started(eng)
     eng.dry = False
-    eng.knobs["worker_model"] = {"architect": "arch-pinned-model", "other": "project-pinned-model"}
+    eng.roles.roles["engineer"]["model"] = "project-pinned-model"
     captured = {}
     orig = jobs.spawn_runner
 
@@ -192,10 +195,10 @@ def t1_fsm_spawn_threads_knobs_worker_model_into_spawn_runner():
 
     jobs.spawn_runner = fake_spawn
     try:
-        eng._spawn("ENG-A-01", "spawn.engineer", "engineer", block="A-01")
+        eng._spawn("ENG-A-01", "engineer", block="A-01")
     finally:
         jobs.spawn_runner = orig
-    ok("T1 (AC-1) fsm._spawn resolves the model from knobs.yaml (project config) and "
+    ok("T1 (AC-1) fsm._spawn resolves the model from roles.yaml (project config) and "
        "threads it explicitly into jobs.spawn_runner — never an ambient default",
        captured.get("model") == "project-pinned-model", f"captured={captured}")
 
@@ -250,20 +253,21 @@ def t1_worker_runner_cli_requires_model_flag():
        f"rc={proc.returncode} err={proc.stderr!r}")
 
 
-def t1_lint_flags_missing_worker_model_knob():
-    comp_missing = {"knobs": {"worker_count": 1, "wake_cooldown_sec": 5, "wake_ceiling_sec": 30},
-                    "cadence": {}, "session": {"persistent_architect": True}}
-    l25_missing = next(r for r in lint._composition(comp_missing, {}) if r.rule.startswith("L25"))
-    ok("T1 (AC-2) lint L25 fails when worker_model is entirely absent from knobs.yaml",
-       not l25_missing.ok, f"detail={l25_missing.detail}")
-
-    comp_present = {"knobs": {"worker_count": 1, "worker_model": None,
-                              "wake_cooldown_sec": 5, "wake_ceiling_sec": 30},
-                    "cadence": {}, "session": {"persistent_architect": True}}
-    l25_present = next(r for r in lint._composition(comp_present, {}) if r.rule.startswith("L25"))
-    ok("T1 (AC-2) lint L25 passes once worker_model is DECLARED (even null, as canon ships "
-       "— the real refusal happens at spawn time, mirroring L10/worker_count)",
-       l25_present.ok)
+def t1_lint_no_longer_checks_a_retired_knob():
+    """SUPERSEDED by block 01-33 (ADR-0002 D4): the former L25 (`worker_model` knob
+    presence) and L12 (`session.persistent_architect` shape) are retired along with the
+    knobs they checked — both moved to roles.yaml, fail-closed validated at Engine
+    construction (RolesConfig._validate), strictly stronger than a lint presence-check.
+    This guards the narrow regression: lint._composition never re-demands either knob."""
+    comp = {"knobs": {"worker_count": 1, "wake_cooldown_sec": 5, "wake_ceiling_sec": 30},
+            "cadence": {}}
+    results = lint._composition(comp, {})
+    ok("T1 lint no longer has an L25 rule (worker_model knob retired)",
+       not any(r.rule.startswith("L25") for r in results))
+    ok("T1 lint no longer has an L12 rule (session.persistent_architect knob retired)",
+       not any(r.rule.startswith("L12") for r in results))
+    ok("T1 lint._composition runs clean with neither knob present at all",
+       all(r.ok for r in results), f"failures={[r.rule for r in results if not r.ok]}")
 
 
 # ══ T2 (AC-3): release/kill_hard group-kill — a forked child cannot survive its runner ══

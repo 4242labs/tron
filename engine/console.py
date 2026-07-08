@@ -16,20 +16,12 @@ import os
 
 import util
 import jobs
+import roles as roles_mod
 from fsm import Engine
 from state import State
 from render import Renderer
 
 DIM, RST, BOLD = "\033[2m", "\033[0m", "\033[1m"
-
-# 01-30 T1/T2: the bootup model question's RECOMMENDED defaults — a strong tier for the
-# persistent architect, a fast tier for every other role (engineer, reviewer, ...). These
-# are shown as a confirm/override suggestion ONLY; they are never a silent fallback — the
-# fail-closed resolution lives at fsm._spawn/knobs.yaml (see fsm.py's _model_for_role),
-# never here. Overridable per project via project.yaml's `agents[].model` (see
-# Console._recommended_model).
-ROLE_MODEL_RECOMMENDED = {"architect": "claude-opus-4-8", "other": "claude-sonnet-5"}
-ROLE_MODEL_LABEL = {"architect": "architect", "other": "engineers/reviewers"}
 
 
 class Console:
@@ -37,6 +29,12 @@ class Console:
         self.ctx = ctx
         self.renderer = Renderer(ctx)
         jobs.configure(ctx.workers_dir)   # point the worker store at this instance (01-10)
+        # ADR-0002 D4: the fleet view below needs to recognize the persistent spec_owner
+        # worker without a hardcoded "architect" literal — load the same fail-closed
+        # roles.yaml Engine(ctx) will (construction here is cheap; the real validation
+        # already ran the moment ANY Engine touched this instance).
+        paths = ctx.repo_paths(ctx.load_project())
+        self.roles = roles_mod.RolesConfig.load(paths["roles_path"], paths["root"])
 
     # ── event log (the engine's home-events.jsonl is the shared transcript) ──
     def _events(self):
@@ -58,7 +56,7 @@ class Console:
             print("  │  (no workers)")
         for w in ws:
             job = ""
-            if w.get("role") == "architect" and w.get("current_job"):
+            if w.get("role") == self.roles.spec_owner and w.get("current_job"):
                 cj = w["current_job"]
                 job = f"{cj.get('kind')}:{cj.get('block') or cj.get('type')}"
             block = job or w.get("block") or "—"
@@ -97,11 +95,13 @@ class Console:
     def _already_running(self):
         return bool(self._state().data.get("session", {}).get("started_at"))
 
-    def bootup(self, staged_model=None):
-        """staged_model (01-30 T3): an optional {"architect": <model>, "other": <model>}
-        the caller supplies programmatically (harness/tests) so the model question below
-        never calls input() at all — a non-interactive bootup must not hang on a prompt.
-        Interactive callers (the normal `tron start`) pass nothing and get asked."""
+    def bootup(self):
+        """ADR-0002 D4 (01-33 T3): the 01-30 per-role model question is RETIRED — it
+        "subsumes the per-role model question into config": `model = role.model` resolves
+        straight out of the project-authored roles.yaml, fail-closed validated at
+        `Engine(self.ctx)` construction above (a bad/missing model for any role refuses
+        to boot at all, before this Q&A even starts — config is never silent). Console
+        asks nothing about models; it never did in the headless path either."""
         print(f"{BOLD}== TRON bootup =={RST}")
         eng = Engine(self.ctx)
         # 1. run scoping — the session.scope three-way prompt (TRON voice; never status edits).
@@ -110,7 +110,8 @@ class Console:
         # 2. worker_count.
         worker_count = None
         while worker_count is None:
-            v = input("worker_count (engineers + reviewers; architect is extra)? ").strip()
+            v = input("worker_count (build + review workers; the persistent spec-owner "
+                      "role is extra)? ").strip()
             if v.isdigit() and int(v) > 0:
                 worker_count = int(v)
             else:
@@ -118,50 +119,11 @@ class Console:
         # 3. ask-before-merging (T8): ON pauses the trunk-merge step for your go-ahead.
         ans = input("Inform you before each merge to trunk? [y/N] ").strip().lower()
         eng.st.live_config["ask_before_merging"] = ans in ("y", "yes")
-        # 4. worker model, PER ROLE (01-30 T1/T2 re-add — the sole restored question).
-        # Writes into eng.knobs BEFORE eng.start() below spawns anything (AC-1). The
-        # actual fail-closed enforcement lives downstream at fsm._spawn/jobs.spawn_runner
-        # regardless of what happens here — this step only WRITES a declared answer.
-        self._ask_role_models(eng, staged=staged_model)
         print()
-        eng.start(worker_count)                      # 5–6: read trunk, spawn architect + first pulse
+        eng.start(worker_count)                      # 4–5: read trunk, spawn spec_owner + first pulse
         self._start_daemon()                         # the WAKE heartbeat (idempotent; skipped in dry)
         print()
         self._banner()
-
-    def _recommended_model(self, eng, role):
-        """01-30 T1/T2: the default OFFERED at the model prompt for `role` (never itself
-        the resolution path — just what's suggested for confirm/override). Prefers the
-        project's own declared agents[].model (project.yaml) when present, else the
-        engine's built-in per-role suggestion."""
-        for a in (eng.project.get("agents") or []):
-            a_role = a.get("role")
-            if role == "architect" and a_role == "architect" and a.get("model"):
-                return a["model"]
-            if role == "other" and a_role and a_role != "architect" and a.get("model"):
-                return a["model"]
-        return ROLE_MODEL_RECOMMENDED[role]
-
-    def _ask_role_models(self, eng, staged=None):
-        """01-30 T1/T2/T3: ask the worker model PER ROLE — architect gets its own tier,
-        every other role (engineer, reviewer, ...) shares "other" (T2's decided split).
-        Each question shows a recommended default the operator confirms (Enter) or
-        overrides. `staged` (T3) supplies the answers programmatically with NO prompt at
-        all — a non-interactive call must never block on input(). A staged role with no
-        answer (missing/blank) is left UNRESOLVED here (never silently given the
-        recommended default) — that is what AC-2's fail-closed guard at fsm._spawn is
-        for; this method's own job is only to WRITE whatever was actually decided into
-        knobs, never to paper over an absent one."""
-        answers = {}
-        for role in ("architect", "other"):
-            if staged is not None:
-                answers[role] = (staged.get(role) or "").strip() or None
-                continue
-            default = self._recommended_model(eng, role)
-            label = ROLE_MODEL_LABEL[role]
-            v = input(f"Model for {label} [{default}]? ").strip() or default
-            answers[role] = v or None
-        eng.knobs["worker_model"] = answers
 
     def _ask_scope(self, eng):
         """Resolve the operator's run scope into state. TRON then dispatches only in-scope,

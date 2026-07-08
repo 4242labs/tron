@@ -326,7 +326,7 @@ def t_structured_clean_confirms_at_close():
 
 def t_structured_review_type_from_sender():
     eng = _eng()
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working"})
     restore = _no_judge(eng)
@@ -622,7 +622,7 @@ def t_close_violation_parks_as_a_wall():
 def t_reviewer_declaration_fifo():
     # FS-3: blockless declaration keyed purely on the sender record; st.branches untouched.
     eng = _eng()
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working"})
     eng._ingest("worker.branch", {"branch": "docs/review-1"}, {"id": "REV-code"})
@@ -640,7 +640,7 @@ def t_review_landing_holds_then_releases():
     eng = _eng()
     eng.st.workers.append({"id": "ARCH-PERSIST", "role": "architect",
                            "session_id": "dry", "status": "idle"})
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working", "pending_landings": ["docs/rev"]})
     eng.st.gate["review:code"] = {"stage": "review"}
@@ -671,7 +671,7 @@ def t_review_landing_cap_leaves_named_residue():
     # Rider (b)-2: cap-release residue is provably caught by the session-end sweep.
     eng = _eng()
     clock = _clocked(eng)
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working", "pending_landings": ["docs/rev"]})
     eng.st.gate["review:code"] = {"stage": "landing", "block": "A-01"}
@@ -738,7 +738,7 @@ def t_branch_dedup_invariant():
     # Peer rider: dedup is THE load-bearing invariant — hoist-record + classify re-yield
     # + a verbatim repeat must produce exactly ONE FIFO entry.
     eng = _eng()
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working"})
     calls, restore = _mock_classify("worker.branch")
@@ -760,7 +760,7 @@ def t_slot_merge_data_over_prose():
     # Peer required change: structured slots survive INTO the classify result — a terse
     # declaration whose prose classify can't parse still carries its branch as data.
     eng = _eng()
-    eng.st.workers.append({"id": "REV-code", "role": "reviewer", "rtype": "code",
+    eng.st.workers.append({"id": "REV-code", "role": "reviewer-code", "rtype": "code",
                            "block": "review:code", "session_id": "dry",
                            "status": "working"})
     calls, restore = _mock_classify("worker.progress")    # model sees nothing useful
@@ -992,7 +992,7 @@ def t_release_preserves_unlanded_paperwork():
     # never fired, and st.branches is engineer-only; without this the lost-output defect
     # D1 kills returns through the release side door.
     eng = _eng()
-    w = {"id": "REV-code", "role": "reviewer", "rtype": "code", "block": "review:code",
+    w = {"id": "REV-code", "role": "reviewer-code", "rtype": "code", "block": "review:code",
          "session_id": "dry", "status": "working", "pending_landings": ["docs/orphan"]}
     eng.st.workers.append(w)
     eng._release_worker(w, notify=False, reason="stall-recover")

@@ -8,8 +8,10 @@ A malformed flow must fail at seed/validate time, not at runtime. Two layers:
     resolves to an Engine method · the only judgment tools are the canon two.
 
   COMPOSITION (knobs.yaml) — the per-project knobs the engine reads:
-    worker_count present · worker_model present (01-21) · cadence types map to
-    positive ints · session shape · WAKE timing knobs (cooldown/ceiling) positive.
+    worker_count present · cadence types map to positive ints · WAKE timing knobs
+    (cooldown/ceiling) positive. (Per-role model + persistent-spec-owner moved to
+    roles.yaml, ADR-0002 D4/01-33 — fail-closed validated at Engine construction,
+    not here; see roles.RolesConfig._validate.)
 
   PROMPTS (prompts/registry.yaml) — the PMT layer the engine imports at tick:
     every registry id resolves to a self-contained file · every worker-channel
@@ -192,29 +194,23 @@ def _composition(comp, project):
     r = []
     knobs = comp.get("knobs", {}) or {}
     cadence = comp.get("cadence", {}) or {}
-    session = comp.get("session", {}) or {}
 
     # L10 — worker_count knob declared (value may be null -> required at runtime).
     r.append(Result("L10 worker_count knob present", "worker_count" in knobs,
                     "" if "worker_count" in knobs else "missing worker_count"))
 
-    # L25 (01-21 T1) — worker_model knob declared. Presence-only here (a null value ships
-    # in canon, mirroring L10) — the REAL fail-closed enforcement is jobs.spawn_runner's
-    # own spawn-time guard (WorkerModelUnconfigured), which refuses regardless of what
-    # this lint sees. This just makes an operator's config drift (the knob deleted
-    # entirely) visible at seed/validate time too, never only at first spawn.
-    r.append(Result("L25 worker_model knob present", "worker_model" in knobs,
-                    "" if "worker_model" in knobs else "missing worker_model"))
+    # L25 (01-21 T1, RETIRED by ADR-0002 D4/01-33) and L12 (session.persistent_architect
+    # shape, RETIRED the same way) used to live here. Both knobs moved to roles.yaml
+    # (per-role `model:` / `persistent:`), fail-closed validated at Engine construction
+    # (roles.RolesConfig._validate — RolesError propagates loud, named, uncaught) — a
+    # strictly stronger guarantee than either lint's presence/shape check ever was. Their
+    # rule numbers are retired, not reassigned (a stable numbering matters more than a
+    # contiguous one for anything referencing a rule by id).
 
     # L11 — every cadence type maps to a positive int threshold.
     badc = [f"{t}={v}" for t, v in cadence.items()
             if not (isinstance(v, int) and v > 0)]
     r.append(Result("L11 cadence thresholds positive", not badc, f"bad: {badc}"))
-
-    # L12 — persistent_architect is a bool (the architect is canon-on by default).
-    pa = session.get("persistent_architect")
-    r.append(Result("L12 session shape", isinstance(pa, bool),
-                    "" if isinstance(pa, bool) else f"persistent_architect={pa!r}"))
 
     # L13 — TRON's config resolves against the project's agents (skipped if no project.yaml).
     # TRON hardcodes no roster (it ships zero agents — realign #11). It only checks the roles

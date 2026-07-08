@@ -42,26 +42,19 @@ templates:
   # at tick. NO inline copy and no host-runtime strings here (the prompt layer owns both).
   # SPAWN is identity-only (01-07): every role comes online + reads its persona via PMT-SPAWN;
   # the work arrives next, on the worker's `online` report (assign.*).
-  spawn.engineer:
-    channel: worker
-    slots: [worker_id, role, persona, report, contract]
-    pmt: PMT-SPAWN
-  spawn.architect:
-    channel: worker
-    slots: [worker_id, role, persona, report, contract]
-    pmt: PMT-SPAWN
-  spawn.reviewer:
+  # ADR-0002 D4 (01-33 T4): a single role-generic template — `{role}` rides as DATA
+  # (the slot, not the template id) — replaces the three byte-identical spawn.<role>
+  # duplicates (engineer/architect/reviewer all rendered the identical PMT-SPAWN body).
+  # An injected role (AC-2) needs no new template entry here.
+  spawn.worker:
     channel: worker
     slots: [worker_id, role, persona, report, contract]
     pmt: PMT-SPAWN
   # ASSIGN — the work, delivered after the worker reports online (01-07). Role-neutral:
-  # the engine composes {assignment} per role at emit (engineer = its block; reviewer =
-  # the since-last-review commit range).
-  assign.engineer:
-    channel: worker
-    slots: [worker_id, assignment, merge_path, report]
-    pmt: PMT-ASSIGN
-  assign.reviewer:
+  # the engine composes {assignment} per role at emit (a BUILD role = its block; a REVIEW
+  # role = the since-last-review commit range). ADR-0002 D4 (01-33 T4): one generic
+  # template replaces the two byte-identical assign.<role> duplicates.
+  assign.worker:
     channel: worker
     slots: [worker_id, assignment, merge_path, report]
     pmt: PMT-ASSIGN

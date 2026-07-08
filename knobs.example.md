@@ -43,25 +43,25 @@ These are canon — true on every project. They are not knobs.
 ## Per-session knobs (TRON asks at start; each shows a recommended default where one applies)
 
 TRON asks for these at the start of every session and will not proceed until they're answered.
-Live values land in the MANIFEST (`manifest.yaml`); the model answer also writes straight into
-`knobs.yaml`'s `worker_model` map.
+Live values land in the MANIFEST (`manifest.yaml`).
 
 | Knob | Notes |
 |:--|:--|
-| `worker_count` | Size of the worker pool — **engineers + reviewers share it**. The architect is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
-| `worker_model.architect` | The model the persistent architect runs on. TRON offers a recommended default (a strong tier, e.g. Opus — or the project's own `agents[].model` if declared) to confirm or override. |
-| `worker_model.other` | The model every non-architect role runs on — engineers and reviewers **share this one tier**. TRON offers a recommended default (a fast tier, e.g. Sonnet) to confirm or override. |
+| `worker_count` | Size of the worker pool — every BUILD-/REVIEW-bound role shares it. The persistent TRIAGE/spec_owner role is **extra** (not counted). Actual concurrency = min(this, dispatchable work). |
 
-## Fail-closed, per role (no baked default anywhere in the engine)
+## The fleet's model + persona + persistence: `meta/tron/roles.yaml` (ADR-0002 D4)
 
-`worker_model` is a MAP with two keys, `architect` and `other`, each an explicit, declared,
-project-owned input resolved **independently**. Unlike `worker_count` (which just re-prompts on a
-bad answer), a role whose key ends up null/absent is **never** silently given a default: that
-role's spawn path refuses outright rather than run a worker on the host CLI's own ambient default
-(the root cause of an unattributed credit drain this knob closes — 01-21, made per-role by 01-30).
+The per-role worker **model**, **persona**, and whether a role is **persistent** (spawned once at
+start, alive for the whole session, excluded from the `worker_count` pool — the persistent
+TRIAGE/spec_owner role) are declared in the project-authored `meta/tron/roles.yaml`, not here —
+see `contracts/schema/roles.schema.yaml`. Each role's `model:` is an explicit, declared,
+project-owned input resolved **independently, fail-closed**: a role whose model ends up
+missing/blank/unknown is **never** silently given a default — the whole session refuses to boot
+at all (loud, named) rather than run a worker on the host CLI's own ambient default (the root
+cause of an unattributed credit drain this closes — 01-21, moved to roles.yaml by ADR-0002 D4/01-33).
 This holds identically for a **headless** caller that bypasses the interactive bootup prompt
-entirely (calls `eng.start()` directly): the model must already be resolved in `knobs.yaml` before
-that call, or the spawn for that role refuses the same way.
+entirely (calls `eng.start()` directly): roles.yaml is validated at `Engine` construction, before
+`console.bootup`'s own Q&A ever runs — config is never silent either way.
 
 ## Fixed knobs (set once; edit `knobs.yaml` to change)
 

@@ -59,7 +59,10 @@ def _arch(eng, job=None, status=None):
 
 
 def _reviewer(eng, typ="code"):
-    w = {"id": f"REV-{typ}", "role": "reviewer", "rtype": typ, "session_id": "dry",
+    # ADR-0002 D4: the trivial scaffold's REVIEW-bound role is `reviewer-<typ>` (the
+    # naming convention roles.select_review_role matches on) — never a bare "reviewer"
+    # literal, which the fixture roles.yaml (sentry_test.TRIVIAL_ROLES) doesn't declare.
+    w = {"id": f"REV-{typ}", "role": f"reviewer-{typ}", "rtype": typ, "session_id": "dry",
          "status": "working", "block": f"review:{typ}"}
     eng.st.workers.append(w)
     return w
