@@ -480,13 +480,22 @@ def test_observed_done_autosettles_wall():
     w = next(x for x in eng.st.workers if x["id"] == wid)
     ok("setup: the worker is walled on a live, undecided case",
        w.get("status") == "walled" and eng.st.pending_cases[cid].get("decision") is None)
+    # T1 (01-36, ADR-0003 D-E): the fixture spawns no architect, so the initial raise
+    # ITSELF legitimately pages the operator once here (D-E's "architect unreachable
+    # -> operator" route, now delivered through the single case-correlated
+    # _page_operator chokepoint — escalate.wall with the case id, never the old bare
+    # caseless escalate.unclassified). That page is setup, not the auto-settle under
+    # test — snapshot the sent list here so the assertion below only covers what
+    # `_on_block_done`'s auto-settle itself emits.
+    baseline = len(sent)
     # The block's gate subsequently OBSERVES the milestone done — never architect/
     # operator action.
     eng._on_block_done("A-01")
     ok("AC-4 the wall case auto-settles the instant done is observed — no operator page",
        cid not in eng.st.pending_cases, f"cases={eng.st.pending_cases}")
     ok("AC-4 zero operator/architect page from the auto-settle itself",
-       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent), f"sent={sent}")
+       not any(tid in ("escalate.wall", "tg.escalate") for tid, _ in sent[baseline:]),
+       f"sent={sent[baseline:]}")
     ok("AC-4 a forensic wall_auto_settled event records the auto-settle",
        any(r.get("type") == "wall_auto_settled" and r.get("block") == "A-01"
            for r in _events(eng)), f"events={_events(eng)}")

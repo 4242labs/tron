@@ -236,13 +236,20 @@ def t1_job_case_auto_closes_on_correlated_completion():
 def _stub_trunk2(tip="NEWTIP", descendant=True, code=True, ancestor=True, ff_ok=True,
                  patch_match=False):
     orig = (trunk.tip_sha, trunk.is_descendant, trunk.delta_has_code,
-            trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor)
+            trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor,
+            trunk.validate_trunk)
     calls = {"ff": 0}
     trunk.tip_sha = lambda *a, **k: tip
     trunk.is_descendant = lambda *a, **k: descendant
     trunk.delta_has_code = lambda *a, **k: code
     trunk.is_ancestor = lambda *a, **k: ancestor
     trunk.patch_id_matches = lambda *a, **k: patch_match
+    # T2 (01-34, ADR-0003 D-C): the trunk-stage gate now re-derives its OWN
+    # test-stage verdict every tick, unconditionally — these T2/redrive fixtures
+    # are about the RATCHET, not the verdict, so hold it at "not yet" (never dry's
+    # own vacuous pass) so a held 'trunk' stage stays held for the reason each test
+    # actually asserts.
+    trunk.validate_trunk = lambda *a, **k: ("fail", "not ready (test-stage stub)")
 
     def _ff(*a, **k):
         calls["ff"] += 1
@@ -253,7 +260,8 @@ def _stub_trunk2(tip="NEWTIP", descendant=True, code=True, ancestor=True, ff_ok=
 
 def _restore_trunk2(orig):
     (trunk.tip_sha, trunk.is_descendant, trunk.delta_has_code,
-     trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor) = orig
+     trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor,
+     trunk.validate_trunk) = orig
 
 
 def t2_code_bearing_descendant_redrives_through_ask_gate_then_lands():
@@ -551,7 +559,9 @@ def t3b_fleet_hold_engages_probes_canary_resumes_never_walls():
     orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
     jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
     redispatched = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
+    # dead_wid=None (01-36, ADR-0003 D-F): the real _redispatch gained an optional
+    # handover-context kwarg; these stubs only care about the block/bypass_gate shape.
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatched.append(block)
     try:
         # Tick 1: ENG-A-01 dies of refusal — a LONE death, hold not yet active; the
         # ordinary per-worker stall handling still applies.
@@ -670,7 +680,7 @@ def t3b_canary_probe_is_role_agnostic_and_bypasses_the_gate():
     eng._release_worker = lambda w, notify=True, reason=None: None   # side-effect-free election
     reviewer, redispatch = [], []
     eng._dispatch_reviewer = lambda ref: reviewer.append(ref)
-    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatch.append((block, bypass_gate))
     orig = (jobs.find, jobs.is_alive)
     jobs.find = lambda wid, idx=None: None       # no live canary yet -> the probe path
     jobs.is_alive = lambda wid, idx=None: False
@@ -738,7 +748,7 @@ def t3b_dead_record_canary_reprobes_on_cadence():
     clock = {"t": 10000.0}
     eng._now_s = lambda: clock["t"]
     redispatch = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatch.append((block, bypass_gate))
     orig = (jobs.find, jobs.is_alive)
     dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 0}
     jobs.find = lambda wid, idx=None: dead_rec
@@ -767,7 +777,7 @@ def t3b_dead_record_canary_reprobe_is_paced():
     clock = {"t": 11000.0}
     eng._now_s = lambda: clock["t"]
     redispatch = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatch.append((block, bypass_gate))
     orig = (jobs.find, jobs.is_alive)
     dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 0}
     jobs.find = lambda wid, idx=None: dead_rec
@@ -828,7 +838,9 @@ def t3b_fleet_wide_death_then_recovery_autoreleases_hold():
     orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
     jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
     redispatched = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
+    # dead_wid=None (01-36, ADR-0003 D-F): the real _redispatch gained an optional
+    # handover-context kwarg; these stubs only care about the block/bypass_gate shape.
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatched.append(block)
     try:
         # ticks 1-2: fleet-wide refusal deaths engage the hold; A-02 is elected canary.
         eng.st.workers[:] = [{"id": "ENG-A-01", "role": "engineer", "block": "A-01",
@@ -881,7 +893,7 @@ def t3b_ran_then_died_canary_does_not_release():
     clock = {"t": 12000.0}
     eng._now_s = lambda: clock["t"]
     redispatch = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatch.append((block, bypass_gate))
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatch.append((block, bypass_gate))
     orig = (jobs.find, jobs.is_alive)
     dead_rec = {"state": "error", "dir": "/fake/A-01", "pid": None, "turns": 3}
     jobs.find = lambda wid, idx=None: dead_rec
@@ -954,7 +966,9 @@ def t3b_fleet_wide_outage_drill_canary_included_self_release_clean_finish():
     orig = (jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind)
     jobs.index, jobs.find, jobs.is_alive, jobs.last_turn_error_kind = _index, _find, _alive, _kind
     redispatched = []
-    eng._redispatch = lambda block, bypass_gate=False: redispatched.append(block)
+    # dead_wid=None (01-36, ADR-0003 D-F): the real _redispatch gained an optional
+    # handover-context kwarg; these stubs only care about the block/bypass_gate shape.
+    eng._redispatch = lambda block, bypass_gate=False, dead_wid=None: redispatched.append(block)
     try:
         # Tick 1: the worker runtime dies FLEET-WIDE, mid-run -- both engineers dead in
         # the SAME sweep (never staggered across separate roster swaps).

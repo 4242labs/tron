@@ -161,7 +161,7 @@ def t_merged_sha_anchors_post_merge_tip_survives_rebase_retry():
     eng = _eng()
     g = eng.st.gate.setdefault("A-01", {"stage": "local", "pr": None})
     orig = (trunk.branch_merged, trunk.branch_exists, trunk.tip_sha,
-           trunk.merge_ff_only, trunk.is_ancestor)
+           trunk.merge_ff_only, trunk.is_ancestor, trunk.validate_trunk)
     calls = {"n": 0}
 
     def fake_tip_sha(root, branch, dry=False):
@@ -184,8 +184,14 @@ def t_merged_sha_anchors_post_merge_tip_survives_rebase_retry():
 
         # Subsequent ticks at trunk/record must hold quietly: the pre-image sha would
         # falsely read as "no longer in trunk history" (rebased away); the correctly
-        # anchored post-merge tip is the real trunk ancestor.
+        # anchored post-merge tip is the real trunk ancestor. T2 (01-34, ADR-0003 D-C):
+        # in REAL mode the trunk-stage gate now re-derives its OWN test-stage verdict
+        # every tick, unconditionally; this fixture stays dry (a plain background tick
+        # never touches that path under dry, D-C's real-observable requirement has
+        # nothing to observe there) — the stub is defensive belt-and-braces, decoupling
+        # this test's own anchoring/contradiction assertion from that mechanism either way.
         trunk.is_ancestor = lambda root, sha, main, dry=False: sha == "POSTMERGE5678"
+        trunk.validate_trunk = lambda *a, **k: ("fail", "not ready yet")
         eng._tq = []
         eng._drive_gate("A-01", g)          # plain tick at trunk (on_report=False)
         ok("T1 a tick at trunk holds quietly on the correctly-anchored sha "
@@ -203,7 +209,7 @@ def t_merged_sha_anchors_post_merge_tip_survives_rebase_retry():
            f"gate={eng.st.gate} tq={eng._tq}")
     finally:
         (trunk.branch_merged, trunk.branch_exists, trunk.tip_sha,
-         trunk.merge_ff_only, trunk.is_ancestor) = orig
+         trunk.merge_ff_only, trunk.is_ancestor, trunk.validate_trunk) = orig
 
 
 def t_merged_sha_regression_the_preimage_WOULD_have_false_contradicted():

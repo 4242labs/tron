@@ -12,13 +12,27 @@ knobs:
                            # (every BUILD-/REVIEW-bound role shares this pool; the persistent
                            # TRIAGE/spec_owner role is EXCLUDED).
                            # NO baked default — start refuses until the operator sets it.
-  # NOTE (ADR-0002 D4, 01-33): the 01-21/01-30 `worker_model` knob ({architect, other}) is
-  # RETIRED — the model source is now `meta/tron/roles.yaml`'s per-role `model:` field,
-  # resolved by fsm._model_for_role and validated fail-closed at Engine construction
-  # (roles.RolesError: absent/unknown is boot-fatal, no default, ever). There is no
-  # per-role model knob here anymore; it "subsumes the per-role model question into
-  # config" — config is never silent, because a bad roles.yaml refuses to boot at all.
+  # NOTE (ADR-0002 D4, 01-33; amended by ADR-0003 D-D, 01-35): the 01-21/01-30
+  # `worker_model` knob ({architect, other}) does NOT live here — the base model
+  # source is `meta/tron/roles.yaml`'s per-role `model:` field (fsm._model_for_role).
+  # 01-33 briefly made that the ONLY source (config-only); 01-35 restores the operator
+  # bootup model question 01-33 removed WITHOUT re-adding a knob here: the operator's
+  # per-session answer is a TRON-owned MANIFEST override (meta/agents/tron/, never
+  # this file, never roles.yaml — BL-1) layered on top of role.model at resolution
+  # time. Session answer wins for the session; else role.model; boot-fatal (loud,
+  # named) only if NEITHER resolves. See engine/roles.py's RolesConfig.validate_models.
+  # NOTE (ADR-0003 D-J, 01-35): AIDE's own model is likewise NOT a knob here and NOT a
+  # roles.yaml role/capability class — it is an engine-builtin LLM lane (judge.py's
+  # "aide" tool, TIER["aide"]/AIDE_DEFAULT_MODEL) with a built-in default, overridable
+  # per session via the bootup model question (console._ask_aide_model ->
+  # meta/agents/tron/ MANIFEST live_config["aide_model"]). FAIL-OPEN: unlike the
+  # per-role model above, an absent aide_model answer is never boot-fatal.
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
+                           # ADR-0003 D-D+D-J (01-35, BLOCKER-2 resolved): single architect
+                           # this version — no bootup question reads/asks this; it stays a
+                           # static config default (roles.yaml's architect: cardinality:1 is
+                           # the boot-enforced invariant). A future multi-architect version
+                           # may wire this to an ND-01-09 "#architects" question — not this one.
   git: on                  # whether the build commits via git (drives R8 + any ci availability)
   ask_before_merging: false  # ON -> the trunk-merge step pauses for the operator (T8); the bootup
                            # question sets it per-session. Default off: TRON instructs merges itself.
@@ -64,13 +78,17 @@ knobs:
   # left unread this many MINUTES, it escalates to exactly ONE ordinary case — never left
   # to poll forever, never spamming beyond the one case (fsm._sweep_abandon_flags).
   abandon_flag_window: 60
-  # Scratch-carve observation budget (ADR-0002 D1, 01-32 T2): a worker spawns into its
-  # OWN TRON-owned scratch dir (`meta/agents/tron/scratch/<wid>/`) and its first ritual
-  # act is carving its own worktree + branch there — TRON verifies by OBSERVATION
-  # (never a checkout it performs itself). Ticks of budget from dispatch before a
-  # not-yet-carved engineer becomes a bootstrap wall (architect-first, same case
-  # machinery as every other violation). Default 5.
-  carve_observe_ticks: 5
+  # Carve liveness timeout (ADR-0003 D-A, 01-34 T3 — REPLACES the retired
+  # `carve_observe_ticks` operator wall): a worker spawns into its OWN TRON-owned
+  # scratch dir (`meta/agents/tron/scratch/<wid>/`) and its first ritual act is
+  # carving its own worktree + branch there — TRON verifies by OBSERVATION (never a
+  # checkout it performs itself), with NO deadline: a merely slow spec-reading
+  # worker raises nothing and proceeds. This is a LIVENESS signal, not a wall —
+  # wall-clock SECONDS of continuous idle before a not-yet-carved worker trips the
+  # ordinary worker-liveness path (`worker:stalled` -> redispatch, or a plain stall
+  # wall after repeated stalls) — never a carve-specific case, never an
+  # engine-side substitute carve. Default 300 (5 min).
+  carve_liveness_timeout: 300
   # Grant TTL (ADR-0002 D2, 01-32 T3): wall-clock MINUTES a minted merge/close grant
   # stays LIVE before it expires. Expiry re-opens the case LOUDLY (architect-first,
   # forensic failure record) — never a silent re-mint; land.sh refuses an expired

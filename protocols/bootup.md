@@ -24,6 +24,23 @@ Ask the **worker_count**: the size of the worker pool (engineers + reviewers sha
 detected default, take a number. The **architect is excluded** from this count — it is always one
 dedicated, persistent agent on top of the pool (`architect_count`, default 1).
 
+## 2.5 AIDE + worker model *(console; ADR-0003 D-D + D-J)*
+AIDE's own model (a session knob, fail-open to a built-in default — never `roles.yaml`, never
+boot-fatal) resolves first. Then, before scoping (**ND-01-08 SET SCOPE**), AIDE — a REAL LLM call
+(`judge.call("aide")`, reading the project's own `context.md` + `pipeline.md` + relevant block doc(s)
+as its context; **never a deterministic/heuristic stand-in**) — advises on scope, including which
+block looks ready to pick up next; advisory only, never itself sets scope. Around the worker_count
+question (**ND-01-09 SET COUNTS**), AIDE likewise advises on the count (unusual-but-valid /
+below-floor; `#architects` is fixed at 1 this version — no count to advise). Either advisory
+degrades silently to "proceeding unaided" if the AIDE LLM is unavailable — never a heuristic answer
+in its place. After ask-before-merging, ask the **model** for every role `meta/tron/roles.yaml`
+declares, one question each, defaulting to that role's own declared `model:` (or a built-in
+suggestion when it declares none) — Enter accepts the default, anything else overrides it for this
+session only. The answer is written into this instance's own session store (`meta/agents/tron/`,
+never `roles.yaml`); `role.model` still resolves as before when the operator supplies no answer.
+Absent BOTH a session answer and a config model for any role, boot refuses (fail-closed, no default,
+ever) — AIDE's own model is exempt from this law (fail-open).
+
 ## 3. Spawn the architect *(engine)*
 Spawn the persistent architect (out of the worker pool) and leave it idle, ready to drain its queue.
 

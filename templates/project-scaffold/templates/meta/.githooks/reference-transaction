@@ -24,7 +24,9 @@ STATE="${1:-}"
 [ "$STATE" = "prepared" ] || exit 0
 
 MAIN_BRANCH="${LAND_MAIN_BRANCH:-main}"
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# ADR-0003 D-G (02-12 T1): worktree-safe root — --show-toplevel resolves the current
+# worktree, not the shared project root the grants dir lives under.
+REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 GRANTS_DIR="${LAND_GRANTS_DIR:-$REPO_ROOT/meta/agents/tron/grants}"
 MAIN_REF="refs/heads/$MAIN_BRANCH"
 

@@ -194,10 +194,19 @@ def t_bounce_on_unknown_verb_and_rate_limit():
 def t_bounce_on_unknown_block():
     # A live sender whose gate-facing report resolves to no canon block hears WHY —
     # the mechanized form of tron-14's manual operator re-deliveries.
+    # T1 (01-36, ADR-0003 D-E): `worker.wall` specifically is EXEMPT from this
+    # generic block-required bounce as of block 01-36 (SIM tron-40's verified
+    # silent-discard defect — a block-less wall must route to a block-less case,
+    # never bounce/unclassified; covered by block_01_36_test.py's own AC-1). This
+    # test now exercises `worker.recorded` instead (still block-required, and —
+    # unlike `worker.done` — never sender-truth-rewritten for a REVIEW-bound
+    # sender, so it still reaches _admit's block check exactly as this fixture
+    # needs) — the generic _admit block-required refusal this test targets is
+    # otherwise unchanged.
     eng = _eng()
     _reviewer(eng, "code")
     tw = _capture_to_worker(eng)
-    eng._ingest("worker.wall", {"block": "ZZZ", "detail": "stuck"},
+    eng._ingest("worker.recorded", {"block": "ZZZ"},
                 {"kind": "worker", "id": "REV-code"})
     _drain(eng)
     ok("T2 unknown-block refusal bounces to the sender",
