@@ -47,7 +47,10 @@ case "$CASE_ID" in
     ;;
 esac
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# ADR-0003 D-G (02-12 T1): `--show-toplevel` resolves the CURRENT worktree, not the
+# shared project root the grants dir lives under — landing from a worker's own worktree
+# would look for grants in the wrong place. `--git-common-dir/..` resolves the shared root.
+REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 MAIN_BRANCH="${LAND_MAIN_BRANCH:-main}"
 GRANTS_DIR="${LAND_GRANTS_DIR:-$REPO_ROOT/meta/agents/tron/grants}"
 
