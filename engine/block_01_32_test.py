@@ -402,29 +402,31 @@ def t_check_root_detached_opens_case_then_self_clears():
         shutil.rmtree(d, ignore_errors=True)
 
 
-# ── T2 scratch-dir spawn bootstrap: the engine observes the carve within
-# `carve_observe_ticks`, never performing the carve itself ──
-def t_carve_bootstrap_walls_after_budget():
+# ── T3 (01-34, ADR-0003 D-A) supersedes this file's own original T2 carve-wall
+# tests: carve is a WORKER RITUAL, not an operator wall — the tick-deadline wall
+# this pair used to assert is RETIRED (a false timing failure). Kept here (renamed,
+# rewritten) rather than deleted so this file's own history stays legible; the
+# block-01-34 test file carries the AC-5 both-sides regression coverage. ──
+def t_carve_bootstrap_slow_worker_raises_no_case():
     d = _mkrepo("tron-0132-carve-")
     eng = _eng()
     eng.dry = False
     eng.paths["root"] = d
     eng.paths["main_branch"] = "main"
-    arch = {"id": "ARCH-PERSIST", "role": "architect", "session_id": "dry",
-           "status": "idle", "current_job": None, "block": None, "mbox_seq": 0}
-    eng.st.workers.append(arch)
     w = {"id": "ENG-A-01", "role": "engineer", "block": "A-01", "status": "working",
-        "_carve_deadline_tick": 0}   # deadline already passed
+        "_carve_pending": True}   # not yet carved, spawned "long" ago
     eng.st.workers.append(w)
     try:
-        eng._check_carve_bootstrap()
+        eng._now_s = lambda: 1_000_000.0
+        eng._check_carve_bootstrap()             # first observation: starts the liveness clock
+        eng._now_s = lambda: 1_000_000.0 + 60     # well past any tick count, nowhere near the
+        eng._check_carve_bootstrap()              # default carve_liveness_timeout (300s)
         eng._drain_triggers()
-        ok("T2 carve bootstrap: no branch by the deadline -> a wall (bootstrap failure)",
-           "A-01" in eng.st.blocked, f"blocked={eng.st.blocked}")
-        ok("T2 carve bootstrap: it routes to the architect first",
-           (arch.get("current_job") or {}).get("kind") == "triage", f"arch={arch}")
-        ok("T2 carve bootstrap: never re-walled twice for the same worker",
-           w.get("_carve_walled") is True)
+        ok("T3 (01-34, D-A): a merely slow pre-carve worker raises NO case at all "
+           "(the old tick-deadline wall is retired)",
+           "A-01" not in eng.st.blocked and not eng.st.pending_cases,
+           f"blocked={eng.st.blocked} cases={eng.st.pending_cases}")
+        ok("T3: still pending — no substitute carve, no release", w.get("_carve_pending") is True)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -437,13 +439,13 @@ def t_carve_bootstrap_satisfied_stops_checking():
     eng.paths["root"] = d
     eng.paths["main_branch"] = "main"
     w = {"id": "ENG-A-01", "role": "engineer", "block": "A-01", "status": "working",
-        "_carve_deadline_tick": 0}
+        "_carve_pending": True}
     eng.st.workers.append(w)
     try:
         eng._check_carve_bootstrap()
         eng._drain_triggers()
-        ok("T2 carve bootstrap: an observed carve clears the deadline, no wall",
-           "_carve_deadline_tick" not in w and "A-01" not in eng.st.blocked, f"w={w}")
+        ok("T3 carve bootstrap: an observed carve clears the pending marker, no wall",
+           "_carve_pending" not in w and "A-01" not in eng.st.blocked, f"w={w}")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -1433,7 +1435,7 @@ def main():
               t_wrapper_audit_no_checkout_on_cas_land,
               t_merge_ff_only_require_detached_refuses_then_succeeds,
               t_check_root_detached_opens_case_then_self_clears,
-              t_carve_bootstrap_walls_after_budget,
+              t_carve_bootstrap_slow_worker_raises_no_case,
               t_carve_bootstrap_satisfied_stops_checking,
               t_sealed_allowlist_refuses_offlist_git,
               t_worker_lands_engine_observes,

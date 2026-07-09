@@ -64,13 +64,17 @@ knobs:
   # left unread this many MINUTES, it escalates to exactly ONE ordinary case — never left
   # to poll forever, never spamming beyond the one case (fsm._sweep_abandon_flags).
   abandon_flag_window: 60
-  # Scratch-carve observation budget (ADR-0002 D1, 01-32 T2): a worker spawns into its
-  # OWN TRON-owned scratch dir (`meta/agents/tron/scratch/<wid>/`) and its first ritual
-  # act is carving its own worktree + branch there — TRON verifies by OBSERVATION
-  # (never a checkout it performs itself). Ticks of budget from dispatch before a
-  # not-yet-carved engineer becomes a bootstrap wall (architect-first, same case
-  # machinery as every other violation). Default 5.
-  carve_observe_ticks: 5
+  # Carve liveness timeout (ADR-0003 D-A, 01-34 T3 — REPLACES the retired
+  # `carve_observe_ticks` operator wall): a worker spawns into its OWN TRON-owned
+  # scratch dir (`meta/agents/tron/scratch/<wid>/`) and its first ritual act is
+  # carving its own worktree + branch there — TRON verifies by OBSERVATION (never a
+  # checkout it performs itself), with NO deadline: a merely slow spec-reading
+  # worker raises nothing and proceeds. This is a LIVENESS signal, not a wall —
+  # wall-clock SECONDS of continuous idle before a not-yet-carved worker trips the
+  # ordinary worker-liveness path (`worker:stalled` -> redispatch, or a plain stall
+  # wall after repeated stalls) — never a carve-specific case, never an
+  # engine-side substitute carve. Default 300 (5 min).
+  carve_liveness_timeout: 300
   # Grant TTL (ADR-0002 D2, 01-32 T3): wall-clock MINUTES a minted merge/close grant
   # stays LIVE before it expires. Expiry re-opens the case LOUDLY (architect-first,
   # forensic failure record) — never a silent re-mint; land.sh refuses an expired

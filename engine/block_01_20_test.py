@@ -236,13 +236,20 @@ def t1_job_case_auto_closes_on_correlated_completion():
 def _stub_trunk2(tip="NEWTIP", descendant=True, code=True, ancestor=True, ff_ok=True,
                  patch_match=False):
     orig = (trunk.tip_sha, trunk.is_descendant, trunk.delta_has_code,
-            trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor)
+            trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor,
+            trunk.validate_trunk)
     calls = {"ff": 0}
     trunk.tip_sha = lambda *a, **k: tip
     trunk.is_descendant = lambda *a, **k: descendant
     trunk.delta_has_code = lambda *a, **k: code
     trunk.is_ancestor = lambda *a, **k: ancestor
     trunk.patch_id_matches = lambda *a, **k: patch_match
+    # T2 (01-34, ADR-0003 D-C): the trunk-stage gate now re-derives its OWN
+    # test-stage verdict every tick, unconditionally — these T2/redrive fixtures
+    # are about the RATCHET, not the verdict, so hold it at "not yet" (never dry's
+    # own vacuous pass) so a held 'trunk' stage stays held for the reason each test
+    # actually asserts.
+    trunk.validate_trunk = lambda *a, **k: ("fail", "not ready (test-stage stub)")
 
     def _ff(*a, **k):
         calls["ff"] += 1
@@ -253,7 +260,8 @@ def _stub_trunk2(tip="NEWTIP", descendant=True, code=True, ancestor=True, ff_ok=
 
 def _restore_trunk2(orig):
     (trunk.tip_sha, trunk.is_descendant, trunk.delta_has_code,
-     trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor) = orig
+     trunk.merge_ff_only, trunk.patch_id_matches, trunk.is_ancestor,
+     trunk.validate_trunk) = orig
 
 
 def t2_code_bearing_descendant_redrives_through_ask_gate_then_lands():
