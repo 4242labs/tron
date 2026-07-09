@@ -229,6 +229,23 @@ ALLOWED_HITS = [
      "reviewer/reviewer-<lens> naming convention for THAT surface's own backward "
      "compat only, and is never consulted by fleet dispatch (roles.select_review_role, "
      "post-F1, has no such literal at all)"),
+    # ADR-0003 D-D (block 01-35): the restored bootup model question's RECOMMENDATION
+    # tier vocabulary — "architect" (the persistent spec-owner tier) vs. "other"
+    # (everyone else) label a built-in FALLBACK SUGGESTION only, shown when roles.yaml
+    # itself declares no model for a role. Never a fleet-dispatch lookup: the tier for
+    # an arbitrary role name is derived from that role's OWN spec_owner/persistent
+    # flags (console._role_label/_recommended_model), never from its literal name —
+    # unlike the pre-01-33 hardcoded {architect, other} split this label vocabulary
+    # echoes, no role is ever matched or selected by comparing against these strings.
+    ('ROLE_MODEL_RECOMMENDED = {"architect": "claude-opus-4-8", "other": "claude-sonnet-4-5"}',
+     "console.py: the bootup model recommendation's fallback-tier CONSTANT — a "
+     "display suggestion only, never a role-identity comparison (see note above)"),
+    ('ROLE_MODEL_LABEL = {"architect": "the persistent architect/spec-owner", "other": "engineers/reviewers"}',
+     "console.py: the matching fallback-tier LABEL constant — same reasoning"),
+    ('tier = "architect" if (cfg.get("spec_owner") or cfg.get("persistent")) else "other"',
+     "console.py (_role_label/_recommended_model): derives the tier from the role's "
+     "OWN spec_owner/persistent flags, not its name — appears twice (both helpers), "
+     "same reasoning as the constants above"),
 ]
 
 
@@ -552,21 +569,52 @@ def t3_missing_persona_file_is_boot_fatal():
 
 
 def t3_missing_and_unknown_model_are_boot_fatal():
+    """ADR-0003 D-D (block 01-35) moved this ONE check out of plain construction
+    (`RolesConfig(...)`/`_raises`) into an explicit `validate_models()` call — session
+    overrides (a TRON-owned bootup answer, unknown to RolesConfig at construction) can
+    now rescue an absent roles.yaml model, so construction alone can no longer be the
+    enforcement point (see roles.py's `_validate`/`validate_models` docstrings). Called
+    with NO session override (as here), the CONTRACT is unchanged byte-for-byte:
+    roles.yaml alone must still supply every role's model, boot-fatal otherwise."""
     repo = _fixture_root()
     for bad_model in (None, "", "   "):
         doc = copy.deepcopy(TRIVIAL_ROLES)
         doc["roles"]["engineer"]["model"] = bad_model
         _personas(repo, doc)
-        err = _raises(doc, repo)
+        rc = roles_mod.RolesConfig(doc["roles"], repo)
+        err = None
+        try:
+            rc.validate_models()
+        except roles_mod.RolesError as e:
+            err = str(e)
         ok(f"AC-3 model={bad_model!r} is boot-fatal, named, no default",
            err is not None and "model" in err and "engineer" in err, f"err={err}")
     # absent entirely (key not even present) is the same failure.
     doc = copy.deepcopy(TRIVIAL_ROLES)
     del doc["roles"]["engineer"]["model"]
     _personas(repo, doc)
-    err = _raises(doc, repo)
+    rc = roles_mod.RolesConfig(doc["roles"], repo)
+    err = None
+    try:
+        rc.validate_models()
+    except roles_mod.RolesError as e:
+        err = str(e)
     ok("AC-3 an entirely absent model key is boot-fatal too (never a KeyError, never "
        "a crash — a named RolesError)", err is not None and "model" in err, f"err={err}")
+    # ADR-0003 D-D (01-35): a session override for the SAME role rescues it — the
+    # only case where construction alone would have raised, but the layered check
+    # (roles.yaml OR session) no longer does.
+    doc2 = copy.deepcopy(TRIVIAL_ROLES)
+    doc2["roles"]["engineer"]["model"] = ""
+    _personas(repo, doc2)
+    rc2 = roles_mod.RolesConfig(doc2["roles"], repo)
+    rescued = True
+    try:
+        rc2.validate_models({"engineer": "session-supplied-model"})
+    except roles_mod.RolesError:
+        rescued = False
+    ok("AC-3/D-D a session override for the SAME role rescues an otherwise-boot-fatal "
+       "missing roles.yaml model", rescued)
 
 
 def t3_the_trivial_fixture_itself_boots_clean():
