@@ -38,7 +38,7 @@ roles:
     model: sonnet
     binds: [BUILD, CLOSE]
     paperwork:
-      allow: ["{block_doc}", "{archive}"]
+      allow: ["{block_doc}", "{archive}", "meta/logs/engineering/"]
       line_scoped: { "{pipeline}": "{block_id}" }
 
   reviewer-code:
