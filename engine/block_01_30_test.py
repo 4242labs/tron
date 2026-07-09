@@ -59,7 +59,15 @@ def _run_bootup_with_input(ctx, answers, staged_model=None, forbid_prefix=None):
     """Drive Console.bootup() with a canned `input()` sequence against a REAL Engine
     (the trivial roles.yaml fixture — engineer/reviewer-code/architect). `forbid_prefix`:
     if any prompt string starts with this, raise (proves that prompt was never issued).
-    Returns (Console, prompts_seen)."""
+    Returns (Console, prompts_seen).
+
+    ADR-0003 D-J (01-35) added ONE more interactive prompt ahead of this file's own
+    01-30-parity surface — "Model for AIDE" (AIDE's own model, a session knob,
+    resolved before ND-01-08's advisory). It auto-accepts the shown default WITHOUT
+    consuming from `answers` — this file's `answers` lists stay scoped to exactly the
+    01-30 surface they were written against (scope/worker_count/ask-before-merging +
+    the per-declared-role model loop), never renumbered for 01-35's own addition
+    (covered in its own right by block_01_35_test.py)."""
     orig_input = builtins.input
     it = iter(answers)
     seen = []
@@ -68,6 +76,8 @@ def _run_bootup_with_input(ctx, answers, staged_model=None, forbid_prefix=None):
         seen.append(prompt)
         if forbid_prefix and prompt.startswith(forbid_prefix):
             raise AssertionError(f"unexpected prompt issued: {prompt!r}")
+        if prompt.startswith("Model for AIDE"):
+            return ""              # accept AIDE's own built-in default; never consumes `it`
         return next(it)
 
     builtins.input = fake_input

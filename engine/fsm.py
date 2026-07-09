@@ -1016,6 +1016,20 @@ class Engine:
             return session.strip()
         return self.roles.model_for(role)
 
+    def aide_model(self):
+        """ADR-0003 D-J reconciliation (a): AIDE's model — an engine-builtin LLM lane
+        (like classify_message), NOT a dispatched roles.yaml role. FAIL-OPEN: a
+        session knob (`console._ask_aide_model` -> `st.live_config["aide_model"]`,
+        the same TRON-owned write boundary as `_model_for_role`'s session override —
+        never roles.yaml) wins if set; else `judge`'s built-in default. Unlike
+        `_model_for_role`, an absent value here is NEVER boot-fatal — explicitly
+        exempt from D-D's "model-absent = boot-fatal" law, which governs only
+        dispatched fleet roles."""
+        v = self.st.live_config.get("aide_model")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return judge.TIER.get("aide", judge.AIDE_DEFAULT_MODEL)
+
     def _spawn(self, wid, role, block=None):
         """Identity-only spawn (01-07 two-step): fill PMT-SPAWN's slots and bring the worker
         online — no assignment. The persona prompt is delivered as the worker's FIRST mailbox

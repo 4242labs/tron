@@ -1,5 +1,6 @@
-r"""block_01_35_test — restore the operator bootup journey: model question + AIDE
-recommendations (block 01-35, ADR-0003 D-D — an explicit amendment of ADR-0002 D4).
+r"""block_01_35_test — restore the operator bootup journey: model question + AIDE as
+a REAL LLM (block 01-35, ADR-0003 D-D + D-J — an explicit amendment of ADR-0002 D4,
+and the D-J correction of the in-flight `feat-01-35` deterministic stub).
 
 Context: block 01-33 (ADR-0002 D4, "fleet as config") removed the 01-30 bootup model
 question + recommendation — an operator-journey step never re-authorized removed.
@@ -8,10 +9,18 @@ ADR-0003 D-D restores it: (T1) the model question + recommendation, per role,
 TRON-owned session store (this instance's own MANIFEST live_config, under
 meta/agents/tron/), NEVER in the project-authored meta/tron/roles.yaml — with the
 session answer layered over `role.model` (session wins for the session; else
-role.model; boot-fatal only if neither resolves); (T3) AIDE recommendations at bootup
-— which block to pick, which models — recommendation only, the operator decides.
+role.model; boot-fatal only if neither resolves); (T3) a SINGLE architect this
+version — no `architect_count` knob/prompt is added; (T4) AIDE restored as a REAL
+LLM (`judge.call("aide")`, reading Project Docs as context) at the bootup nodes
+ND-01-08 SET SCOPE / ND-01-09 SET COUNTS / ND-01-14 RESOLVE — NEVER a deterministic
+stand-in. The prior `feat-01-35` build's `console._aide_recommend_block` (a
+deterministic, no-model-call heuristic) is DELETED along with its own test, per the
+operator hard rule: AIDE is an LLM by design, never a heuristic.
 
-Standalone runner convention (exit 0 = pass, no tokens, no network, no real `claude`).
+Standalone runner convention (exit 0 = pass, no tokens, no network, no real `claude`
+— TRON_DRY + no TRON_JUDGE_STUB makes `judge._call_llm` a fast no-op; AC-5's own
+"real LLM call" assertions monkeypatch `judge._call_llm` directly instead, which
+bypasses that dry guard entirely).
 
 Covers this block's own acceptance criteria
 (blocks/01-35-restore-operator-bootup-journey.md):
@@ -27,11 +36,18 @@ Covers this block's own acceptance criteria
        a stale role.model; absent a session answer, role.model resolves as before;
        absent BOTH, boot is fatal (loud, named); a session answer alone can rescue an
        otherwise-boot-fatal missing roles.yaml model.
-  AC-4 test:<aide_bootup_recommendations> — AIDE recommends (a) which block to pick
-       and (b) which models, recommendation-only; the operator's own choice always
-       wins over the recommendation in both cases.
-AC-5 (journey-frozen byte-diff of scope/worker_count/ask-before-merging) is
-`manual_by:engineer`, verified in the PR body, not exercised here. AC-6 is
+  AC-4 test:<single_architect_no_count_knob> — the reset's `architect:
+       cardinality:1, spec_owner:true` boot invariant is unchanged; bootup asks
+       `worker_count` only — no `architect_count`/"#architects" prompt exists
+       anywhere in console.py.
+  AC-5 test:<aide_bootup_is_real_llm_not_heuristic> — AIDE is a REAL LLM at
+       ND-01-08/09/14: a real `judge.call("aide")` fires (mocked at `judge._call_llm`)
+       carrying Project Docs context (context.md+pipeline.md+the relevant block
+       doc(s)); `_aide_recommend_block` and its own deterministic test are GONE;
+       AIDE's model is fail-open (never boot-fatal); a runtime-unavailable AIDE call
+       degrades to "proceed unaided", never a heuristic answer.
+AC-6 (journey-frozen byte-diff of scope/worker_count/ask-before-merging) is
+`manual_by:engineer`, verified in the PR body, not exercised here. AC-7 is
 `manual_by:operator` (live smoke).
 
 01-30 parity mechanics (the restored question's own per-role ask/default/override
@@ -53,6 +69,7 @@ sys.path.insert(0, HERE)
 os.environ["TRON_DRY"] = "1"
 
 import util                      # noqa: E402
+import judge                     # noqa: E402
 import console                   # noqa: E402
 import roles as roles_mod        # noqa: E402
 from fsm import Engine           # noqa: E402
@@ -254,116 +271,215 @@ def test_model_precedence_fail_closed():
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# AC-4 test:<aide_bootup_recommendations>
+# AC-4 test:<single_architect_no_count_knob>
 # ══════════════════════════════════════════════════════════════════════════
 
-def test_aide_bootup_recommendations():
-    # (a) which block to pick — advisory, printed before the scope question, never
-    # itself decides scope.
-    ctx, _ = build()
+def test_single_architect_no_count_knob():
+    # (a) the reset's `architect: cardinality:1, spec_owner:true` boot invariant is
+    # unchanged — exactly one spec_owner role is boot-enforced (roles.py, untouched
+    # by this block), and it resolves via roles.spec_owner (never a hardcoded literal).
+    ctx, repo = build()
     eng = Engine(ctx)
-    eng.st.data["pipeline"] = [
-        {"id": "A-01", "status": "to-do", "depends_on": [], "order": 1, "has_block_file": True},
-        {"id": "A-02", "status": "to-do", "depends_on": ["A-01"], "order": 2, "has_block_file": True},
-    ]
-    c = console.Console(ctx)
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        c._aide_recommend_block(eng)
-    out = buf.getvalue()
-    ok("AC-4 AIDE recommends block A-01 (deps satisfied, still open, first in order)",
-       "A-01" in out, f"out={out!r}")
+    ok("AC-4 exactly one spec_owner role is boot-enforced and resolves",
+       eng.roles.spec_owner == "architect")
+    doc = copy.deepcopy(TRIVIAL_ROLES)
+    doc["roles"]["architect"]["spec_owner"] = False
+    doc["roles"]["engineer"]["spec_owner"] = True
+    doc["roles"]["reviewer-code"]["spec_owner"] = True
+    two_owners_raised = False
+    try:
+        roles_mod.RolesConfig(doc["roles"], repo)   # real fixture root -> personas resolve;
+        # isolates the failure to the spec_owner-count check, not a missing-persona one.
+    except roles_mod.RolesError:
+        two_owners_raised = True
+    ok("AC-4 more than one spec_owner (a de-facto multi-architect config) is still "
+       "boot-fatal — the reset's cardinality:1 invariant is untouched by this block",
+       two_owners_raised)
 
-    # a block with unmet deps is never recommended over one whose deps ARE satisfied.
-    ctx2, _ = build()
-    eng2 = Engine(ctx2)
-    eng2.st.data["pipeline"] = [
-        {"id": "A-01", "status": "to-do", "depends_on": ["A-00"], "order": 1, "has_block_file": True},
-        {"id": "A-02", "status": "to-do", "depends_on": [], "order": 2, "has_block_file": True},
-    ]
-    c2 = console.Console(ctx2)
-    buf2 = io.StringIO()
-    with contextlib.redirect_stdout(buf2):
-        c2._aide_recommend_block(eng2)
-    out2 = buf2.getvalue()
-    ok("AC-4 AIDE skips a block whose deps aren't satisfied and recommends the next "
-       "eligible one instead", "A-02" in out2 and "A-01" not in out2, f"out2={out2!r}")
-
-    # a brand-new instance (no cached pipeline yet) degrades to a neutral note —
-    # never crashes, never fabricates a block id.
-    ctx0, _ = build()
-    eng0 = Engine(ctx0)
-    c0 = console.Console(ctx0)
-    buf0 = io.StringIO()
-    with contextlib.redirect_stdout(buf0):
-        c0._aide_recommend_block(eng0)
-    ok("AC-4 no cached pipeline yet -> a neutral advisory note, never a crash",
-       "AIDE" in buf0.getvalue())
-
-    # the operator's OWN scope choice always wins — the recommendation never sets it.
+    # (b) bootup asks worker_count only — no architect_count / "how many architects"
+    # prompt exists anywhere.
     seen = []
     orig_input = builtins.input
 
     def fake_input(prompt=""):
         seen.append(prompt)
+        if prompt.startswith("Model for"):
+            return ""
         if prompt.startswith("  [1]"):
-            return "3"           # explicitly choose a RANGE, ignoring any recommendation
-        if "First block" in prompt:
-            return "A-02"
-        if "Last block" in prompt:
-            return "A-02"
+            return "1"
         if "worker_count" in prompt:
             return "1"
         if "Inform you" in prompt:
             return "n"
-        if prompt.startswith("Model for"):
-            return ""
         return ""
 
     builtins.input = fake_input
     try:
-        console.Console(ctx2).bootup()
-    finally:
-        builtins.input = orig_input
-    scope = State(ctx2).scope
-    ok("AC-4 the operator's own scope answer wins regardless of any recommendation "
-       "(recommendation-only, never decides)",
-       scope.get("mode") == "range" and scope.get("value") == ["A-02", "A-02"],
-       f"scope={scope}")
-
-    # (b) which models — the shown recommendation IS _recommended_model's own value,
-    # and the operator's override still wins over it (same law as the block pick).
-    eng3 = Engine(ctx); started(eng3)
-    c3 = console.Console(ctx)
-    rec = c3._recommended_model(eng3, "engineer")
-    ok("AC-4 the model recommendation for a role matches roles.yaml's own declared "
-       "model when set (the recommended default an operator sees)", rec == "test-model")
-    seen2 = []
-    orig_input2 = builtins.input
-
-    def fake_input2(prompt=""):
-        seen2.append(prompt)
-        if prompt.startswith("Model for engineer"):
-            return "operator-override"      # explicit override beats the recommendation
-        if prompt.startswith("Model for"):
-            return ""
-        if prompt.startswith("  [1]"):
-            return "1"
-        if "worker_count" in prompt:
-            return "1"
-        if "Inform you" in prompt:
-            return "n"
-        return ""
-
-    builtins.input = fake_input2
-    try:
         console.Console(ctx).bootup()
     finally:
-        builtins.input = orig_input2
-    live = State(ctx).live_config
-    ok("AC-4 an operator's explicit model override wins over the recommendation shown",
-       live.get("worker_model", {}).get("engineer") == "operator-override",
-       f"worker_model={live.get('worker_model')}")
+        builtins.input = orig_input
+    ok("AC-4 bootup never asks an architect_count/#architects question",
+       not any("architect_count" in p or "how many architect" in p.lower() for p in seen),
+       f"seen={seen}")
+    ok("AC-4 bootup asks worker_count exactly once (the sole concurrency knob asked)",
+       sum("worker_count" in p for p in seen) == 1, f"seen={seen}")
+
+    # (c) the console source itself defines no architect_count knob/prompt at all
+    # (this block must not have added one — ADR-0003 D-D+D-J, BLOCKER-2 resolved).
+    with open(os.path.join(HERE, "console.py")) as fh:
+        console_src = fh.read()
+    ok("AC-4 console.py source contains no architect_count knob/prompt",
+       "architect_count" not in console_src)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# AC-5 test:<aide_bootup_is_real_llm_not_heuristic>
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_aide_is_a_real_llm_not_a_heuristic():
+    # (a) the deterministic stub + its call site are GONE — deleted, not just unused.
+    ok("AC-5 Console._aide_recommend_block no longer exists (T4: deleted)",
+       not hasattr(console.Console, "_aide_recommend_block"))
+    with open(os.path.join(HERE, "console.py")) as fh:
+        console_src = fh.read()
+    ok("AC-5 console.py source contains no _aide_recommend_block definition/call "
+       "at all (the deterministic stub is fully removed, not merely dead code)",
+       "_aide_recommend_block" not in console_src)
+
+    # (b) ND-01-08 SET SCOPE: a REAL judge.call("aide") fires — mocked at the lowest
+    # chokepoint (judge._call_llm) so this proves the SHAPE of the real call (tool,
+    # context, model) without spending a token. The context carries Project Docs:
+    # context.md + pipeline.md + the relevant (dispatchable) block doc(s).
+    ctx, repo = build()   # seeds A-01/A-02/A-03, all to-do, no deps (sentry_test default)
+    with open(os.path.join(repo, "meta", "context.md"), "w") as fh:
+        fh.write("PROJECT CONTEXT MARKER — this project builds widgets.\n")
+    eng = Engine(ctx)
+    eng.st.data["pipeline"] = [
+        {"id": "A-01", "status": "to-do", "depends_on": [], "order": 1,
+         "has_block_file": True, "block_file": "A-01.md"},
+    ]
+    calls = []
+    orig_call_llm = judge._call_llm
+
+    def fake_scope(tool, payload, ctx_, correction=None, context=None, model=None):
+        calls.append({"tool": tool, "payload": payload, "context": context, "model": model})
+        return '{"advice": "pick A-01, deps are clear", "recommended_block": "A-01"}'
+
+    judge._call_llm = fake_scope
+    try:
+        c = console.Console(ctx)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            c._aide_advise_scope(eng)
+    finally:
+        judge._call_llm = orig_call_llm
+
+    ok("AC-5 a real judge.call('aide') fires at ND-01-08 SET SCOPE (mocked LLM, "
+       "NEVER a heuristic)", len(calls) == 1 and calls[0]["tool"] == "aide", f"calls={calls}")
+    ok("AC-5 the aide call's mode is 'scope' — it can name WHICH block to pick",
+       calls[0]["payload"].get("mode") == "scope", f"payload={calls[0]['payload']}")
+    ok("AC-5 the call carries Project Docs context: context.md content is present",
+       "PROJECT CONTEXT MARKER" in (calls[0]["context"] or ""),
+       f"context={calls[0]['context']!r}")
+    ok("AC-5 the call carries Project Docs context: pipeline.md content is present",
+       "Roadmap" in (calls[0]["context"] or ""), f"context={calls[0]['context']!r}")
+    ok("AC-5 the call carries Project Docs context: the relevant block doc (A-01.md)",
+       "Block A-01" in (calls[0]["context"] or ""), f"context={calls[0]['context']!r}")
+    ok("AC-5 the operator sees AIDE's real advice, including which block to pick",
+       "A-01" in buf.getvalue(), f"out={buf.getvalue()!r}")
+
+    # (c) ND-01-09 SET COUNTS is ALSO a real LLM call, same shape, mode='counts'.
+    calls2 = []
+
+    def fake_counts(tool, payload, ctx_, correction=None, context=None, model=None):
+        calls2.append({"tool": tool, "payload": payload})
+        return '{"advice": "1 worker is unusually low but valid for a trivial SIM"}'
+
+    judge._call_llm = fake_counts
+    try:
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            c._aide_advise_counts(eng)
+    finally:
+        judge._call_llm = orig_call_llm
+    ok("AC-5 a real judge.call('aide') fires at ND-01-09 SET COUNTS, mode='counts'",
+       len(calls2) == 1 and calls2[0]["payload"].get("mode") == "counts", f"calls2={calls2}")
+    ok("AC-5 SET COUNTS advises #workers only — no #architects field is ever sent "
+       "(single architect this version, D-D+D-J BLOCKER-2)",
+       "architect_count" not in calls2[0]["payload"], f"payload={calls2[0]['payload']}")
+
+    # (d) ND-01-14 RESOLVE: briefs the operator and offers exactly three choices.
+    def fake_resolve(tool, payload, ctx_, correction=None, context=None, model=None):
+        ok("AC-5 RESOLVE's aide call mode is 'resolve' and carries the conflict detail",
+           payload.get("mode") == "resolve" and "conflict" in payload.get("detail", ""),
+           f"payload={payload}")
+        return ('{"advice": "the MANIFEST scope no longer matches trunk", '
+                '"choices": ["repair", "restart", "halt"]}')
+
+    judge._call_llm = fake_resolve
+    try:
+        brief, choices = c._aide_resolve(eng, "manifest scope conflict")
+    finally:
+        judge._call_llm = orig_call_llm
+    ok("AC-5 RESOLVE briefs the operator and offers exactly three choices",
+       len(choices) == 3 and set(choices) == {"repair", "restart", "halt"},
+       f"brief={brief!r} choices={choices}")
+
+    # (e) fail-safe: AIDE unavailable -> proceeds UNAIDED — never a heuristic
+    # substitute answer. No monkeypatch here: the real (unpatched) judge._call_llm
+    # runs, and TRON_DRY + no TRON_JUDGE_STUB makes it a fast, tokenless no-op.
+    ctx3, _ = build()
+    eng3 = Engine(ctx3)
+    eng3.st.data["pipeline"] = []
+    c3 = console.Console(ctx3)
+    buf3 = io.StringIO()
+    with contextlib.redirect_stdout(buf3):
+        c3._aide_advise_scope(eng3)
+    ok("AC-5 AIDE unavailable -> bootup proceeds unaided (no crash, no fabricated "
+       "block-pick, no heuristic substitute)",
+       "unavailable" in buf3.getvalue().lower(), f"out={buf3.getvalue()!r}")
+    buf4 = io.StringIO()
+    with contextlib.redirect_stdout(buf4):
+        c3._aide_advise_counts(eng3)
+    ok("AC-5 ...same fail-safe at ND-01-09 SET COUNTS",
+       "unavailable" in buf4.getvalue().lower(), f"out={buf4.getvalue()!r}")
+    brief3, choices3 = c3._aide_resolve(eng3, "a raw detail string")
+    ok("AC-5 ...RESOLVE's fail-safe surfaces the RAW detail (never a fabricated "
+       "brief) but still offers the three standing choices",
+       brief3 == "a raw detail string" and set(choices3) == {"repair", "restart", "halt"},
+       f"brief3={brief3!r} choices3={choices3}")
+
+    # (f) AIDE's model is fail-open — never boot-fatal, unlike a dispatched fleet role
+    # (D-J reconciliation (a); the model-absent=boot-fatal law governs ONLY roles.yaml
+    # roles). A missing/blank session override silently keeps judge's built-in default.
+    ctx4, _ = build()
+    eng4 = Engine(ctx4)
+    ok("AC-5 AIDE's model resolves to judge's built-in default with no session "
+       "override (fail-open, never a crash)",
+       eng4.aide_model() == judge.TIER.get("aide", judge.AIDE_DEFAULT_MODEL))
+    eng4.st.live_config["aide_model"] = "session-picked-model"
+    ok("AC-5 a session aide_model knob overrides the built-in default",
+       eng4.aide_model() == "session-picked-model")
+
+    # a staged/headless bootup with NO "aide" key at all never prompts and never
+    # blocks boot (fail-open exemption from D-D's boot-fatal law — contrast with the
+    # per-role model question, which DOES boot-fatal on an unresolved role, AC-3).
+    ctx5, _ = build()
+    c5 = console.Console(ctx5)
+    eng5 = Engine(ctx5)
+
+    def poison_input(prompt=""):
+        raise AssertionError(f"headless aide-model resolution must never prompt: {prompt!r}")
+
+    orig_input = builtins.input
+    builtins.input = poison_input
+    try:
+        c5._ask_aide_model(eng5, staged={})   # no "aide" key present at all
+    finally:
+        builtins.input = orig_input
+    ok("AC-5 a staged bootup with no 'aide' answer never prompts and resolves the "
+       "built-in default (fail-open, not boot-fatal)",
+       eng5.st.live_config.get("aide_model") == judge.TIER.get("aide", judge.AIDE_DEFAULT_MODEL))
 
 
 def main():
