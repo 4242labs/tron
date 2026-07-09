@@ -224,6 +224,12 @@ class Engine:
                                                        # convenience mirror of that value.
         self._snapshot_hash = ""                      # hash of the rebuilt trunk-read snapshot (per-tick provenance)
         self._trunk_fault = False                     # T3 (01-16): this tick's trunk read came back blank
+        # T5 (01-36, ADR-0003 D-J reconciliation (b)): the shared <=1-AIDE-call-per-
+        # tick budget ND-02-10 (_page_operator) and ND-09 (_aide_answer_or_escalate)
+        # both draw from. Reset at the top of every real tick (tick()); defined here
+        # too so a direct unit-test call into either method (no tick() wrapper) still
+        # has a defined counter, never an AttributeError.
+        self._aide_calls_this_tick = 0
         self.events = eventlog.EventLog(ctx, self._log_env)
         jobs.configure(ctx.workers_dir)               # point the worker store at this instance (01-10)
 
@@ -353,6 +359,10 @@ class Engine:
         if not (self.st.data.get("session") or {}).get("started_at"):
             return self.ended
         self._tq = []
+        # T5 (01-36, ADR-0003 D-J reconciliation (b)): the shared AIDE call budget
+        # resets fresh every tick — <=1 real judge.call_aide across BOTH ND-02-10 and
+        # ND-09 this tick, never carried over, never accumulated.
+        self._aide_calls_this_tick = 0
         # Bump the tick counter up front so every forensic record this pass carries the
         # IN-PROGRESS tick number (1-based), not last-completed (01-06 review #2).
         last = self.st.data.setdefault("last_sweep", {})
@@ -406,10 +416,23 @@ class Engine:
                     node="§5 tick drain", next_action="drop (re-read next tick at-least-once)")
         if rc != "pause":
             self._drive_gates()          # S-1: pacing is wall-clock inside the gate machinery
-            self._drive_cases()          # F-4/R-7: parked-case re-ping ladder -> safe-park
             self._drive_landings()       # D1: architect paperwork FIFO, job-queue-independent
             self._drive_architect_liveness()   # 01-13: the job queue gets the same idle law
         self._drain_triggers()
+        # T4 (01-36, ADR-0003 D-G engine half): _drive_cases (the re-ping/safe-park
+        # ladder) runs AFTER _drain_triggers, not before — the ~20s stale-escalation
+        # race SIM tron-40's context flagged. Pre-01-36 ordering ran the ladder BEFORE
+        # this tick's own inbound messages were drained: an operator settle for CASE-5
+        # arriving THIS tick was still sitting un-applied (case['decision'] still None)
+        # while the ladder evaluated it, so a case about to resolve this very tick
+        # could still draw a stale re-ping/safe-park page. Moving this after
+        # _drain_triggers means any same-tick settle (_h_apply_decision/_close_case,
+        # already applied above) is visible before the ladder ever looks — never a
+        # duplicate escalation for a case resolving in the same tick it's raised.
+        # _drive_cases itself only ever emits (a leaf effect, via _page_operator) —
+        # it enqueues no new FSM triggers, so nothing is left undrained by moving it.
+        if rc != "pause":
+            self._drive_cases()          # F-4/R-7: parked-case re-ping ladder -> safe-park
         self.st.data.setdefault("last_sweep", {})["at"] = util.now_iso()  # count bumped at tick start
         self.st.save()                                   # persist effects FIRST
         self._release_claimed(claimed)                   # then drop the claimed sidecars (at-least-once)
@@ -949,7 +972,7 @@ class Engine:
         self.emit("terminal.dispatched", {"worker_id": wid, "block": block})
         self.log("flow", f"build:block:next -> dispatch {wid} on {block}")
 
-    def _redispatch(self, block, bypass_gate=False):
+    def _redispatch(self, block, bypass_gate=False, dead_wid=None):
         """Recovery: re-spawn a builder on a block whose prior worker died, even if the
         agent had already moved it to 🔄 on trunk (TRON's worker/PR tracking is the real
         in-flight authority). Skips if it's done, parked, has a live PR, or deps unmet.
@@ -957,7 +980,18 @@ class Engine:
         probe (_sweep_fleet_refusal_canary) — a canary whose block already reached a
         gate stage before its worker's refusal death must still be probeable, or the
         hold wedges permanently the instant any held block gates (I2). Every OTHER hard
-        stop below still applies unconditionally; only the gate-membership check lifts."""
+        stop below still applies unconditionally; only the gate-membership check lifts.
+
+        `dead_wid` (T2, 01-36, ADR-0003 D-F): the id of the worker that died on this
+        block, if known — threaded into a RICHER handover assignment
+        (_recovery_assignment) than a fresh dispatch's plain _engineer_assignment:
+        full context + a timeline tail off the dead worker's own record + an
+        explicit re-verify-current-state-before-acting instruction. Re-targets by
+        BLOCK/BRANCH state (this method's own signature — never the dead worker's
+        id, which is merely optional forensic context here), never an operator
+        relay. Callers that don't know the dead id (a workerless recovery with no
+        prior worker on record) simply omit it — the handover degrades gracefully
+        to "no prior worker's activity known", never a crash."""
         row = self.st.row(block)
         if not row or row.get("status") not in OPEN_STATUSES:
             return
@@ -976,7 +1010,7 @@ class Engine:
              "spawned_at": util.now_iso(), "status": "spawning", "block": block,
              "_carve_pending": True,   # T3 (01-34, ADR-0003 D-A): observed, never deadlined
              "pending_assign": {"kind": "build", "block": block,
-                                "assignment": self._engineer_assignment(block)}}
+                                "assignment": self._recovery_assignment(block, dead_wid=dead_wid)}}
         self._reserve(w)
         session, short = self._spawn(wid, role, block=block)
         w["session_id"], w["shortid"], w["status"] = session, short, "working"
@@ -984,6 +1018,39 @@ class Engine:
         self.events.event("dispatch", actor=wid, block=block, role=role,
                           session=session, attempt=2, recovery=True)
         self.log("flow", f"recover -> re-dispatch {wid} on {block}")
+
+    def _recovery_assignment(self, block, dead_wid=None):
+        """T2 (01-36, ADR-0003 D-F): the REPLACEMENT'S own assignment on a recovery
+        dispatch (_redispatch) — richer than a fresh _engineer_assignment. Full
+        handover: the block's own spec path (unchanged) + its CURRENT gate/branch
+        state (what stage, if any, a prior worker had already reached) + a TIMELINE
+        tail off the dead worker's own on-disk record (jobs.timeline_tail,
+        best-effort — the worker dir may already be gone by the time this runs; a
+        missing timeline degrades to "no prior activity on record", never a crash)
+        + an explicit instruction to RE-VERIFY the current state before acting
+        (trunk may have moved under the dead worker — a replacement that blindly
+        trusts stale state could redo already-landed work or act on a stale
+        branch). No operator relay for any of this (D-F: "orders re-target
+        automatically... no operator relay") — it rides straight into the
+        replacement's own first mailbox assignment."""
+        row = self.st.row(block) or {}
+        spec = row.get("block_file") or f"blocks/{block}.md"
+        branch = self._block_branch(block)
+        g = self.st.gate.get(block)
+        stage_note = (f"a prior worker had already reached DONE-gate stage "
+                     f"'{g.get('stage')}'" if g else "no DONE-gate stage was reached yet")
+        tail = jobs.timeline_tail(dead_wid, n=8) if dead_wid and not self.dry else ""
+        timeline_note = f" Its recent activity: {tail}" if tail else ""
+        return (f"You are REPLACING a worker that died on block {block} — this is a "
+                f"FULL HANDOVER, not a fresh assignment. Context: {stage_note}; its "
+                f"branch (if any) is '{branch or 'not yet named'}'.{timeline_note} "
+                f"Before acting: RE-VERIFY the exact current state — re-check trunk "
+                f"and this block's branch/gate rather than trusting the dead "
+                f"worker's last report; if trunk moved under it, re-run/re-validate "
+                f"from the CURRENT tip. Then continue: read the spec at {spec}, "
+                f"finish this block end to end (any pending orders for this block "
+                f"re-target to you automatically — no separate hand-off needed), and "
+                f"report when ready for the done gate.")
 
     def _dispatch_reviewer(self, typ):
         self.st.cadence[typ] = 0                       # consume the counter on dispatch
@@ -1210,6 +1277,19 @@ class Engine:
             g["stall_attempts"] = 0
         elif observed == "unavailable":
             pass
+        elif self._dispatch_held():
+            # T3 (01-36, ADR-0003 D-H, MJ-A): a spawn-dependent gate's stall counter
+            # is FROZEN while the fleet-refusal hold is active — the outage starves
+            # this gate of the worker it needs, and a git read genuinely returning
+            # 'false' during the outage must not drive gate_step_cap (that isn't a
+            # worker failure, it's the outage; D-H requires the counter frozen, not
+            # bumped, for the hold's duration). Left UNCHANGED (never zeroed either)
+            # so counting resumes exactly where it left off the instant the hold
+            # releases — never a free reset, never a bump. Observation-only advances
+            # (the 'true' branch above) are UNAFFECTED by this guard — they still
+            # proceed while held (01-34 D-C/MJ-1), since `_drive_gates` re-derives
+            # every observable unconditionally regardless of `_dispatch_held()`.
+            pass
         elif block in self.st.gate and before is not None and self.st.gate[block].get("stage") == before:
             # No advance on a repeat report = a failed attempt at this step (T9). Cap at N=2.
             n = g.get("stall_attempts", 0) + 1
@@ -1422,8 +1502,10 @@ class Engine:
         # own explicit raise doesn't loop back through this very funnel to itself).
         is_architect_raise = bool(m.get("origin") == "architect_raise")
         if is_triage_self or is_architect_raise:
-            self.emit("escalate.wall", {"worker_id": freed or "?", "block": block or "?",
-                                        "detail": detail, "case": case_id})
+            # T4/T5 (01-36): the single operator-paging chokepoint — the ND-02-10
+            # AIDE brief + the D-G receipt contract, same primitive every other
+            # case-correlated page uses.
+            self._page_operator(case_id, block, detail, worker_id=freed)
             if self._tg_on():
                 self.emit("tg.escalate", {"worker_id": freed or "?", "detail": detail})
         else:
@@ -1861,7 +1943,11 @@ class Engine:
                                    {"block": block, "worker_id": wid,
                                     "detail": "repeated stall"})
                     else:
-                        self._redispatch(block)
+                        # T2 (01-36, ADR-0003 D-F): thread the dead worker's own id
+                        # (w.get('id'), not the loop's possibly-None `wid` filter
+                        # param) so the replacement's assignment carries its full
+                        # handover (timeline tail, re-verify instruction).
+                        self._redispatch(block, dead_wid=w.get("id"))
         self._emit("pulse")
 
     def _h_session_end(self, m):
@@ -3730,17 +3816,158 @@ class Engine:
             # this no-architect fallback is a genuine wall's LAST resort too (not only
             # truly-unclassifiable input) — the correlation id (02-10) the operator settles
             # by must survive here exactly as it did on the pre-01-31 direct escalate.wall
-            # page (`{case}` slot). escalate.unclassified carries no `case` slot at all
-            # (`detail` only), so a live case rides inline in the text — never silently
-            # dropped, never a page the operator can't act on.
-            text = f"[{case}] {detail}" if case else detail
-            self.emit("escalate.unclassified", {"detail": text})
+            # page (`{case}` slot).
+            if case:
+                # T1 (01-36, ADR-0003 D-E): a live case already carries its own
+                # worker-hold/settle semantics (opened by _h_escalate) — "architect
+                # unreachable" is squarely D-E's second operator route (can't-solve
+                # OR unreachable -> operator). Deliver it through the SAME
+                # case-correlated paging chokepoint every other page uses
+                # (_page_operator: the ND-02-10 AIDE brief + the D-G receipt
+                # contract), never a bare caseless escalate.unclassified — only the
+                # delivery mechanism changes here, the case object is untouched.
+                self._page_operator(case, block, detail, worker_id=sender)
+                return
+            # A plain peer/tron question with no case at all (nothing was ever
+            # "raised" to hold/settle by design) and no architect to sort it: a bare
+            # page, unchanged from pre-01-36 — there is nothing to correlate.
+            self.emit("escalate.unclassified", {"detail": detail})
             return
         job = {"kind": "triage", "detail": detail, "sender": sender, "block": block}
         if case:
             job["case"] = case
         self.st.architect_queue.append(job)
         self._pump_architect()
+
+    # ── T4 (01-36, ADR-0003 D-G engine half) + T5 ND-02-10 (D-J): the ONE operator-
+    # paging chokepoint every case-correlated escalation funnels through. ──
+    def _page_operator(self, case_id, block, detail, worker_id=None):
+        """The single landing primitive for "deliver this case to the operator" —
+        _h_escalate's direct-page branch, _drive_cases' re-ping/safe-park ladder,
+        _open_architect_stall_case, _triage_to_architect's no-architect fallback,
+        and _end_session's still-parked sweep all funnel through here. One primitive
+        per concern (never a second paging mechanism), matching D-B's own rule for
+        the landing primitive.
+
+        ND-02-10 RESOLVE (ADR-0003 D-J): on a case's FIRST page only (`case.get
+        ('paged')` not yet set), AIDE gets ONE bounded shot at briefing it —
+        `judge.call_aide(mode='resolve')`, the SAME "brief + offer choices" shape
+        the bootup RESOLVE node already uses (`judge.INSTRUCTIONS['aide']` documents
+        both). A separate call from classify_message, never stacked into it, and
+        sharing the ONE per-TICK AIDE budget with ND-09's `ask`
+        (`_aide_budget_available`/`_aide_spend_budget`) — a backlog of many cases
+        paging in one tick can never fan out past a single LLM call; every case
+        past the first still pages this same tick, just with the raw detail.
+        Fail-safe (D-J reconciliation (e) / D-E): AIDE unavailable, its output
+        malformed, or this tick's one slot already spent -> the RAW, un-briefed
+        detail delivers immediately over the SAME local-write notify (escalate.wall)
+        every wall already uses — NEVER held waiting on a brief that can't compose,
+        and AIDE is never replaced by a heuristic stand-in (the fallback is the
+        literal, unmodified `detail`, not a fabricated summary).
+
+        T4 (D-G engine half): stamps an abstract `operator_page` forensic record and
+        reads back any delivery receipt sitting in the minimal stub slot
+        (`_consume_page_receipt`) — send/confirm/retry/fallback stay the
+        transport's job (02-12 T3); this file builds no channel and never claims a
+        delivery it cannot itself confirm."""
+        case = self.st.pending_cases.get(case_id) if case_id else None
+        page_detail = detail
+        briefed = False
+        if case is not None and not case.get("paged") and self._aide_budget_available():
+            # D-J reconciliation (d): "the relevant block doc(s)" — when this case
+            # names a real canon block, carry ITS block file into the Project-Docs
+            # context (never a guess at "the" block otherwise; context.md +
+            # pipeline.md alone still satisfy the base contract when there is none).
+            row = self.st.row(block) if block else None
+            block_files = [row["block_file"]] if row and row.get("block_file") else None
+            ok, out, _ = judge.call_aide(self.ctx, self.paths, "resolve",
+                                         extra={"detail": detail}, block_files=block_files,
+                                         model=self.aide_model(), elog=self.events)
+            self._aide_spend_budget()
+            if ok and out and out.get("advice"):
+                page_detail = out["advice"]
+                briefed = True
+        if case is not None:
+            case["paged"] = True
+        self.emit("escalate.wall", {"worker_id": worker_id or "?", "block": block or "?",
+                                    "detail": page_detail, "case": case_id})
+        self.events.event("operator_page", cid=case_id, block=block, detail=detail,
+                          **({"aide_briefed": True} if briefed else {}))
+        self._consume_page_receipt(case_id)
+
+    def _aide_budget_available(self):
+        """D-J reconciliation (b): the shared <=1-AIDE-call-per-TICK cap ND-02-10
+        (`_page_operator`) and ND-09 (`_aide_answer_or_escalate`) both draw from —
+        ONE counter, reset at the top of every tick (`tick()`), never a per-node
+        budget (which would silently permit 2 real LLM calls in one tick, one per
+        node) and never a per-case budget (which is exactly the "one AIDE call per
+        PARKED CASE" fan-out D-J reconciliation (b) forbids)."""
+        return self._aide_calls_this_tick < 1
+
+    def _aide_spend_budget(self):
+        self._aide_calls_this_tick += 1
+
+    def _consume_page_receipt(self, case_id):
+        """T4 (01-36, ADR-0003 D-G engine half): the MINIMAL delivery-receipt
+        contract. `st.data["operator_page_receipts"]` is the ONE stub slot a real
+        transport (02-12 T3) would fill — `case_id -> "delivered" | "failed-
+        permanent"` — after actually sending + confirming (or exhausting its own
+        retries on) the page this engine already emitted above. This engine NEVER
+        writes "delivered" itself (that would fake a confirmation it has no way to
+        make); it only ever reads and consumes what is already there. A
+        'failed-permanent' receipt is never a silent drop: it forces this case's
+        NEXT `_drive_cases` re-ping to fire immediately (the engine's own existing
+        escalation ladder — never a second, engine-owned retry loop, which would be
+        the transport's job) and leaves a forensic trail naming the failure."""
+        receipts = self.st.data.get("operator_page_receipts") or {}
+        if case_id not in receipts:
+            return
+        receipt = receipts.pop(case_id, None)
+        self.st.data["operator_page_receipts"] = receipts
+        case = self.st.pending_cases.get(case_id)
+        if receipt == "failed-permanent":
+            self.events.failure(
+                "operator-page-failed", "page-receipt-permanent-fail",
+                "deliver the operator page for this case",
+                f"case {case_id} permanent delivery failure (transport receipt)",
+                block=(case or {}).get("block"), node="_page_operator",
+                next_action="escalate: force an immediate re-ping")
+            if case is not None and case.get("decision") is None:
+                case["ping_anchor_s"] = 0
+
+    def _aide_answer_or_escalate(self, slots):
+        """ND-09 PARLEY open `ask` (ADR-0003 D-J): AIDE answers a
+        `worker.question_tron` from Project Docs FIRST — a real
+        `judge.call_aide(mode='ask')`, never a heuristic — and only when it can't
+        (unavailable, a malformed reply, or `answered: false`) does the question
+        fall through to the EXISTING architect-triage path (`_triage_to_architect`,
+        UNCHANGED — no second relay mechanism; the architect's eventual answer still
+        relays to the asker via `_relay_architect_answer` exactly as it did before
+        this block). Shares the SAME per-tick AIDE budget as ND-02-10
+        (`_aide_budget_available`) — a tick that already spent its one AIDE call on
+        an escalation brief degrades this ask straight to the architect, never a
+        second LLM call. Fail-safe (D-E/D-H): AIDE down -> architect; architect also
+        unreachable -> `_triage_to_architect`'s own no-architect fallback parks it
+        for the operator (unchanged) — an ask never dead-ends."""
+        question = slots.get("detail")
+        sender = slots.get("worker_id")
+        block = slots.get("block")
+        if self._aide_budget_available():
+            ok, out, _ = judge.call_aide(self.ctx, self.paths, "ask",
+                                         extra={"question": question}, model=self.aide_model(),
+                                         elog=self.events)
+            self._aide_spend_budget()
+            if ok and out and out.get("advice") and out.get("answered", True):
+                if sender and not self.dry:
+                    self._to_worker(sender, f"[TRON] AIDE: {out['advice']}", "aide.answer")
+                self.log("flow", f"AIDE answered ask from {sender or '?'} ({block or '?'})")
+                self._emit("pulse")
+                return
+        # AIDE unavailable / couldn't answer (`answered: false`) / this tick's
+        # budget already spent -> the architect, exactly the pre-01-36
+        # answer_from_context path (never a second relay mechanism, T5).
+        self._triage_to_architect(question, sender=sender, block=block)
+        self._emit("pulse")
 
     def _pump_architect(self):
         arch = self._architect()
@@ -3904,11 +4131,9 @@ class Engine:
                             f"complete architect job '{job.get('kind')}'", reason,
                             actor=arch.get("id"), block=job.get("block"),
                             node="architect queue", next_action="escalate")
-        self.emit("escalate.wall", {"worker_id": arch.get("id") or "?",
-                                    "block": job.get("block") or "?",
-                                    "detail": f"architect job '{job.get('kind')}' stalled "
-                                              f"({reason})",
-                                    "case": cid})
+        self._page_operator(cid, job.get("block"),
+                            f"architect job '{job.get('kind')}' stalled ({reason})",
+                            worker_id=arch.get("id"))
 
     def _triage_detail(self, job):
         """Build the TRIAGE {detail} (T4). Prepend `"{sender}, on block {block}: "` ONLY when
@@ -4292,7 +4517,20 @@ class Engine:
             slots = {**slots, "block": block}
         rule = self.ADMISSION.get(tag)
         if rule:
-            if rule.get("block") and (not block or self.st.row(block) is None):
+            # T1 (01-36, ADR-0003 D-E): `worker.wall` is EXEMPT from this generic
+            # block-required refusal — SIM tron-40 proved a block-less wall (sender
+            # has no assigned block AND its text ref resolves to no canon row) was
+            # silently logged `unclassified` + bounced by this exact branch, when
+            # D-E requires it to ALWAYS route (attach the sender's in-context block,
+            # else open an explicit block-less case) — never bounce/loop/discard a
+            # wall specifically. `worker.wall`'s own resolution (block-less case or
+            # not) is handled below, once its content gate has run (so a wall that
+            # is BOTH contentless AND block-less still gets the NAK ladder first,
+            # never short-circuited past it). worker.done/worker.recorded are
+            # UNCHANGED — those tags gate a specific block's DONE ladder and
+            # genuinely have nothing to act on without one.
+            if (rule.get("block") and (not block or self.st.row(block) is None)
+                    and tag != "worker.wall"):
                 self.log("flow", f"{tag} for unknown block '{ref}' -> refused (no canon row)")
                 self.events.unclassified(f"{tag} block ref: {ref}",
                                          "unknown block id (no canon row)", sender=sender)
@@ -4350,6 +4588,27 @@ class Engine:
                          f"the blocker)"}
             elif w is not None:
                 w.pop("wall_nak_count", None)     # a real reason resets any prior NAK episode
+            # T1 (01-36, ADR-0003 D-E): content is now guaranteed (real, or the
+            # engine-observed fact synthesized just above) — if the block STILL
+            # never resolved (the exemption above), route it through the SAME wall
+            # machinery every other wall uses (_h_escalate) directly, as an
+            # explicit BLOCK-LESS CASE (block=None) — never a bounce/loop/discard.
+            # Called directly rather than re-emitted through the generic
+            # `wall:raised:<block>` trigger table: `_route`'s wildcard `<block>`
+            # capture can only ever bind the literal trigger SEGMENT TEXT (a
+            # string), so there is no way to carry a real Python `None` through it
+            # without inventing a second, parallel trigger shape. `_h_escalate` is
+            # a plain method that already fully tolerates `block=None` (case open,
+            # worker-hold-by-id, architect triage all handle it) — calling it
+            # directly is the smaller, root-level fix, not a new mechanism.
+            if not block or self.st.row(block) is None:
+                bad_ref_note = (f" (block ref '{ref}' does not resolve to a canon "
+                                f"block)" if ref and ref != block else "")
+                self.log("flow", f"worker.wall with no resolvable block{bad_ref_note} "
+                                 f"-> block-less case (D-E: never bounced/unclassified)")
+                self._h_escalate({**slots, "block": None,
+                                  "detail": slots.get("detail", "") + bad_ref_note})
+                return None
         # T1 (01-31, ADR-0002 D5, AC-5/AC-5b): question_peer/question_tron both carry a
         # required prose `detail` — the actual question. No placeholder substitution
         # ("(peer question)") and no dead-end silent log ever launders a missing one
@@ -4503,14 +4762,14 @@ class Engine:
         elif handler == "answer_from_context":
             # T1 (01-31, AC-5 HIGH): question_tron used to dead-end here — logged and
             # NEVER answered (routing.yaml:47's declared target was a lie no reply ever
-            # honored). It now reaches the architect with FULL content — the only thing
-            # with project context to answer it — through the same triage pipe a peer
-            # question already used (T10); never a second answering mechanism. Content
-            # is guaranteed non-empty here: _admit's content gate (below) NAKs an empty
-            # question before it ever reaches this handler.
-            self._triage_to_architect(slots.get("detail"),
-                                      sender=slots.get("worker_id"), block=slots.get("block"))
-            self._emit("pulse")
+            # honored). T5 (01-36, ADR-0003 D-J, ND-09 PARLEY): AIDE now gets the FIRST
+            # shot at answering it — a real judge.call_aide(mode='ask') over the
+            # Project Docs, never a heuristic; only when it can't does this fall
+            # through to the architect, through the SAME triage pipe a peer question
+            # already used (T10) — never a second answering mechanism. Content is
+            # guaranteed non-empty here: _admit's content gate NAKs an empty question
+            # before it ever reaches this handler.
+            self._aide_answer_or_escalate(slots)
         elif handler == "record_branch":
             self._record_branch(slots)
         elif handler == "triage_peer":                   # T10: a peer question -> the architect sorts it
@@ -4594,7 +4853,17 @@ class Engine:
 
     def _escalate_from_architect(self, slots):
         """T10: the architect judged a triaged question to be the operator's call — advance its
-        queue and raise it to the operator on the existing wall edge."""
+        queue and raise it to the operator on the existing wall edge.
+
+        T1 (01-36, ADR-0003 D-E): a block-less raise (the architect judged something
+        with no block context to be the operator's call) used to be a bare
+        `escalate.unclassified` page — no case, no correlation id the operator could
+        ever settle by, a second silent-discard shape of the exact D-E defect SIM
+        tron-40 found for `worker.wall`. Route it through the SAME `_h_escalate`
+        every wall uses, block-less (`block=None`, D-E's one new case shape),
+        carrying `origin: architect_raise` so `_h_escalate`'s architect-first funnel
+        pages the operator directly instead of self-looping back to the architect
+        that just raised it."""
         arch = self._architect()
         cur = arch.get("current_job") if arch else None
         block = (cur or {}).get("block") or slots.get("block") or ""
@@ -4611,7 +4880,8 @@ class Engine:
                        {"block": block, "worker_id": sender, "detail": detail,
                         "origin": "architect_raise"})
         else:
-            self.emit("escalate.unclassified", {"detail": detail})
+            self._h_escalate({"block": None, "worker_id": sender, "detail": detail,
+                              "origin": "architect_raise"})
         self._emit("pulse")
 
     def _record_branch(self, slots):
@@ -4712,27 +4982,30 @@ class Engine:
             if now - anchor < self._pace("case_reping_after", 20):
                 continue
             case["ping_anchor_s"] = now
-            slots = {"worker_id": case.get("worker_id") or "?",
-                     "block": case.get("block") or "?", "case": cid}
+            worker_id = case.get("worker_id") or "?"
+            block = case.get("block")
             n = case.get("repings", 0)
             if n >= int(self.knobs.get("case_reping_max", 3)):
                 case["parked"] = "safe"
-                self.events.event("case_safe_parked", block=case.get("block"), cid=cid,
+                self.events.event("case_safe_parked", block=block, cid=cid,
                                   **{"repings": n, "detail": case.get("detail")})
-                self.emit("escalate.wall", {**slots, "detail":
-                          f"{case.get('detail')} — safe-parked after {n} unanswered "
-                          f"pings; the session runs on and this resumes the moment "
-                          f"you reply"})
+                # T1/T4/T5 (01-36): the single operator-paging chokepoint (AIDE
+                # brief on first page + the D-G receipt contract) — AC-4's "safe-
+                # park guarantees eventual operator delivery" runs through the SAME
+                # primitive every other page uses, never a bare emit().
+                self._page_operator(cid, block,
+                                    f"{case.get('detail')} — safe-parked after {n} "
+                                    f"unanswered pings; the session runs on and this "
+                                    f"resumes the moment you reply", worker_id=worker_id)
                 self.log("flow", f"case {cid} safe-parked after {n} pings")
                 continue
             case["repings"] = n + 1
-            self.events.event("case_reping", block=case.get("block"), cid=cid,
-                              **{"n": n + 1})
-            self.emit("escalate.wall", {**slots, "detail":
-                      f"{case.get('detail')} — still parked, {n + 1} unanswered "
-                      f"ping(s)"})
+            self.events.event("case_reping", block=block, cid=cid, **{"n": n + 1})
+            self._page_operator(cid, block,
+                                f"{case.get('detail')} — still parked, {n + 1} "
+                                f"unanswered ping(s)", worker_id=worker_id)
             if self._tg_on():
-                self.emit("tg.escalate", {"worker_id": slots["worker_id"],
+                self.emit("tg.escalate", {"worker_id": worker_id,
                                           "detail": f"{cid} still parked: "
                                                     f"{case.get('detail')}"})
 
@@ -4824,6 +5097,12 @@ class Engine:
             self.log("flow", "fleet refusal-hold engaged: dispatch held fleet-wide")
         return True
 
+    # T3 (01-36, ADR-0003 D-H): the sentinel canary "reference" for the cardinality-1
+    # architect — the ordinary canary ref is a block id (BUILD) or an rtype (REVIEW);
+    # the architect has neither, so it needs its own unambiguous marker distinct from
+    # any real block id / rtype string a project could ever declare.
+    ARCHITECT_CANARY_REF = "__architect__"
+
     def _drive_fleet_refusal_hold(self, w):
         """Absorb this dead worker into the active hold: release its slot without touching
         its block's gate/blocked state — held blocks stay exactly 📋 (no gate mutation,
@@ -4833,15 +5112,64 @@ class Engine:
         sustaining deaths are all reviewer (the engineer's own lone-first death, before
         the hold engages, is never absorbed here at all — _fleet_hold_note's <2 guard
         hands it to the ordinary per-worker recover instead). The actual probe is paced
-        separately (_sweep_fleet_refusal_canary), on the existing sweep cadence."""
+        separately (_sweep_fleet_refusal_canary), on the existing sweep cadence.
+
+        T3 (01-36, ADR-0003 D-H): the cardinality-1 architect is now a first-class
+        canary candidate — D-H's explicit "across the WHOLE persistent fleet...
+        including the architect", the exact coverage gap tron-40's ~146 leaked
+        architect spawns traced to (`_sweep`'s spec_owner branch used to respawn it
+        unconditionally, bypassing this hold entirely). T2 (D-F): its in-flight job
+        (if any) is preserved — requeued at the front of the FIFO — so it is never
+        lost while its worker is held; the fresh canary respawn's own _pump_architect
+        picks it straight back up."""
         hold = self._fleet_refusal_hold()
+        is_architect = w.get("role") == self.roles.spec_owner
         if not hold.get("canary"):
-            role = w.get("role")
-            ref = (w.get("block") if self.roles.binds(role, "BUILD")
-                   else w.get("rtype") if self.roles.binds(role, "REVIEW") else None)
-            if ref:
-                hold["canary"], hold["canary_role"] = ref, role
+            if is_architect:
+                hold["canary"], hold["canary_role"] = self.ARCHITECT_CANARY_REF, w.get("role")
+            else:
+                role = w.get("role")
+                ref = (w.get("block") if self.roles.binds(role, "BUILD")
+                       else w.get("rtype") if self.roles.binds(role, "REVIEW") else None)
+                if ref:
+                    hold["canary"], hold["canary_role"] = ref, role
+        if is_architect:
+            job = w.get("current_job")
+            self.st.workers.remove(w)      # bare remove — matches the ordinary architect-
+            if job:                        # restore path, not a release (no close.worker/
+                self.st.architect_queue.insert(0, job)   # jobs.release side effects)
+            return
+        # T2 (01-36, ADR-0003 D-F outage interaction): preserve this worker's pending
+        # order + handover context across the hold — never dropped. A BUILD worker's
+        # block (gated or not) is durably tracked so hold-release redrives it, once,
+        # via _release_hold_pending — the SAME recovery-handover any other dead
+        # worker's block already gets (_redispatch/_resolve_workerless_gate), never
+        # silently left behind because the outage (not a plain crash) killed it.
+        if self.roles.binds(w.get("role"), "BUILD") and w.get("block"):
+            pending = self.st.data.setdefault("hold_pending_redispatch", {})
+            pending[w.get("block")] = w.get("id")
         self._release_worker(w, notify=False, reason="fleet-refusal-hold")
+
+    def _release_hold_pending(self):
+        """T2 (01-36, ADR-0003 D-F outage interaction): once the fleet-refusal hold
+        lifts, redrive every OTHER block the hold absorbed — not just the canary
+        itself. Reuses recover()'s own established split, never a new mechanism: a
+        gated block hands off to _resolve_workerless_gate (never a blind fresh BUILD
+        redispatch onto work already past the build stage); an ungated block gets
+        the ordinary recovery _redispatch, now WITH its dead worker's id (full
+        handover context — _recovery_assignment). Skips any block that already has
+        a live worker (the canary itself, the instant it turns healthy, IS such a
+        worker for its own block) — never a double-dispatch. Consumed as it's
+        applied — never replayed twice."""
+        pending = self.st.data.pop("hold_pending_redispatch", {}) or {}
+        for block, dead_wid in pending.items():
+            if self.st.has_active_worker_for_block(block):
+                continue
+            g = self.st.gate.get(block)
+            if g is not None:
+                self._resolve_workerless_gate(block, g)
+            else:
+                self._redispatch(block, dead_wid=dead_wid)
 
     def _sweep_fleet_refusal_canary(self, idx):
         """While the hold is active: probe with exactly ONE canary re-spawn (paced like an
@@ -4850,17 +5178,38 @@ class Engine:
         next cadence; held blocks stay 📋 throughout — never a gate mutation, never a wall.
         MAJOR-2: never park the hold un-probeable — if no canary is elected yet this
         cadence (the next absorbed death, any role, elects one), just return and try
-        again next sweep."""
+        again next sweep.
+
+        T3 (01-36, ADR-0003 D-H): the ARCHITECT_CANARY_REF sentinel routes to
+        _spawn_architect (never _redispatch/_dispatch_reviewer, which know nothing
+        of the persistent spec_owner) — the SAME healthy-turn-not-dispatch release
+        rule applies to it as to any other canary. T2 (D-F): on release, every OTHER
+        block the hold absorbed is redriven too (_release_hold_pending) — never just
+        the canary's own."""
         hold = self._fleet_refusal_hold()
         if not hold.get("active"):
             return
-        ref = hold.get("canary")           # the canary reference: a block id (BUILD) OR an rtype (REVIEW)
+        ref = hold.get("canary")           # a block id (BUILD), an rtype (REVIEW), or ARCHITECT_CANARY_REF
         if not ref:
             return
-        role = hold.get("canary_role") or self._require_role(
-            self.roles.select_build_role(), f"fleet-refusal canary default BUILD role (ref={ref!r})")
-        wid = self._worker_id(role, ref)
-        rec = jobs.find(wid, idx)
+        is_architect = ref == self.ARCHITECT_CANARY_REF
+        role = None
+        if is_architect:
+            # T3 (01-36, ADR-0003 D-H): the architect's worker RECORD is gone from
+            # the roster while held (_drive_fleet_refusal_hold removes it, same as
+            # the ordinary architect-restore path) — reading its id off a live
+            # roster entry (self._architect()) would always miss, unlike the
+            # engineer/reviewer canaries below, whose id is a pure function of
+            # role+ref regardless of roster presence. Recompute it the SAME
+            # deterministic way _spawn_architect itself does (role, no ref) —
+            # stable whether or not a roster entry currently exists.
+            role = hold.get("canary_role") or self.roles.spec_owner
+            wid = self._worker_id(role, "") if role else None
+        else:
+            role = hold.get("canary_role") or self._require_role(
+                self.roles.select_build_role(), f"fleet-refusal canary default BUILD role (ref={ref!r})")
+            wid = self._worker_id(role, ref)
+        rec = jobs.find(wid, idx) if wid else None
         if rec is not None:
             if jobs.is_alive(wid, idx):
                 if rec.get("turns", 0) >= 1:
@@ -4871,6 +5220,7 @@ class Engine:
                     hold.pop("canary_probed_at", None)
                     self.log("flow", f"fleet refusal-hold cleared: canary {wid} turned "
                                      f"healthy -> resume dispatch")
+                    self._release_hold_pending()   # T2 (D-F): redrive every other absorbed block/job
                     self._emit("pulse")
                 return
             # rec is present but the canary is dead (a stale-dead record, or a canary that
@@ -4883,7 +5233,10 @@ class Engine:
         last = hold.get("canary_probed_at")
         if last is None or now - last >= self._pace("gate_nudge_after", 2):
             hold["canary_probed_at"] = now
-            if self.roles.binds(role, "REVIEW"):
+            if is_architect:
+                if not self._architect():
+                    self._spawn_architect()
+            elif self.roles.binds(role, "REVIEW"):
                 # A reviewer canary needs none of _redispatch's hard-stop guards: the dead
                 # reviewer was already off the roster (_release_worker at election), the
                 # reviewer wid is keyed on rtype so there is no duplicate-slot risk, and
@@ -4896,9 +5249,13 @@ class Engine:
                 # its worker's refusal death must still be probeable (the canary's only
                 # job is proving the RUNTIME is healthy, independent of the block's own
                 # gate progress). Every other hard stop (done/parked/dropped/PR/deps/
-                # active-worker) still applies unconditionally.
-                self._redispatch(ref, bypass_gate=True)
-            self.log("flow", f"fleet refusal-hold: canary re-spawn probe on {role}:{ref}")
+                # active-worker) still applies unconditionally. `dead_wid` (T2/D-F): the
+                # canary's own respawn carries the SAME full-handover context any other
+                # recovery dispatch does, if this block's dead worker is on record.
+                dead_wid = (self.st.data.get("hold_pending_redispatch") or {}).get(ref)
+                self._redispatch(ref, bypass_gate=True, dead_wid=dead_wid)
+            self.log("flow", f"fleet refusal-hold: canary re-spawn probe on "
+                             f"{'architect' if is_architect else role}:{ref}")
 
     # ── liveness sweep (engine side-system, deterministic — no LLM) ──
     def _sweep(self):
@@ -4925,8 +5282,31 @@ class Engine:
             alive = bool(sess) and sess != "dry" and jobs.is_alive(w.get("id"), idx)
             if w.get("role") == self.roles.spec_owner:
                 if not alive:                    # persistent: died or never confirmed -> restore
+                    # T3 (01-36, ADR-0003 D-H): tron-40's root cause for the ~146-of-
+                    # ~218 leaked spawns — this branch used to restore the architect
+                    # UNCONDITIONALLY, every single tick it read dead, completely
+                    # bypassing _dispatch_held/_fleet_hold_note/_drive_fleet_refusal_
+                    # hold (those only ever saw non-spec_owner deaths). A REFUSAL
+                    # death (session-limit outage) now routes the architect through
+                    # the EXACT SAME single-canary fleet-hold every other role uses —
+                    # D-H's explicit "including the cardinality-1 architect — never a
+                    # fresh spawn every tick". An ORDINARY (non-refusal) death still
+                    # restores immediately, unchanged: a routine crash costs no
+                    # outage-grade delay (matches the liveness "grace window, not
+                    # first missed probe" law elsewhere in this block).
+                    if self._refusal_death(w, idx) and self._fleet_hold_note(w):
+                        self._drive_fleet_refusal_hold(w)   # preserves current_job, may elect the canary
+                        continue
+                    # T2 (01-36, ADR-0003 D-F): an in-flight architect job must
+                    # survive its own worker's death — requeue it at the FRONT of
+                    # the FIFO (never lost, never reordered behind newer work) so
+                    # the fresh spawn's own _pump_architect picks it straight back
+                    # up. No operator relay for this (D-F: "no operator relay").
+                    job = w.get("current_job")
                     self.st.workers.remove(w)
                     self._spawn_architect()
+                    if job:
+                        self.st.architect_queue.insert(0, job)
                 continue
             if not alive:
                 # T3(b) (01-20, BLOCKER-2): a refusal-caused death (the runner's OWN
@@ -5593,13 +5973,18 @@ class Engine:
         done = sum(1 for r in self.st.pipeline if r.get("status") == "done")
         # F-4/R-7 rider: a call still parked at session end is surfaced HERE — the manifest
         # archives on a clean end, so an unsurfaced case would vanish from view entirely.
+        # T1 (01-36, ADR-0003 D-E, AC-4): "safe-park guarantees eventual operator
+        # delivery, never dies undelivered" — SIM tron-40 found two cases
+        # `case_safe_parked` mid-outage and dying at drain, undelivered. Routing this
+        # through `_page_operator` (the same chokepoint every other page uses)
+        # guarantees a real page attempt for EVERY case still undecided at drain,
+        # never a bare emit() that skips the AIDE brief/receipt machinery.
         parked = self._undecided_cases()
         for cid, case in parked.items():
-            self.emit("escalate.wall",
-                      {"worker_id": case.get("worker_id") or "?",
-                       "block": case.get("block") or "?", "case": cid,
-                       "detail": f"{case.get('detail')} — session is ending with this "
-                                 f"still parked on you; it goes to the archive unresolved"})
+            self._page_operator(cid, case.get("block"),
+                                f"{case.get('detail')} — session is ending with this "
+                                f"still parked on you; it goes to the archive unresolved",
+                                worker_id=case.get("worker_id"))
         self.events.event("session_end", done=done,
                           **({"parked_cases": sorted(parked)} if parked else {}))
         self.emit("session.end", {"count": done})
@@ -5634,14 +6019,16 @@ class Engine:
                 alive += 1
             else:
                 purged += 1
-                blk, role = w.get("block"), w.get("role")
+                blk, role, dead_wid = w.get("block"), w.get("role"), w.get("id")
                 self._release_worker(w, notify=False, reason="stall-recover")
                 if blk and not str(blk).startswith("review:") and role != self.roles.spec_owner:
                     g = self.st.gate.get(blk)
                     if g is not None:
                         self._resolve_workerless_gate(blk, g)   # T2: hand the orphaned gate off
                     else:
-                        self._redispatch(blk)          # no gate yet -> the ordinary lost-work re-arm
+                        # T2 (01-36, ADR-0003 D-F): the dead worker's own id rides
+                        # into the replacement's full-handover assignment.
+                        self._redispatch(blk, dead_wid=dead_wid)   # no gate yet -> the ordinary lost-work re-arm
         self.st.data["active_workers"] = [w for w in self.st.workers
                                           if w in rebuilt or w.get("status") == "spawning"]
         if (self._spec_owner_persistent()

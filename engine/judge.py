@@ -97,7 +97,14 @@ def _v_aide(o, ctx):
     """ADR-0003 D-J: AIDE's output is a typed shape too (never free prose reaching the
     operator unchecked) — `advice` is always required; `recommended_block` (SET SCOPE)
     and `choices` (RESOLVE) are mode-specific and OPTIONAL here (the mode itself is
-    caller-declared in the payload, not re-validated against the output)."""
+    caller-declared in the payload, not re-validated against the output).
+
+    T5 (01-36, ADR-0003 D-J, ND-09 PARLEY `ask`): `answered` is a NEW optional bool
+    — `ask` mode's own signal that AIDE could/couldn't answer INPUT.question from the
+    Project Docs (absent for every other mode). Optional here for the same reason
+    `recommended_block`/`choices` are: the mode itself is caller-declared, not
+    re-validated against the output shape — a caller that ignores it (every non-ask
+    mode) is unaffected."""
     if not isinstance(o, dict):
         return "aide output must be a JSON object"
     advice = o.get("advice")
@@ -110,6 +117,9 @@ def _v_aide(o, ctx):
     if choices is not None and not (isinstance(choices, list) and choices
                                      and all(isinstance(c, str) and c.strip() for c in choices)):
         return "aide 'choices' must be a non-empty list of strings when present"
+    answered = o.get("answered")
+    if answered is not None and not isinstance(answered, bool):
+        return "aide 'answered' must be a boolean when present"
     return None
 
 
@@ -130,9 +140,18 @@ INSTRUCTIONS = {
         "block looks best to pick up next; 'counts' — advise on the worker_count "
         "knob (flag an unusual-but-valid or below-floor count, otherwise a brief "
         "affirmation); 'resolve' — brief the operator on INPUT.detail and offer "
-        "exactly three named choices. Return JSON: {\"advice\": <str>, "
-        "\"recommended_block\": <block id string, scope mode only, else null>, "
-        "\"choices\": [<exactly three short strings>, resolve mode only, else null]}.",
+        "exactly three named choices (block 01-36, ADR-0003 D-J: this mode now "
+        "covers BOTH the bootup RESOLVE node, reached when a resumed run's MANIFEST "
+        "can't be reconciled, AND an in-tick escalation brief for a parked operator "
+        "case — INPUT.detail is the thing needing a brief either way, bootup "
+        "conflict or live case); 'ask' (block 01-36, ADR-0003 D-J, ND-09 PARLEY) — "
+        "attempt to answer INPUT.question STRICTLY from the Project Docs above; if "
+        "you genuinely cannot answer it from them, say so in 'advice' (a short "
+        "reason, never a guess) and set 'answered' to false. Return JSON: "
+        "{\"advice\": <str — the answer in 'ask' mode, or a short reason you "
+        "can't answer it>, \"recommended_block\": <block id string, scope mode "
+        "only, else null>, \"choices\": [<exactly three short strings>, resolve "
+        "mode only, else null], \"answered\": <bool, ask mode only, else null>}.",
 }
 
 
@@ -288,7 +307,9 @@ def call_aide(ctx, paths, mode, extra=None, block_files=None, model=None,
     """The shared `aide` judge-tool entry point (ADR-0003 D-J): builds the
     Project-Docs context fresh for THIS call (`build_aide_context`), wraps `extra`
     into the mode-tagged payload (`mode` in {"scope", "counts", "resolve"} at this
-    block's three bootup nodes; 01-36 adds more), and calls the real `aide` LLM lane
+    block's three bootup nodes; block 01-36 reuses "resolve" for ND-02-10's in-tick
+    escalation brief and adds "ask" for ND-09's PARLEY open question), and calls
+    the real `aide` LLM lane
     — the ONE call shape every aide site reuses, never a per-caller copy. Returns
     the same (ok, output_dict_or_None, raw_attempts) shape as `call()`; ok=False
     (runtime-unavailable) means the caller proceeds unaided — never a heuristic

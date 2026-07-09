@@ -42,11 +42,17 @@ import util
 #                   `handler-raised` on purpose — this is the write-boundary audit's
 #                   own tripwire, never an ordinary handler bug, and routes to the
 #                   architect as a VIOLATION case rather than a dropped trigger.
+#   operator-page-failed — T4 (01-36, ADR-0003 D-G engine half): a transport
+#                   receipt (the minimal stub slot `_consume_page_receipt` reads)
+#                   named a case's operator page as a PERMANENT delivery failure.
+#                   Never a silent drop: the case's next re-ping is forced
+#                   immediate (the engine's own existing escalation ladder) —
+#                   this class is the forensic record of why.
 FAILURE_CLASSES = {
     "refresh-fail", "classify-fail", "ingest-drop", "gate-stuck",
     "dispatch-fail", "session-residue", "crash",
     "content-missing", "handler-raised", "mailbox-send-failed",
-    "sealed-allowlist-violation",
+    "sealed-allowlist-violation", "operator-page-failed",
 }
 
 # The closed vocabulary of `type` values an `event` record carries — the engine's own
@@ -84,12 +90,18 @@ FAILURE_CLASSES = {
 #                   ADMINISTRATIVELY by the engine (the land.sh-crashed-before-consume
 #                   window: trunk advanced, patch-id matched over the observed range) —
 #                   a write in TRON's own folder, forensic, never silent.
+#   operator_page — T4 (01-36, ADR-0003 D-G engine half): the abstract operator-page
+#                   record every case-correlated escalation stamps (_page_operator) —
+#                   cid · block · detail · whether AIDE briefed it (ND-02-10). Distinct
+#                   from `escalate` (the render/notice itself): this is the receipt-
+#                   contract's own forensic anchor, read back by `_consume_page_receipt`.
 EVENT_TYPES = {
     "tick", "model_call", "dispatch", "gate_advance", "settle", "release",
     "escalate", "case_reping", "case_safe_parked", "docs_landed", "block_done",
     "session_start", "session_end", "halt",
     "wall_auto_settled", "abandon", "abandon_flag_delivered",
     "triage_dedup_dropped", "unknown_worker_send", "grant_minted", "grant_consumed",
+    "operator_page",
 }
 
 

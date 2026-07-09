@@ -225,6 +225,18 @@ def induce_mailbox_send_failed(ctx):
     return [r for r in failures(ctx) if r.get("fclass") == "mailbox-send-failed"]
 
 
+def induce_operator_page_failed(ctx):
+    # T4 (01-36, ADR-0003 D-G engine half): a transport receipt naming a case's
+    # operator page a PERMANENT delivery failure is recorded forensically here —
+    # `_page_operator`/`_consume_page_receipt`'s own minimal receipt contract —
+    # never a silent drop; the case's next re-ping is forced immediate instead.
+    eng = engine(ctx)
+    cid = eng._open_case("A-01", "wall", None, "stuck")
+    eng.st.data["operator_page_receipts"] = {cid: "failed-permanent"}
+    eng._page_operator(cid, "A-01", "stuck")
+    return [r for r in failures(ctx) if r.get("fclass") == "operator-page-failed"]
+
+
 def induce_handler_raised(ctx):
     # 01-31 (AC-5b MED): a routed trigger's handler raising now leaves a forensic
     # record before the trigger is dropped (never a bare silent log line).
@@ -261,6 +273,7 @@ def t_per_class():
     ctx, _ = build();  crash_raised, induced["crash"] = induce_crash(ctx)
     ctx, _ = build();  induced["content-missing"] = induce_content_missing(ctx)
     ctx, _ = build();  induced["mailbox-send-failed"] = induce_mailbox_send_failed(ctx)
+    ctx, _ = build();  induced["operator-page-failed"] = induce_operator_page_failed(ctx)
     ctx, _ = build();  induced["handler-raised"] = induce_handler_raised(ctx)
     ctx, _ = build();  induced["sealed-allowlist-violation"] = induce_sealed_allowlist_violation(ctx)
 
@@ -277,6 +290,7 @@ def t_per_class():
         "crash": lambda r: "simulated tick crash" in (r.get("cause") or ""),
         "content-missing": lambda r: "empty detail" in (r.get("cause") or ""),
         "mailbox-send-failed": lambda r: "OSError" in (r.get("cause") or ""),
+        "operator-page-failed": lambda r: "permanent delivery failure" in (r.get("cause") or ""),
         "handler-raised": lambda r: "simulated handler explosion" in (r.get("cause") or ""),
         "sealed-allowlist-violation": lambda r: "simulated sealed allowlist trip"
                                                 in (r.get("cause") or ""),
