@@ -1,4 +1,5 @@
-# meta/tron/roles.yaml — schema (B0, ADR-0002 Decision 4)
+# meta/tron/roles.yaml — schema (B0, ADR-0002 Decision 4; model field amended by
+# ADR-0003 Decision D-D, 01-35)
 # The project-authored fleet: capability-class binding, personas, models, dispatch
 # selectors, paperwork scopes, spec_owner/persistent/close_fallback flags. TRON ships NO
 # personas and hardcodes no role name — every worker identity is a lookup against this
@@ -21,9 +22,15 @@ roles:                        # REQUIRED; at least one role
   <role-name>:                # e.g. engineer, reviewer-code, architect, <project-custom>
     persona: <path>           # REQUIRED. Repo-relative path to this role's agent file;
                               # boot-fatal if the file doesn't exist on disk.
-    model: <str>              # REQUIRED. The worker model this role runs on. NO DEFAULT —
-                              # absent, blank, or non-string is boot-fatal (never inherits
-                              # the host CLI's own ambient default model).
+    model: <str>              # The worker model this role runs on. No baked default here —
+                              # but ADR-0003 D-D (01-35) restores an operator bootup model
+                              # question (console._ask_role_models) whose SESSION answer (a
+                              # TRON-owned MANIFEST knob under meta/agents/tron/ — NEVER
+                              # written back here) is layered on top at resolution time
+                              # (fsm._model_for_role): session answer wins for the session;
+                              # else this field; boot-fatal (loud, named) only if NEITHER
+                              # resolves for a role (never the host CLI's own ambient
+                              # default model, either way).
     binds: [<class>, ...]     # REQUIRED, >=1. Capability classes this role services, from
                               # the sealed enum {BUILD, REVIEW, TRIAGE, CLOSE}. Every
                               # REACHABLE class must have >=1 bound role across the whole
@@ -65,6 +72,10 @@ roles:                        # REQUIRED; at least one role
 # - exactly one role has spec_owner: true
 # - if >1 role binds CLOSE, exactly one of them has close_fallback: true
 # - every role's persona path resolves to a file that exists on disk
-# - every role's model resolves to a non-empty string (no default, ever)
 # Any violation raises roles.RolesError — loud, named, uncaught — before the session
 # starts (P8: fail-closed, never a partial/silent boot).
+#
+# ── Model resolution (ADR-0003 D-D, 01-35; engine/roles.py RolesConfig.validate_models) ──
+# Run separately, once the session's bootup model answer (if any) is known — every
+# role's model must resolve from EITHER the session answer OR this field; boot-fatal
+# (RolesError, loud, named) only if NEITHER does, for any declared role.

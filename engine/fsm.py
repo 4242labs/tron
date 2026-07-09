@@ -1003,12 +1003,32 @@ class Engine:
         self.log("flow", f"cadence:{typ} -> review:{typ}")
 
     def _model_for_role(self, role):
-        """ADR-0002 D4 (T3/T4): `model = role.model`, resolved from roles.yaml alone — NO
-        default, ever (absent/unknown is boot-fatal, enforced at RolesConfig construction).
-        Retires the 01-30 `knobs.yaml worker_model {architect, other}` map entirely: that
-        was a hardcoded 2-tier split keyed to one specific role name; every role now
-        declares its OWN model in config, independently, fail-closed."""
+        """ADR-0003 D-D (amends ADR-0002 D4's 01-33 single-source-of-truth; T2/BL-1):
+        the TRON-owned SESSION override — this instance's own MANIFEST live_config
+        (`meta/agents/tron/manifest.yaml`, never roles.yaml) — wins for the session if
+        the operator supplied one at the restored bootup model question
+        (console._ask_role_models); else `role.model` resolves from roles.yaml as
+        before (ADR-0002 D4). Neither resolving is boot-fatal at `eng.start()`
+        (roles.RolesConfig.validate_models), never a silent default reaching a real
+        spawn — every role still declares its own model independently, fail-closed."""
+        session = (self.st.live_config.get("worker_model") or {}).get(role)
+        if isinstance(session, str) and session.strip():
+            return session.strip()
         return self.roles.model_for(role)
+
+    def aide_model(self):
+        """ADR-0003 D-J reconciliation (a): AIDE's model — an engine-builtin LLM lane
+        (like classify_message), NOT a dispatched roles.yaml role. FAIL-OPEN: a
+        session knob (`console._ask_aide_model` -> `st.live_config["aide_model"]`,
+        the same TRON-owned write boundary as `_model_for_role`'s session override —
+        never roles.yaml) wins if set; else `judge`'s built-in default. Unlike
+        `_model_for_role`, an absent value here is NEVER boot-fatal — explicitly
+        exempt from D-D's "model-absent = boot-fatal" law, which governs only
+        dispatched fleet roles."""
+        v = self.st.live_config.get("aide_model")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return judge.TIER.get("aide", judge.AIDE_DEFAULT_MODEL)
 
     def _spawn(self, wid, role, block=None):
         """Identity-only spawn (01-07 two-step): fill PMT-SPAWN's slots and bring the worker
@@ -5335,6 +5355,15 @@ class Engine:
         self.st.data.setdefault("session", {})["started_at"] = util.now_iso()
         self.st.live_config["worker_count"] = worker_count
         self.knobs["worker_count"] = worker_count
+        # ADR-0003 D-D (T2/BL-1, AC-3): the model-resolvable fail-closed check — the
+        # earliest point common to BOTH the interactive bootup path (console.bootup's
+        # _ask_role_models already wrote any session answer into live_config above this
+        # call) and the headless path (a harness/test that sets live_config/knobs
+        # directly, then calls start() with no console at all) — before any dispatch or
+        # spawn. Session answer (if any) is layered over roles.yaml's own model;
+        # neither resolving for ANY declared role is boot-fatal (RolesError, loud,
+        # named, uncaught).
+        self.roles.validate_models(self.st.live_config.get("worker_model"))
         self._reset_session_runtime()        # clean slate; no stale architect/approvals carry over
         self._refresh_from_trunk(count=False)  # load the view + PRs WITHOUT counting ✅ history
         if self.ended:                       # bootup refresh hit a dead trunk (A2) -> halted loud

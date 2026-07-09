@@ -8,9 +8,14 @@ paperwork scope, and dispatch-selector match is a lookup against this config,
 validated fail-closed at construction (RolesError: loud, named, no silent
 default anywhere — P8).
 
-Schema (ADR-0002 D4), per role entry under `roles:`:
+Schema (ADR-0002 D4, amended by ADR-0003 D-D), per role entry under `roles:`:
   persona     repo-relative path to the project's agent file (required)
-  model       the worker model this role runs on (required, no default)
+  model       the worker model this role runs on. No baked default — but ADR-0003 D-D
+              restores a bootup model question (console._ask_role_models) whose SESSION
+              answer (never written here — a TRON-owned MANIFEST knob under
+              meta/agents/tron/) is layered on top by fsm._model_for_role: session
+              answer wins for the session; else this field; boot-fatal (validate_models,
+              called once the session answer is known) only if NEITHER resolves.
   binds       list of capability classes this role services (>=1 required)
   selector    optional {block_tag: <tag>} (BUILD) or {reviewer_class: <lens>} (REVIEW) —
               a role with no selector for a class is that class's DEFAULT match
@@ -248,8 +253,37 @@ class RolesConfig:
                 p = os.path.join(self.root, persona)
                 if not os.path.isfile(p):
                     errors.append(f"role '{name}' persona not found on disk: {p}")
-            if self.model_for(name) is None:
-                errors.append(f"role '{name}' has no resolvable model "
-                              f"(model={r.get('model')!r}) — absent/unknown is boot-fatal, no default")
+        # ADR-0003 D-D (T2/BL-1): the "every role has a resolvable model" check used to
+        # live HERE, at plain construction — but construction happens before the
+        # restored bootup model question is ever asked (Console.bootup constructs
+        # Engine/RolesConfig FIRST, asks the question SECOND), so enforcing it
+        # unconditionally at this point would refuse to boot before the operator ever
+        # got a chance to supply the missing value via a session answer. That check now
+        # lives in `validate_models()` below, called explicitly once the TRON-owned
+        # session override (if any) is known (fsm.Engine.start) — never here.
+        if errors:
+            raise RolesError("roles.yaml fail-closed validation failed: " + "; ".join(errors))
+
+    def validate_models(self, session_models=None):
+        """ADR-0003 D-D (amends ADR-0002 D4; T2/BL-1): the model-resolvable fail-closed
+        check, run EXPLICITLY once the TRON-owned session override (if any) is known —
+        never at plain construction (see `_validate`'s note). `session_models` is the
+        bootup model answer ({role: model}, from the session's own MANIFEST live_config
+        under meta/agents/tron/ — never roles.yaml) layered by fsm._model_for_role: a
+        role resolves here if EITHER the session supplies one OR roles.yaml's own
+        `model:` does; boot-fatal (RolesError, loud, named) only if NEITHER does, for
+        ANY declared role (D4's fail-closed preserved, never a silent default). Called
+        with session_models=None/omitted, this matches the pre-D-D behavior exactly:
+        roles.yaml alone must supply every role's model."""
+        session_models = session_models or {}
+        errors = []
+        for name, r in self.roles.items():
+            sess = session_models.get(name)
+            sess = sess.strip() if isinstance(sess, str) else None
+            if sess or self.model_for(name):
+                continue
+            errors.append(f"role '{name}' has no resolvable model "
+                          f"(model={r.get('model')!r}, no session override either) — "
+                          f"absent/unknown is boot-fatal, no default")
         if errors:
             raise RolesError("roles.yaml fail-closed validation failed: " + "; ".join(errors))
