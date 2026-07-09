@@ -21,7 +21,18 @@ knobs:
   # this file, never roles.yaml — BL-1) layered on top of role.model at resolution
   # time. Session answer wins for the session; else role.model; boot-fatal (loud,
   # named) only if NEITHER resolves. See engine/roles.py's RolesConfig.validate_models.
+  # NOTE (ADR-0003 D-J, 01-35): AIDE's own model is likewise NOT a knob here and NOT a
+  # roles.yaml role/capability class — it is an engine-builtin LLM lane (judge.py's
+  # "aide" tool, TIER["aide"]/AIDE_DEFAULT_MODEL) with a built-in default, overridable
+  # per session via the bootup model question (console._ask_aide_model ->
+  # meta/agents/tron/ MANIFEST live_config["aide_model"]). FAIL-OPEN: unlike the
+  # per-role model above, an absent aide_model answer is never boot-fatal.
   architect_count: 1       # persistent architect queue drainers — the bottleneck knob.
+                           # ADR-0003 D-D+D-J (01-35, BLOCKER-2 resolved): single architect
+                           # this version — no bootup question reads/asks this; it stays a
+                           # static config default (roles.yaml's architect: cardinality:1 is
+                           # the boot-enforced invariant). A future multi-architect version
+                           # may wire this to an ND-01-09 "#architects" question — not this one.
   git: on                  # whether the build commits via git (drives R8 + any ci availability)
   ask_before_merging: false  # ON -> the trunk-merge step pauses for the operator (T8); the bootup
                            # question sets it per-session. Default off: TRON instructs merges itself.
