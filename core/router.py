@@ -23,6 +23,18 @@ or naming a block that already has an open gate — is dropped (logged, never
 raised); a duplicate/late-arriving `worker.online` after ASSIGN already fired
 is therefore a correct no-op, never a second gate for the same block.
 
+Wave 9 (`core/architect.py`) adds ONE more structured tag: `architect.
+reconciled` (`{"tag": "architect.reconciled", "block": <block>}`) — the
+architect's own completion report for a `reconcile` job (M-05), drained and
+routed exactly like every other structured report here. Malformed (no
+`block`) is LOGGED and dropped, same forgiving discipline as an unknown
+`worker.online` sender — this is an internal, engine-scripted signal, never
+adversarial input. A well-formed one records the block into `manifest
+["reconciled"]` (idempotent: already-reconciled is a no-op) — `core/
+architect.py::advance` is what actually clears the architect's own
+`current_job` off that record (see its own docstring for why that's a
+SEPARATE step, positioned after `core/switchboard.py::fill`).
+
 Wave 8 (`core/casestate.py`) adds TWO more structured tags this SAME pass
 drains, each acted on exactly like `worker.online` above — no LLM/classify,
 same discipline:
@@ -79,6 +91,8 @@ def route(eng, manifest, worker_reports):
             _route_wall(eng, manifest, rep)
         elif tag == "operator.decision":
             _route_decision(eng, manifest, rep)
+        elif tag == "architect.reconciled":
+            _route_architect_reconciled(eng, manifest, rep)
         # else: worker.done and anything else — not this module's concern.
 
 
@@ -135,6 +149,29 @@ def _route_wall(eng, manifest, rep):
                          f"dropped: {rep!r}")
     casestate.open_case(eng, manifest, block, "worker.wall", detail,
                         worker_id=worker_id, kind="wall")
+
+
+def _route_architect_reconciled(eng, manifest, rep):
+    """`architect.reconciled` — the architect's completion report for a
+    `reconcile` job (M-05, `core/architect.py`). Malformed (no `block`) is
+    logged and dropped — an internal, engine-scripted signal, never
+    adversarial input, same forgiving discipline `worker.online` already
+    gets for an unrecordable sender. Idempotent: a block already in
+    `manifest["reconciled"]` is a no-op, never appended twice."""
+    block = rep.get("block")
+    if not block:
+        eng.log("flow", f"router: dropped a malformed architect.reconciled "
+                        f"report (no block): {rep!r}")
+        return
+    reconciled = manifest.setdefault("reconciled", [])
+    if block in reconciled:
+        eng.log("flow", f"router: architect.reconciled for block {block!r} "
+                        f"— already reconciled, no-op")
+        return
+    reconciled.append(block)
+    eng.log("flow", f"router: architect.reconciled for block {block!r} -> "
+                    f"reconcile-gate record set (core/architect.py::advance "
+                    f"clears the architect's own current_job off this)")
 
 
 def _route_decision(eng, manifest, rep):

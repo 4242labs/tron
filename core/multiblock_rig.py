@@ -37,6 +37,18 @@ blocks reacted to in the SAME tick loop instead of one.
 
 `ok(name, cond, detail)` collector; `main()` prints `PASS (n/m)` and every
 line, exits non-zero on any fail.
+
+Wave 9 re-pointing note: `core/architect.py`'s M-05 reconcile-gate now ALSO
+gates each of `01-02`/`01-03` behind a `reconcile` job the moment its
+predecessor lands `✅` (this fixture's own `Depends on` edge, 01-01 ->
+01-02, plus M-05's OWN "next in living-doc order" rule for 01-02 -> 01-03) —
+`react()` below plays the scripted architect for that job (reports
+`architect.reconciled`, structured, no content-check) exactly the same way
+it already plays the scripted worker for every gate stage; `MAX_TICKS` is
+bumped to give the two extra reconcile round-trips room. Every assertion
+below is UNCHANGED (`>`/`>=` on `spawn_tick`/`done_tick`/`close_tick`
+already tolerated — and now exercise — the extra gate, never weakened to
+pass).
 """
 import os
 import sys
@@ -259,6 +271,7 @@ class MiniEng:
         self.orders = []
         self.workers = {}                # wid -> {"block":..., "status": "assigned"|"released"}
         self.spawn_calls = []            # (agent_id, block) — the idempotency KILLER counter
+        self.architect_spawns = []       # wave 9: `eng._spawn_architect()` call count
 
     def log(self, channel, msg):
         self.log_lines.append((channel, msg))
@@ -282,13 +295,24 @@ class MiniEng:
         self.spawn_calls.append((agent_id, block))
         self.workers[agent_id] = {"block": block, "status": "spawned"}
 
+    def _spawn_architect(self):
+        """STUBBED — wave 9's persistent, pool-excluded architect. `core/
+        architect.py::advance` calls this lazily, exactly once, the first
+        tick it actually pops a queued job — this rig's THREE-block, real-
+        `Depends on` fixture now ALSO exercises the M-05 reconcile-gate
+        (each block landing ✅ enqueues a reconcile for the next in-scope
+        one by pipeline order), so unlike the other 7 prior rigs, this one
+        DOES need this hook."""
+        self.architect_spawns.append(True)
+
 
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
                                  "(rig-supplied local report, delivered via a structured "
                                  "worker.done inbox line)"}
 
-MAX_TICKS = 150
+MAX_TICKS = 220   # wave 9: bumped for the two M-05 reconcile round-trips
+                  # (01-01 -> 01-02, 01-02 -> 01-03) this fixture now also drives
 
 
 def main():
@@ -333,6 +357,8 @@ def main():
     spawn_tick = {}    # block -> first tick index its worker record appears "spawning"
     close_tick = {}    # block -> tick index its gate first reaches STAGE_CLOSED
     tick_history = []  # (i, outcomes-dict, spawned-list, session_end) per tick
+    reconciled_reported = set()   # wave 9 (M-05): blocks this rig already sent
+                                   # an `architect.reconciled` report for
 
     def react(i, manifest):
         """The rig-as-worker's ONE reaction per tick, for EVERY block the
@@ -391,6 +417,21 @@ def main():
 
             if stage == gate.STAGE_CLOSED and block not in close_tick:
                 close_tick[block] = i
+
+        # ── wave 9 (M-05): the scripted ARCHITECT — react to a `reconcile`
+        #     job by reporting done, structured, no content-check (no LLM
+        #     in this brick) — exactly once per block. A landed ✅ now
+        #     enqueues a reconcile for the next in-scope block by pipeline
+        #     order (01-01 -> 01-02, then 01-02 -> 01-03), each GATED until
+        #     this fires — see core/architect_rig.py for the dedicated
+        #     ordering proof; this rig only needs to not get stuck on it. ──
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
+                and cur.get("block") not in reconciled_reported:
+            append_jsonl(tron_ctx.worker_inbox,
+                        {"tag": "architect.reconciled", "block": cur["block"]})
+            reconciled_reported.add(cur["block"])
 
     main_before = _git_out(["rev-parse", MAIN], root)
 

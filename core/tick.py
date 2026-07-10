@@ -51,6 +51,16 @@ from a message this process merely remembers sending.
             for the tick result (a manifest field for now — sentry is a
             later wave).
 
+  architect
+  (enqueue) `core/architect.py::enqueue` (wave 9) — runs AFTER `act`,
+            BEFORE `fill`: clear-ahead `forward` jobs for any in-scope row
+            still missing a block file, plus a `reconcile` job (M-05) for
+            the next in-scope block after each block whose outcome THIS
+            tick was `record_landed`. Positioned before `fill` so a FRESH
+            reconcile gate excludes its target the SAME tick it's raised —
+            never a tick late (see `core/architect.py`'s own docstring for
+            the mirror-image reason `advance`, below, runs AFTER `fill`).
+
   fill      `core/switchboard.py::fill` (wave 5) — SPAWN into whatever
             worker slots are STILL free after `act` above: a gate that
             closed THIS tick frees its slot the same tick (PULSE's own
@@ -61,15 +71,26 @@ from a message this process merely remembers sending.
             never re-picked, so a block is dispatched exactly once, whether
             across ticks or within this same call. Wave 8: `fill` is handed
             a FILTERED view (`casestate.dispatch_excluded_blocks` dropped —
-            every block with a still-OPEN parked case or an abandoned flag)
-            rather than the raw `pipeline.read_view` result — a walled
-            block's doc status on trunk is untouched (TRON never writes
-            project git outside `land.sh`), so once its gate frees the slot
-            (`core/casestate.py::open_case`) it would otherwise read as
-            genuinely dispatchable again before the operator ever settles
-            it; `core/session.py::check` below still reads the UNFILTERED
-            view (an open case must still count as "pending", never
+            every block with a still-OPEN parked case or an abandoned flag —
+            UNIONED, wave 9, with `architect.gated_blocks` — every block
+            with an outstanding reconcile job) rather than the raw
+            `pipeline.read_view` result — a walled block's doc status on
+            trunk is untouched (TRON never writes project git outside
+            `land.sh`), so once its gate frees the slot (`core/casestate.py
+            ::open_case`) it would otherwise read as genuinely dispatchable
+            again before the operator ever settles it; `core/session.py::
+            check` below still reads the UNFILTERED view (an open case, or
+            a reconcile-gated block, must still count as "pending", never
             silently drop out of scope).
+
+  architect
+  (advance) `core/architect.py::advance` (wave 9) — runs AFTER `fill`:
+            progresses whatever job the architect currently holds by
+            exactly one step, and is the ONE place a completed `reconcile`
+            job's `current_job` is cleared (freeing the block for dispatch
+            starting the NEXT tick, never this same one — the STRICT
+            `spawn_tick > reconciled_tick` ordering `core/architect_rig.py`
+            proves). Then, if idle, pops + starts the next queued job.
 
   persist   `core.state.save` — atomic, and ONLY after the whole pass above
             has run to completion. Then, and only then, the drained inbox
@@ -109,20 +130,23 @@ import pipeline     # noqa: E402 — core/pipeline.py, wave 6's ONE pipeline-vie
 import session       # noqa: E402 — core/session.py, wave 6's clean SESSION-END terminal
 import sentry        # noqa: E402 — core/sentry.py, wave 7's ONE pacing ladder (nudge/cap)
 import casestate      # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
+import architect      # noqa: E402 — core/architect.py, wave 9's persistent pool-excluded architect
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
 
 
 def tick(eng):
     """One bounded, crash-safe tick: observe -> route -> decide -> act ->
-    sentry (pace) -> fill -> persist -> exit (-> session-end, wave 6).
+    architect enqueue -> sentry (pace) -> fill -> architect advance ->
+    persist -> exit (-> session-end, wave 6).
     Returns a compact, NON-durable result dict for the rig/log —
     `{"advanced": [block, ...], "closed": [block, ...], "escalated":
       [(block, detail), ...], "nudged": [block, ...], "outcomes":
-      {block: (outcome, detail)}, "spawned": [agent_id, ...], "session_end":
-      {"ended_at", "reason"} | None}` — the manifest (via `core.state`) is
-    the only durable record of what happened; this return value is
-    discarded by the caller like everything else in the `Snapshot`.
+      {block: (outcome, detail)}, "spawned": [agent_id, ...], "architect":
+      {"status", "current_job"}, "session_end": {"ended_at", "reason"} |
+      None}` — the manifest (via `core.state`) is the only durable record
+    of what happened; this return value is discarded by the caller like
+    everything else in the `Snapshot`.
     `"escalated"` carries BOTH a gate-driven escalate this tick's `act` pass
     observed (e.g. an out-of-gate record commit) AND any sentry-driven
     escalate `pace` below produces (an idle gate capped) — same
@@ -140,7 +164,8 @@ def tick(eng):
                         f"{manifest0['session']['ended_at']} — no-op re-tick "
                         f"(idempotent terminal, no observe/route/act/fill)")
         return {"advanced": [], "closed": [], "escalated": [], "nudged": [],
-                "outcomes": {}, "spawned": [], "session_end": manifest0.get("session")}
+                "outcomes": {}, "spawned": [], "architect": manifest0.get("architect"),
+                "session_end": manifest0.get("session")}
 
     # ── observe ──
     snap = snapshot.build(eng)
@@ -169,6 +194,20 @@ def tick(eng):
         elif outcome == "escalate":
             result["escalated"].append((block, detail))
 
+    # ── `view` is the ONE trunk-pinned pipeline read this whole tick
+    #     performs (wave 6) — threaded through the architect's clear-ahead
+    #     scan (wave 9), `switchboard.fill`'s dispatch pick, AND
+    #     `session.check` below, never fetched twice ──
+    view, _trunk_sha = pipeline.read_view(eng)
+
+    # ── architect enqueue (wave 9, M-05): BEFORE fill, so a fresh reconcile
+    #     gate excludes its target THIS SAME tick (never a tick late) — see
+    #     core/architect.py's own docstring for the full rationale, and why
+    #     `advance` (below) runs on the OTHER side of `fill` ──
+    landed_this_tick = [block for block, (outcome, _detail) in result["outcomes"].items()
+                        if outcome == "record_landed"]
+    architect.enqueue(eng, snap.manifest, view, landed_this_tick)
+
     # ── sentry (T1, wave 7): the ONE pacing ladder — nudge/cap any gate
     #     still holding too long at its stage, run AFTER driving gates
     #     above (so a gate that just advanced never gets paced against the
@@ -183,14 +222,17 @@ def tick(eng):
 
     # ── fill (SPAWN into whatever slots are STILL free after `act` — a gate
     #     that closed above frees its slot the same tick, PULSE's own
-    #     ordering; state-guarded off the manifest, idempotent). `view` is
-    #     the ONE trunk-pinned pipeline read this whole tick performs
-    #     (wave 6) — threaded through `switchboard.fill`'s dispatch pick AND
-    #     `session.check` below, never fetched twice ──
-    view, _trunk_sha = pipeline.read_view(eng)
-    excluded = casestate.dispatch_excluded_blocks(snap.manifest)
+    #     ordering; state-guarded off the manifest, idempotent). `dispatch_
+    #     view` drops every block casestate.py OR architect.py (wave 9) is
+    #     still holding — see their own docstrings ──
+    excluded = casestate.dispatch_excluded_blocks(snap.manifest) | architect.gated_blocks(snap.manifest)
     dispatch_view = [row for row in view if row.get("id") not in excluded] if excluded else view
     result["spawned"] = switchboard.fill(eng, snap, view=dispatch_view)
+
+    # ── architect advance (wave 9): AFTER fill — see core/architect.py's
+    #     own docstring for why this side of fill is what keeps the
+    #     reconcile-gate ordering STRICT (spawn_tick > reconciled_tick) ──
+    result["architect"] = architect.advance(eng, snap.manifest)
 
     # ── persist (atomic, AFTER the whole pass) ──
     state.save(eng.ctx, snap.manifest)
