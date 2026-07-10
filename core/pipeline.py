@@ -1,12 +1,22 @@
 """core.pipeline — the deterministic pipeline reader (no LLM): the front end
-`core/switchboard.py`'s SPAWN arm reads to pick the next block.
+`core/switchboard.py`'s SPAWN arm reads to pick the next block, and (wave 6)
+`core/session.py`'s clean-terminal check reads to know the FULL in-scope
+picture.
 
-`dispatchable(eng, manifest) -> [block, ...]` parses `pipeline.md` +
-`blocks/<id>.md` OFF TRUNK (via `core.gitobs.read_pipeline_view` — the ONE
-seam; NO raw git and no `import trunk`/`import reader` of this module's own)
-and returns the blocks a caller may dispatch THIS tick, in living-doc
-(pipeline-file) ORDER: canon §7's rule — status `📋` (a block file present and
-`to-do`), every `Depends on` already `✅` on trunk, and NOT already in-flight.
+`read_view(eng) -> (view, trunk_sha)` is the ONE trunk-pinned git read this
+module performs (via `core.gitobs.read_pipeline_view` — the ONE seam; NO raw
+git and no `import trunk`/`import reader` of this module's own). A caller
+that needs BOTH `dispatchable` (below) and a scope/session read in the SAME
+tick fetches `view` once here and threads it through both — never two
+separate trunk reads (and two separate `git archive` snapshots) for what is,
+within one bounded tick, the same pinned trunk tip.
+
+`dispatchable(eng, manifest, view=None) -> [block, ...]` returns the blocks a
+caller may dispatch THIS tick, in living-doc (pipeline-file) ORDER: canon
+§7's rule — status `📋` (a block file present and `to-do`), every
+`Depends on` already `✅` on trunk, and NOT already in-flight. `view` is
+optional (defaults to a fresh `read_view(eng)` call, unchanged pre-wave-6
+behavior) — pass a pre-fetched view to avoid a second trunk read.
 
 "In-flight" is a MANIFEST read only (never re-derived from git): a block
 counts as in-flight when it has an open (non-terminal) gate in
@@ -61,7 +71,25 @@ def in_flight_blocks(manifest):
     return inflight
 
 
-def dispatchable(eng, manifest):
+def read_view(eng):
+    """The ONE trunk-pinned pipeline+blocks read (`core.gitobs.
+    read_pipeline_view`) — resolves `pipeline_rel`/`blocks_rel`/
+    `trunk_snapshot_dir` off `eng.paths`/`eng.ctx` exactly as `dispatchable`
+    always has, factored out so a caller (`core/tick.py`) can fetch it once
+    and thread it through both `dispatchable` and `core/session.py::check`
+    within the same bounded tick. Fail-loud, never a guess (unchanged from
+    before this refactor): raises on an unresolvable trunk tip or a failed
+    snapshot — this module does not catch that."""
+    root = eng.paths["root"]
+    main_branch = eng.paths.get("main_branch", "main")
+    pipeline_rel = eng.paths.get("pipeline_rel") or "meta/pipeline.md"
+    blocks_rel = (eng.paths.get("blocks_rel") or "meta/blocks/").rstrip("/")
+    snapshot_dir = eng.ctx.trunk_snapshot_dir
+    return gitobs.read_pipeline_view(
+        root, main_branch, pipeline_rel, blocks_rel, snapshot_dir, eng.dry)
+
+
+def dispatchable(eng, manifest, view=None):
     """Deterministic pipeline read -> the blocks eligible for SWITCHBOARD to
     dispatch this tick, in pipeline (living-doc) ORDER. Each entry:
     `{"id", "block_file" (repo-relative, e.g. "meta/blocks/01-02.md"),
@@ -69,16 +97,15 @@ def dispatchable(eng, manifest):
     guessed downstream): the pipeline row's own `Block \\`blocks/<file>\\``
     Notes reference when present, else `<id>.md` under the project's
     `blocks_rel` — the SAME fallback `engine/reader.py::load` itself applies
-    when a row is matched by id rather than an explicit file ref."""
-    root = eng.paths["root"]
-    main_branch = eng.paths.get("main_branch", "main")
-    pipeline_rel = eng.paths.get("pipeline_rel") or "meta/pipeline.md"
+    when a row is matched by id rather than an explicit file ref.
+
+    `view` is optional — pass a pre-fetched `read_view(eng)` result to reuse
+    the SAME trunk-pinned read a caller already made this tick; omitted, this
+    fetches its own (unchanged pre-wave-6 behavior, one read per call)."""
+    if view is None:
+        view, _trunk_sha = read_view(eng)
+
     blocks_rel = (eng.paths.get("blocks_rel") or "meta/blocks/").rstrip("/")
-    snapshot_dir = eng.ctx.trunk_snapshot_dir
-
-    view, _trunk_sha = gitobs.read_pipeline_view(
-        root, main_branch, pipeline_rel, blocks_rel, snapshot_dir, eng.dry)
-
     status_idx = {row["id"]: row.get("status") for row in view}
     inflight = in_flight_blocks(manifest)
 

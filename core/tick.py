@@ -95,18 +95,35 @@ import snapshot     # noqa: E402 — core/snapshot.py, the per-tick immutable vi
 import gate         # noqa: E402 — core/gate.py, the DONE ladder this host drives
 import router       # noqa: E402 — core/router.py, wave 5's structured ASSIGN
 import switchboard  # noqa: E402 — core/switchboard.py, wave 5's SPAWN
+import pipeline     # noqa: E402 — core/pipeline.py, wave 6's ONE pipeline-view read per tick
+import session       # noqa: E402 — core/session.py, wave 6's clean SESSION-END terminal
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
 
 
 def tick(eng):
     """One bounded, crash-safe tick: observe -> route -> decide -> act ->
-    fill -> persist -> exit. Returns a compact, NON-durable result dict for
-    the rig/log — `{"advanced": [block, ...], "closed": [block, ...],
-      "escalated": [(block, detail), ...], "outcomes": {block: (outcome,
-      detail)}, "spawned": [agent_id, ...]}` — the manifest (via
+    fill -> persist -> exit (-> session-end, wave 6). Returns a compact,
+    NON-durable result dict for the rig/log — `{"advanced": [block, ...],
+      "closed": [block, ...], "escalated": [(block, detail), ...],
+      "outcomes": {block: (outcome, detail)}, "spawned": [agent_id, ...],
+      "session_end": {"ended_at", "reason"} | None}` — the manifest (via
     `core.state`) is the only durable record of what happened; this return
-    value is discarded by the caller like everything else in the `Snapshot`."""
+    value is discarded by the caller like everything else in the `Snapshot`.
+
+    Wave 6 idempotent terminal: if `manifest["session"]["ended_at"]` is
+    already on file (`core.session.already_ended`), this call is a TRUE
+    no-op — no manifest reload beyond the one flag check, no inbox drain, no
+    trunk read, no mutation — before ANY of the observe/route/act/fill pass
+    below ever runs."""
+    manifest0 = state.load(eng.ctx)
+    if session.already_ended(manifest0):
+        eng.log("flow", f"tick: session already ended at "
+                        f"{manifest0['session']['ended_at']} — no-op re-tick "
+                        f"(idempotent terminal, no observe/route/act/fill)")
+        return {"advanced": [], "closed": [], "escalated": [], "outcomes": {},
+                "spawned": [], "session_end": manifest0.get("session")}
+
     # ── observe ──
     snap = snapshot.build(eng)
 
@@ -135,12 +152,29 @@ def tick(eng):
 
     # ── fill (SPAWN into whatever slots are STILL free after `act` — a gate
     #     that closed above frees its slot the same tick, PULSE's own
-    #     ordering; state-guarded off the manifest, idempotent) ──
-    result["spawned"] = switchboard.fill(eng, snap)
+    #     ordering; state-guarded off the manifest, idempotent). `view` is
+    #     the ONE trunk-pinned pipeline read this whole tick performs
+    #     (wave 6) — threaded through `switchboard.fill`'s dispatch pick AND
+    #     `session.check` below, never fetched twice ──
+    view, _trunk_sha = pipeline.read_view(eng)
+    result["spawned"] = switchboard.fill(eng, snap, view=view)
 
     # ── persist (atomic, AFTER the whole pass) ──
     state.save(eng.ctx, snap.manifest)
     # Only now is it safe to drop the drained inbox sidecar (persist-gated release).
     snapshot.release(snap)
+
+    # ── session-end (wave 6): a PURE read, AFTER this tick's real
+    #     observe/route/act/fill progress is already durable — so a
+    #     fail-loud raise here (an inconsistent block: never silently
+    #     "end") never costs work this tick already persisted for OTHER
+    #     blocks; only the terminal marker itself needs its own tiny
+    #     second persist, below ──
+    marker = session.check(snap.manifest, view)
+    result["session_end"] = marker
+    if marker is not None:
+        snap.manifest["session"] = marker
+        state.save(eng.ctx, snap.manifest)
+        eng.log("flow", f"tick: clean SESSION-END — {marker['reason']}")
 
     return result

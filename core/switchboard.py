@@ -62,12 +62,18 @@ def _active_worker_count(manifest):
     return len(pipeline.in_flight_blocks(manifest))
 
 
-def fill(eng, snapshot):
+def fill(eng, snapshot, view=None):
     """Fill every free worker slot with a fresh SPAWN. Returns the list of
     agent-ids freshly spawned this call (empty if no free slot or nothing
     dispatchable) — a NON-durable convenience for the caller/rig, exactly
     like `core.tick.tick`'s own return value; the manifest write is the only
-    durable record."""
+    durable record.
+
+    `view` (wave 6) is an optional pre-fetched `core.pipeline.read_view(eng)`
+    result — pass it to reuse the SAME trunk-pinned pipeline read
+    `core/tick.py` also threads through `core/session.py::check` this tick,
+    instead of this call minting its OWN second trunk read/snapshot.
+    Omitted, `pipeline.dispatchable` fetches its own (unchanged behavior)."""
     manifest = snapshot.manifest
     workers = manifest.setdefault("workers", {})
     worker_count = max(1, int(eng.paths.get("worker_count", 1) or 1))
@@ -76,7 +82,7 @@ def fill(eng, snapshot):
     if free <= 0:
         return []
 
-    candidates = pipeline.dispatchable(eng, manifest)
+    candidates = pipeline.dispatchable(eng, manifest, view=view)
 
     spawned = []
     for block in candidates:
