@@ -668,23 +668,38 @@ def main():
        f"cases7 keys={list(cases7)} r_stage_before={r_stage_before_dup} "
        f"r_stage_after={gates7.get(BLOCK_R, {}).get('stage')}")
 
-    # ══ ISOLATED — a malformed worker.wall FAILS LOUD (never silently
-    #     dropped), checked against a synthetic throwaway manifest so it
-    #     never disturbs the real drive above ══
-    def _wall_raises(rep):
-        try:
-            router.route(eng, {"gates": {}, "workers": {}}, [rep])
-            return False
-        except ValueError:
-            return True
+    # ══ ISOLATED — a malformed worker.wall is SURFACED, never silently
+    #     dropped AND never a run-crashing raise. A REAL wall is raised in
+    #     PROSE (couriered turn-output, or `report.sh --tag wall "<text>"`),
+    #     so `slots.detail`/`block` are routinely absent; the OLD behavior
+    #     `raise`d, which propagated through core/tick.py and aborted the
+    #     WHOLE run on one prose wall (the T2-01 forward-wall #7). The wall
+    #     must instead be surfaced — architect-first — never dropped, never a
+    #     crash. Checked against a synthetic throwaway manifest so it never
+    #     disturbs the real drive above. ══
+    def _route_wall_result(rep):
+        m = {"gates": {}, "workers": {}}
+        router.route(eng, m, [rep])   # MUST NOT raise — a wall never crashes the run
+        return m
 
-    ok("W1 (WALL-FAIL-LOUD KILLER — must be GREEN): a worker.wall report "
-       "naming NO block raises (ValueError) — never silently dropped",
-       _wall_raises({"tag": "worker.wall", "agent_id": "x", "slots": {"detail": "d"}}))
-    ok("W2 (WALL-FAIL-LOUD KILLER — must be GREEN): a worker.wall report "
-       "naming a block but carrying NO detail also raises — never a "
-       "content-less wall",
-       _wall_raises({"tag": "worker.wall", "block": "some-block", "agent_id": "x", "slots": {}}))
+    m_w1 = _route_wall_result({"tag": "worker.wall", "agent_id": "x",
+                               "slots": {"detail": "d"}})
+    triage_w1 = [j for j in (m_w1.get("architect_queue") or []) if j.get("kind") == "triage"]
+    ok("W1 (WALL-SURFACED KILLER — must be GREEN): a BLOCK-LESS worker.wall is "
+       "SURFACED to architect-first triage (never silently dropped, never a "
+       "raise that aborts the whole run)",
+       len(triage_w1) == 1 and triage_w1[0].get("detail") == "d",
+       f"architect_queue={m_w1.get('architect_queue')}")
+
+    m_w2 = _route_wall_result({"tag": "worker.wall", "block": "some-block",
+                               "agent_id": "x", "slots": {}})
+    cases_w2 = m_w2.get("cases") or {}
+    ok("W2 (WALL-SURFACED KILLER — must be GREEN): a worker.wall naming a block "
+       "but carrying NO detail is SURFACED as a parked case with a non-empty "
+       "fallback detail (the report's own text, or a placeholder) — never a "
+       "content-less DROP, never a run-crashing raise",
+       len(cases_w2) == 1 and bool(next(iter(cases_w2.values())).get("detail")),
+       f"cases={cases_w2}")
 
     # ══ drive wall-resume-01 to a clean close, WHILE cap-escalate-01 sits "
     #     deliberately stuck at gate.merge until sentry's OWN cap fires ══

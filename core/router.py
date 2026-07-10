@@ -101,6 +101,7 @@ import gate        # noqa: E402 — core/gate.py, the DONE-ladder constructor th
 import casestate    # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
 import reviewers    # noqa: E402 — core/reviewers.py, wave 10's DONE-REVIEW gate
 import liveness     # noqa: E402 — core/liveness.py, wave 11's worker-silence side-system
+import architect    # noqa: E402 — core/architect.py, block-less wall -> architect-first triage
 
 
 def route(eng, manifest, worker_reports):
@@ -141,15 +142,26 @@ def route(eng, manifest, worker_reports):
         elif tag == "architect.triage_verdict":
             _route_architect_triage_verdict(eng, manifest, rep)
         # else: worker.done and anything else — not this module's concern.
+        # AFTER the per-tag dispatch: open the gate as soon as a branch is
+        # known — for ANY report carrying one (the online report in the rig's
+        # one-phase path; a later branch/done declaration in a real worker's
+        # two-phase path). See `_open_gate_if_branch`.
+        _open_gate_if_branch(eng, workers, gates, rep)
 
 
 def _route_online(eng, manifest, workers, gates, rep):
-    agent_id = rep.get("agent_id")
-    slots = rep.get("slots") or {}
-    branch = slots.get("branch")
-    if not agent_id or not branch:
-        eng.log("flow", f"router: dropped a malformed worker.online report "
-                        f"(agent_id={agent_id!r} branch={branch!r})")
+    """`worker.online` — the worker's first check-in. Its job is ONE thing:
+    ASSIGN (tell the worker WHAT to build), exactly once. It does NOT require a
+    branch: `PMT-SPAWN` correctly orders the worker to come online FIRST and
+    NOT branch yet ("your assignment comes next"), so the online report has no
+    branch to give — requiring one here was the T2-01 deadlock. The gate opens
+    later, the moment a branch is declared, via `_open_gate_if_branch` (which
+    also fires THIS same tick when the rig's one-phase online already carries
+    `slots.branch`)."""
+    agent_id = rep.get("agent_id") or rep.get("worker_id")
+    if not agent_id:
+        eng.log("flow", f"router: dropped a worker.online report with no "
+                        f"identity (agent_id/sender.id): {rep!r}")
         return
 
     worker = workers.get(agent_id)
@@ -157,34 +169,18 @@ def _route_online(eng, manifest, workers, gates, rep):
         eng.log("flow", f"router: worker.online from unrecorded agent "
                         f"{agent_id!r} — no matching spawn, dropped")
         return
-    if worker.get("status") != "spawning":
-        # Already assigned (or released) — a duplicate/late report;
-        # never a second ASSIGN for the same worker.
+    if worker.get("status") == "released" or worker.get("assigned"):
+        # Released, or already assigned — never a second ASSIGN.
         return
 
     block = worker.get("block")
     block_file = worker.get("block_file")
-    if block in gates:
-        # Defensive: a gate already open for this block under a
-        # different path — never overwrite an in-flight gate.
-        eng.log("flow", f"router: block {block!r} already has an open "
-                        f"gate — worker.online from {agent_id!r} ignored")
-        return
-
-    gates[block] = gate.new_state_full(eng, block, block_file, branch, agent_id)
-    worker["status"] = "busy"
-    worker["branch"] = branch
-
-    # ASSIGN (D3 gap fix): the worker has a branch and an open gate.local,
-    # but was never actually told WHAT to build — send it once here, guarded
-    # by a manifest flag on the worker record so a re-tick (or a late/dup
-    # worker.online this same tick, already unreachable via the `status !=
-    # "spawning"` guard above, but defensive regardless) never re-sends.
-    if not worker.get("assigned") and not eng.dry:
+    if not eng.dry:
         assignment = (f"[TRON]  {agent_id} — you own block {block}. Read its "
-                      f"spec at {block_file} and build it end to end; report "
-                      f"progress and a structured `worker.done` when the "
-                      f"local acceptance suite passes.")
+                      f"spec at {block_file} and build it end to end. Declare "
+                      f"your OWN feature branch (a `--branch <name>` report) "
+                      f"and report a structured `done` when the local "
+                      f"acceptance suite passes.")
         eng.emit(
             "assign.worker",
             assignment,
@@ -192,27 +188,61 @@ def _route_online(eng, manifest, workers, gates, rep):
             worker_id=agent_id,
             kind="PMT-ASSIGN")
     worker["assigned"] = True
+    eng.log("flow", f"router: ASSIGN {agent_id!r} -> block {block!r} "
+                    f"(gate.local opens when it declares its branch)")
 
-    eng.log("flow", f"router: ASSIGN {agent_id!r} -> block {block!r} on "
-                    f"its own reported branch {branch!r} (gate.local opened)")
+
+def _open_gate_if_branch(eng, workers, gates, rep):
+    """Open `gate.local` for an ASSIGNED worker the moment a branch is known.
+    Fires for ANY report carrying `slots.branch` (a worker.online that already
+    named it — the rig's one-phase path — OR a later branch/done declaration —
+    a real worker's two-phase path). Guarded so it never opens a gate before
+    the worker was ASSIGNED, never overwrites an in-flight gate, and is inert
+    for a report with no branch."""
+    agent_id = rep.get("agent_id") or rep.get("worker_id")
+    slots = rep.get("slots") or {}
+    branch = slots.get("branch") or rep.get("branch")
+    if not agent_id or not branch:
+        return
+    worker = workers.get(agent_id)
+    if not worker or not worker.get("assigned") or worker.get("status") == "released":
+        return
+    block = worker.get("block")
+    if not block or block in gates:
+        return
+    gates[block] = gate.new_state_full(eng, block, worker.get("block_file"),
+                                       branch, agent_id)
+    worker["status"] = "busy"
+    worker["branch"] = branch
+    eng.log("flow", f"router: gate.local opened for block {block!r} on "
+                    f"{agent_id!r}'s declared branch {branch!r}")
 
 
 def _route_wall(eng, manifest, rep):
-    """`worker.wall` — B7's raise-and-defer trigger. FAIL-LOUD on malformed
-    (no block, or no detail): a wall must NEVER silently vanish into a log
-    line the way an unknown `worker.online` sender safely can — there is no
-    safe "drop" for a genuine in-flight problem report."""
+    """`worker.wall` — B7's raise-and-defer trigger. A wall must NEVER silently
+    vanish, but it must ALSO never crash the whole tick: a REAL worker raises a
+    wall in PROSE (couriered turn-output, or `report.sh --tag wall "<text>"`),
+    so `slots.detail` is usually absent and the block id may be too. The old
+    fail-loud `raise` propagated through `core/tick.py` and aborted the entire
+    run (outcome=error) on a single prose wall — never acceptable. Instead:
+      - detail falls back to the report's own free `text` (the prose IS the
+        detail), then to a non-empty placeholder — a wall is never dropped for
+        want of a detail string;
+      - a wall naming a block opens a parked case (architect-first, GAP-E);
+      - a BLOCK-LESS wall routes to architect triage (`enqueue_triage`, the
+        SAME block-less path `core/classify.py::_triage_unclassified` uses) —
+        never a crash, never a silent drop."""
     block = rep.get("block")
     worker_id = rep.get("agent_id") or rep.get("worker_id")
     slots = rep.get("slots") or {}
-    detail = slots.get("detail")
+    detail = slots.get("detail") or (rep.get("text") or "").strip() \
+        or f"worker {worker_id!r} raised a wall (no detail text)"
     if not block:
-        raise ValueError(f"router: worker.wall report carries no block — "
-                         f"fail-loud, a wall is never silently dropped: {rep!r}")
-    if not detail:
-        raise ValueError(f"router: worker.wall for block {block!r} carries "
-                         f"no detail — fail-loud, a wall is never silently "
-                         f"dropped: {rep!r}")
+        eng.log("flow", f"router: block-less worker.wall from {worker_id!r} "
+                        f"-> architect triage (never a crash): {detail}")
+        architect.enqueue_triage(eng, manifest, None, "worker.wall", None,
+                                 detail, worker_id=worker_id)
+        return
     casestate.open_case(eng, manifest, block, "worker.wall", detail,
                         worker_id=worker_id, kind="wall")
 
