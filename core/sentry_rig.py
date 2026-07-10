@@ -310,6 +310,14 @@ class MiniEng:
     def _spawn_worker(self, agent_id, block):
         self.spawn_calls.append((agent_id, block))
 
+    def _spawn_architect(self):
+        # Wave 18 (GAP-E): `core/architect.py::advance` calls this lazily
+        # the first tick it ever pops a job — now genuinely exercised,
+        # since every `core/casestate.py::open_case` call (a sentry cap
+        # escalation included) routes ARCHITECT-FIRST. No real transport,
+        # exactly like `_spawn_worker`/`_to_worker` above.
+        pass
+
     def _page_operator(self, case_id, block, detail, worker_id=None, **_kwargs):
         """Wave 8 (core/casestate.py): the STUBBED operator-page hook a cap
         escalation now also fires (`sentry.py::_escalate` -> `casestate.
@@ -380,6 +388,27 @@ def main():
     torn_down = {BLOCK_H: False}
     real_land_calls = {}            # case_id -> count, across the whole rig
 
+    triage_answered = set()
+
+    def react_architect_triage(manifest):
+        """Wave 18 (GAP-E): a sentry cap escalation now opens an
+        ARCHITECT-first case (`core/casestate.py::open_case` -> `core/
+        architect.py::enqueue_triage`), never an immediate operator page.
+        S4 below still proves stuck-01's escalation genuinely reaches the
+        operator (paged via `eng._page_operator`, never a bare
+        `manifest["escalations"]` record alone) — the SAME "escalate all
+        the way through" script every other re-pointed rig in this wave
+        uses — while ALSO (S4 itself) proving the page never fires the
+        SAME tick the cap trips."""
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if (cur and cur.get("kind") == "triage" and cur.get("ordered")
+                and cur.get("triage_id") not in triage_answered):
+            append_jsonl(tron_ctx.worker_inbox,
+                        {"tag": "architect.triage_verdict",
+                         "triage_id": cur["triage_id"], "verdict": "operator"})
+            triage_answered.add(cur["triage_id"])
+
     def react(manifest):
         """One reaction per tick, for EACH block's own gate: STUCK gets its
         local-pass report ONCE (so it genuinely reaches gate.merge — the
@@ -388,6 +417,7 @@ def main():
         never landed — the whole point). HAPPY gets the full normal
         reaction at every stage, every tick, exactly like every prior
         tick-driven rig's own single-block worker-stand-in."""
+        react_architect_triage(manifest)
         gates = manifest.get("gates") or {}
 
         gs = gates.get(BLOCK_S)
@@ -436,6 +466,26 @@ def main():
         gh_now = gates_snap.get(BLOCK_H, {})
         if gs_now.get("stage") == gate.STAGE_ESCALATED and gh_now.get("stage") == gate.STAGE_CLOSED:
             break
+
+    # ── wave 18 (GAP-E): the break above fires on GATE stage alone (never
+    #     touched by this wave) — the instant it trips, stuck-01's cap
+    #     escalation has only just opened an ARCHITECT-owned case, not yet
+    #     paged. Keep driving (bounded, `react`'s own `react_architect_
+    #     triage` answers the triage) until the operator page genuinely
+    #     fires, before S4 (below) asserts on it. ──
+    for _ in range(15):
+        m_check = state.load(tron_ctx)
+        stuck_case_check = next((c for c in (m_check.get("cases") or {}).values()
+                                 if c.get("block") == BLOCK_S), None)
+        if stuck_case_check is not None and any(p[1] == BLOCK_S for p in eng.pages):
+            break
+        res = tick.tick(eng)
+        m = state.load(tron_ctx)
+        react(m)
+        gates_snap = {b: dict(g) for b, g in (m.get("gates") or {}).items()}
+        tick_history.append({"i": tick_history[-1]["i"] + 1, "outcomes": dict(res["outcomes"]),
+                             "nudged": list(res["nudged"]), "escalated": list(res["escalated"]),
+                             "gates": gates_snap, "session_end": res.get("session_end")})
 
     ok(f"RUN0: the whole interleaved drive converged (stuck-01 escalated, "
        f"happy-01 closed) inside {MAX_TICKS} ticks (used {tick_history[-1]['i']})",

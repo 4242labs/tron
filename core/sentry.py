@@ -152,7 +152,11 @@ def _escalate(eng, manifest, block, gate_state, stage, holding, now):
     # opens a parked case (never REPLACES the honest `manifest["escalations"]`
     # record above, which stays exactly as it always has). `open_case` sees
     # the gate is already terminal (set two lines up) and only tags it with
-    # the minted case_id — never re-writes `stage`/`escalation`.
+    # the minted case_id — never re-writes `stage`/`escalation`. Wave 18
+    # (GAP-E): `open_case` itself now routes ARCHITECT-FIRST (a PMT-TRIAGE
+    # job) — NEVER an immediate operator page from here; only the
+    # architect's own `operator` verdict ever reaches `eng._page_operator`
+    # for this case (see `core/casestate.py::architect_resolve`).
     casestate.open_case(eng, manifest, block, "sentry.cap", detail,
                         worker_id=gate_state.get("wid"), kind="cap")
     return detail

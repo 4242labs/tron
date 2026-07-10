@@ -352,6 +352,14 @@ class MiniEng:
         self.spawn_calls.append((agent_id, block))
         self.workers[agent_id] = {"block": block, "status": "spawned"}
 
+    def _spawn_architect(self):
+        # Wave 18 (GAP-E): `core/architect.py::advance` calls this lazily
+        # the first tick it ever pops a job — now genuinely exercised, since
+        # every `core/casestate.py::open_case` call (liveness's own stall
+        # recovery included) routes ARCHITECT-FIRST. No real transport,
+        # exactly like `_spawn_worker`/`_to_worker` above.
+        pass
+
     def _page_operator(self, case_id, block, detail, worker_id=None, **_kwargs):
         # **_kwargs: wave 17 (GAP-A) widened the real `eng._page_operator`
         # call surface (`manifest=`/`page_kind=`, `core/casestate.py`'s own
@@ -495,9 +503,29 @@ def main():
     # ── the operator's own bookkeeping — set once the rig OBSERVES the
     #     stall it expects, never before (never a scripted/pre-timed resume) ──
     resume_sent = {"at_tick": None, "case_id": None}
-    stall_seen = {"at_tick": None, "case_id": None, "trunk_sha": None}
+    stall_seen = {"at_tick": None, "case_id": None, "trunk_sha": None, "pages_snapshot": []}
     ping_seen = {"at_tick": None}
     first_sighting_tick = {"at": None}
+
+    triage_answered = set()
+
+    def maybe_answer_triage(manifest):
+        """Wave 18 (GAP-E): the stall's own `worker.stalled` case is now
+        ARCHITECT-first (`core/casestate.py::open_case` -> `core/
+        architect.py::enqueue_triage`) — never an immediate operator page.
+        This rig's whole point is exercising the OPERATOR's own `resume`,
+        so it always scripts the architect to answer `operator` (the same
+        "escalate all the way through" shape `core/reviewers_rig.py`'s own
+        re-point uses) — the architect hop genuinely fires (order tick,
+        drained verdict tick) before the case ever becomes operator-owned."""
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if (cur and cur.get("kind") == "triage" and cur.get("ordered")
+                and cur.get("triage_id") not in triage_answered):
+            append_jsonl(tron_ctx.worker_inbox,
+                        {"tag": "architect.triage_verdict",
+                         "triage_id": cur["triage_id"], "verdict": "operator"})
+            triage_answered.add(cur["triage_id"])
 
     def maybe_resume(manifest, i):
         if resume_sent["at_tick"] is not None:
@@ -508,9 +536,27 @@ def main():
                     and c.get("decision") is None), None)
         if case is None:
             return
-        stall_seen["at_tick"] = stall_seen["at_tick"] or i
+        # `stall_seen` anchors the EXACT tick `core/liveness.py::sweep`
+        # itself declared the stall (the case first exists) — untouched by
+        # wave 18/GAP-E's architect hop, so S3's own exact-boundary proof
+        # still holds unmodified. `pages_snapshot` is a COPY of `eng.pages`
+        # at that exact moment (never the final cumulative list, which by
+        # the time assertions run also holds the LATER architect-triggered
+        # page) — this is what S4 checks "not yet paged" against.
+        if stall_seen["at_tick"] is None:
+            stall_seen["at_tick"] = i
+            stall_seen["pages_snapshot"] = list(eng.pages)
         stall_seen["case_id"] = case["case_id"]
-        stall_seen["trunk_sha"] = _git_out(["rev-parse", MAIN], root)
+        stall_seen["trunk_sha"] = stall_seen["trunk_sha"] or _git_out(["rev-parse", MAIN], root)
+        # Wave 18 (GAP-E): only send the operator's own `resume` once the
+        # case is genuinely OPERATOR-owned (the architect's own `operator`
+        # verdict already applied — see `maybe_answer_triage` above);
+        # `core/casestate.py::settle` itself now structurally rejects a
+        # reply naming a still-`owner="architect"` case (never a bypass of
+        # the architect's own triage) — so this rig waits for real ownership
+        # instead of guessing a fixed extra tick count.
+        if case.get("owner") != "operator":
+            return
         append_jsonl(tron_ctx.worker_inbox,
                     {"tag": "operator.decision",
                      "slots": {"case_id": case["case_id"], "verb": "resume"}})
@@ -536,6 +582,7 @@ def main():
         if WID_SILENT in res["pinged"] and ping_seen["at_tick"] is None:
             ping_seen["at_tick"] = i
 
+        maybe_answer_triage(manifest)
         maybe_resume(manifest, i)
 
         for block in (BLOCK_SILENT, BLOCK_LIVE):
@@ -620,13 +667,23 @@ def main():
     stall_tick_record = next(t for t in tick_history if t["i"] == stall_seen["at_tick"])
     stall_case = stall_tick_record["cases"].get(stall_seen["case_id"])
     ok("S4 (RECOVER-NEVER-A-SILENT-KILL KILLER — must be GREEN): the stall "
-       "opened a REAL parked operator case (source worker.stalled, kind "
-       "stall, decision=None, the operator paged via eng._page_operator) — "
-       "never a bare drop",
+       "opened a REAL parked case (source worker.stalled, kind stall, "
+       "decision=None) — never a bare drop; wave 18 (GAP-E): it is "
+       "ARCHITECT-owned at this EXACT tick, NOT yet paged — the operator "
+       "is never reached the same tick a wall/escalation raises",
        stall_case is not None and stall_case.get("source") == "worker.stalled"
        and stall_case.get("kind") == "stall" and stall_case.get("worker_id") == WID_SILENT
+       and stall_case.get("owner") == "architect"
+       and not any(p[0] == stall_seen["case_id"] for p in stall_seen["pages_snapshot"]),
+       f"stall_case={stall_case} pages_at_stall_tick={stall_seen['pages_snapshot']}")
+    ok("S4b (ARCHITECT-FIRST-THEN-PAGED KILLER — must be GREEN): the SAME "
+       "stall case was genuinely paged only once the architect's own "
+       "triage verdict escalated it to the operator — strictly AFTER the "
+       "stall tick (S4, above) and strictly BEFORE the operator's own "
+       "resume (S7, below) ever fired",
+       resume_sent["at_tick"] is not None
        and any(p[0] == stall_seen["case_id"] for p in eng.pages),
-       f"stall_case={stall_case} pages={eng.pages}")
+       f"resume_tick={resume_sent['at_tick']} pages={eng.pages}")
 
     ok("S5 (SLOT-FREED KILLER — must be GREEN): silent-01's worker record "
        "was popped out of manifest['workers'] the SAME tick it stalled — "

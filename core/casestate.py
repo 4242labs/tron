@@ -100,6 +100,42 @@ only (the SAME "gates is a direct alias onto the manifest" idiom every
 other `core/*.py` module already uses); `core.gate`'s stage vocabulary is
 imported for its two terminal-stage constants only, never its `advance`
 machinery.
+
+Wave 18 (GAP-E, architect-first routing for ALL wall kinds — the operator's
+own binding decision this engine used to violate): `open_case` (above) no
+longer pages the operator itself. Every case it mints is `owner="architect"`
+and immediately handed to `core/architect.py::enqueue_triage` (a NEW `triage`
+job kind, PMT-TRIAGE) — the block is still parked/slot-freed exactly as
+before, but nothing reaches the operator until the architect's own triage
+verdict says so. Two new exports close the loop:
+
+  `architect_resolve(eng, manifest, case_id, verdict, note=None)` — called
+  ONLY by `core/architect.py::_advance_triage` once a scripted (L1)/real (L3)
+  architect verdict is observed for a case `open_case` minted. `scope_forward`
+  /`answer` resolve the case ENTIRELY WITHOUT the operator (same drop-and-
+  redrive `settle`'s own `resume`/`amend` verbs already use) — the wall never
+  reaches the operator at all. `operator` flips `case["owner"]` to
+  `"operator"` and fires THE FIRST page (the SAME `eng._page_operator` call +
+  paging bookkeeping `open_case` used to do directly, pre-wave-18) — the case
+  STAYS open, now genuinely the real `settle()` (below)'s to resolve; GAP-A's
+  `reping` floor (below) picks it up unchanged the instant its owner flips.
+
+  `open_operator_case(eng, manifest, block, source, detail, worker_id=None,
+  kind=None)` — the ONE legitimate case that is `owner="operator"` from
+  birth: the architect's OWN `operator` verdict for a triage job that never
+  had an existing casestate case behind it (`core/classify.py`'s unclassified
+  path — free text with no block/gate to park). This is not a second bypass
+  of architect-first routing — the architect has ALREADY triaged it; a
+  worker.wall/sentry.cap/liveness-stall escalation never reaches here
+  directly, only ever through `open_case` -> `enqueue_triage` ->
+  `architect_resolve`.
+
+`reping` (THE FLOOR, wave 17/GAP-A) and `settle` (the operator's own reply)
+both now respect ownership: `reping` skips any case still `owner="architect"`
+(never pings before the architect has triaged it — GAP-E's whole point);
+`settle` rejects (logs, no-op, never a crash) a reply naming a case still
+`owner="architect"` — the operator can never bypass the architect's own
+triage, structurally.
 """
 import datetime
 import os
@@ -192,9 +228,10 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
     """Raise-and-defer: park a correlation case, move the block's gate to
     BLOCKED (see module docstring — reuses `gate.STAGE_ESCALATED`, the ONE
     terminal vocabulary `core/pipeline.py` already excludes from in-flight),
-    free its slot (`eng._release_worker`), page the operator (`eng.
-    _page_operator`), and return the minted `case_id`. The tick CONTINUES —
-    this never raises for a well-formed call.
+    free its slot (`eng._release_worker`), and hand it to the architect FIRST
+    (`core/architect.py::enqueue_triage`, wave 18/GAP-E) — NEVER an immediate
+    operator page. Returns the minted `case_id`. The tick CONTINUES — this
+    never raises for a well-formed call.
 
     Idempotent: a block that already has an OPEN case returns that SAME
     case_id — never a second parked case for one still-open situation."""
@@ -224,6 +261,7 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
         "decision": None,
         "opened_at": _now_iso(),
         "prev_stage": prev_stage,
+        "owner": "architect",      # wave 18 (GAP-E): architect-first, always
     }
 
     if gate_state is not None and gate_state.get("stage") not in (gate.STAGE_CLOSED, gate.STAGE_ESCALATED):
@@ -240,21 +278,148 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
     if worker_id and not eng.dry:
         eng._release_worker(worker_id, reason=f"case {case_id} ({source})")
 
-    # Wave 17 (GAP-A): the FIRST page — durable (manifest-recorded) + a real
-    # delivery RECEIPT read via `eng._deliver_page` (see `core/engine.py::
-    # _page_operator`). `reping` (below) is what keeps THE FLOOR alive past
-    # this one call — a `failed`/absent receipt here is never itself a
-    # crash or a drop, just the ladder's own starting point.
+    # Wave 18 (GAP-E): architect-first, always — NEVER an immediate operator
+    # page. `core/architect.py::enqueue_triage` queues a PMT-TRIAGE job for
+    # THIS case_id; only the architect's own `operator` verdict
+    # (`architect_resolve`, below, called from `core/architect.py::
+    # _advance_triage`) ever reaches `eng._page_operator` from here on.
+    # Lazy import — `architect.py` imports `casestate` (for `parked_blocks`),
+    # so a module-level `import architect` here would be circular; both
+    # modules are always fully loaded by the time ANY function in either is
+    # actually called, so a deferred import inside the function body is safe.
+    import architect  # noqa: E402 (local, deliberately deferred — see above)
+    architect.enqueue_triage(eng, manifest, case_id, source, block, detail, worker_id=worker_id)
+    eng.log("flow", f"casestate: opened case {case_id!r} for block={block!r} "
+                    f"source={source!r} — routed ARCHITECT-FIRST (PMT-TRIAGE), "
+                    f"never an immediate operator page: {detail}")
+    return case_id
+
+
+def architect_resolve(eng, manifest, case_id, verdict, note=None):
+    """The architect's OWN settle of a case it owns (`owner="architect"`,
+    `decision` still `None`) — called exclusively from `core/architect.py::
+    _advance_triage` once a triage verdict is observed. `verdict` ∈
+    `{"scope_forward", "answer", "operator"}` (wave 18/GAP-E's own 3-verdict
+    contract):
+
+      `scope_forward`/`answer` — resolved by the architect ENTIRELY, the
+      operator is NEVER paged: clears the case (`decision` set, popped from
+      `manifest["cases"]` this same call — "≤1 tick", `settle`'s own bound)
+      and drops the block's terminal gate + worker record
+      (`_drop_gate_and_worker`, the SAME re-drivable mechanism `settle`'s own
+      `resume`/`amend` verbs already use) so a FRESH SPAWN drives it again.
+      `answer` additionally relays the architect's own note to the walled
+      worker first (`eng._to_worker`, `architect.answer` kind) — the SAME
+      courtesy-notice shape `settle`'s own `amend` verb already has (the
+      worker's slot is already gone by the time this fires).
+
+      `operator` — NEVER resolved here: `case["owner"]` flips to
+      `"operator"` and THE FLOOR fires its FIRST page (the identical
+      `eng._page_operator` call + paging bookkeeping `open_case` used to do
+      directly, pre-wave-18) — the case stays OPEN, now genuinely the real
+      `settle()` (the operator's own reply)'s to resolve; `reping` (GAP-A's
+      floor) picks it up unchanged the instant ownership flips (it re-pings
+      every still-open `owner="operator"` case, forever, same as before this
+      wave).
+
+    An unknown/already-cleared `case_id`, or a case no longer open
+    (`decision` already set), is a LOGGED NO-OP — never a crash, never a
+    second resolution of an already-settled case, mirroring `settle`'s own
+    forgiving discipline for exactly the same shapes."""
+    cases = manifest.get("cases") or {}
+    case = cases.get(case_id)
+    if case is None:
+        eng.log("flow", f"casestate: architect_resolve for unknown/already-"
+                        f"cleared case_id={case_id!r} (verdict={verdict!r}) — "
+                        f"logged, no-op, no case wrongly cleared")
+        return False
+    if case.get("decision") is not None:
+        eng.log("flow", f"casestate: architect_resolve for ALREADY-SETTLED "
+                        f"case {case_id!r} (verdict={verdict!r}, already "
+                        f"decided {case.get('decision')!r}) — logged, no-op")
+        return False
+
+    block = case.get("block")
+    worker_id = case.get("worker_id")
+
+    if verdict == "operator":
+        case["owner"] = "operator"
+        case["architect_verdict"] = verdict
+        # Wave 17 (GAP-A): the FIRST page for THIS case — identical shape to
+        # the page `open_case` used to fire itself, pre-wave-18.
+        receipt = eng._page_operator(case_id, block, case.get("detail"),
+                                     worker_id=worker_id, manifest=manifest)
+        case["paging"] = {
+            "attempts": 1,
+            "consecutive_fail": 0 if receipt == "delivered" else 1,
+            "last_receipt": receipt,
+            "holding_since": None,
+            "channel_escalated": False,
+        }
+        eng.log("flow", f"casestate: architect ESCALATED case {case_id!r} to "
+                        f"the OPERATOR (paged, receipt={receipt!r}): "
+                        f"{case.get('detail')}")
+        return True
+
+    # scope_forward / answer — resolved by the architect ITSELF, the
+    # operator is NEVER paged for this case.
+    case["decision"] = verdict
+    case["architect_verdict"] = verdict
+    case["settled_at"] = _now_iso()
+    if note:
+        case["note"] = note
+
+    if verdict == "answer" and worker_id and not eng.dry:
+        eng._to_worker(
+            worker_id,
+            note or f"[TRON]  architect answer on case {case_id} — see "
+                    f"guidance, re-drive.",
+            "architect.answer")
+
+    _drop_gate_and_worker(manifest, block)
+    eng.log("flow", f"casestate: case {case_id!r} ARCHITECT-{verdict.upper()} "
+                    f"— block {block!r} un-blocked, re-drivable (fresh gate/"
+                    f"re-dispatch next fill), operator NEVER paged")
+    cases.pop(case_id, None)   # cleared, same call — "≤1 tick"
+    return True
+
+
+def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
+    """Mint a case `owner="operator"` from BIRTH and page immediately — the
+    ONE legitimate direct-to-operator path left after wave 18/GAP-E: the
+    architect's OWN `operator` verdict for a triage job that never had an
+    existing casestate case behind it in the first place (`core/classify.py`
+    's unclassified path — raw free text with no block/gate to park; see
+    `core/architect.py::_advance_triage`, the ONE call site). This is not a
+    second bypass of architect-first routing — the architect has ALREADY
+    triaged it. A `worker.wall`/`sentry.cap`/liveness-stall escalation NEVER
+    reaches this function directly — those always go through `open_case` ->
+    `core/architect.py::enqueue_triage` -> `architect_resolve` (above)."""
+    cases = manifest.setdefault("cases", {})
+    case_id = next_case_id(manifest, block, source)
+    cases[case_id] = {
+        "case_id": case_id,
+        "block": block,
+        "source": source,
+        "kind": kind or source,
+        "worker_id": worker_id,
+        "detail": detail,
+        "decision": None,
+        "opened_at": _now_iso(),
+        "owner": "operator",
+        "architect_verdict": "operator",
+    }
     receipt = eng._page_operator(case_id, block, detail, worker_id=worker_id, manifest=manifest)
     cases[case_id]["paging"] = {
         "attempts": 1,
         "consecutive_fail": 0 if receipt == "delivered" else 1,
         "last_receipt": receipt,
-        "holding_since": None,   # anchored by reping()'s own first sighting — never double-pinged the tick it opens
+        "holding_since": None,
         "channel_escalated": False,
     }
-    eng.log("flow", f"casestate: opened case {case_id!r} for block={block!r} "
-                    f"source={source!r} (paged, receipt={receipt!r}): {detail}")
+    eng.log("flow", f"casestate: architect verdict=operator minted operator-"
+                    f"owned case {case_id!r} (source={source!r}, "
+                    f"block={block!r}) — paged (receipt={receipt!r}): {detail}")
     return case_id
 
 
@@ -303,6 +468,12 @@ def reping(eng, manifest, now):
     for case_id, case in cases.items():
         if case.get("decision") is not None:
             continue   # settled — pinging stops, exactly like sentry skips a terminal gate
+
+        if case.get("owner") != "operator":
+            continue   # wave 18 (GAP-E): still architect-owned (not yet
+                       # triaged) — THE FLOOR only ever pings the
+                       # OPERATOR-owned stage, never before the architect
+                       # has had its own first look
 
         paging = case.setdefault("paging", {
             "attempts": 0, "consecutive_fail": 0, "last_receipt": None,
@@ -374,6 +545,17 @@ def settle(eng, manifest, case_id, verb, note=None):
         eng.log("flow", f"casestate: settle for ALREADY-SETTLED case "
                         f"{case_id!r} (verb={verb!r}, already decided "
                         f"{case.get('decision')!r}) — duplicate reply, logged, no-op")
+        return False
+    if case.get("owner") == "architect":
+        # Wave 18 (GAP-E): the operator can never bypass the architect's own
+        # triage — a case still `owner="architect"` (not yet escalated by
+        # `architect_resolve`'s `operator` verdict) rejects an
+        # `operator.decision` the same forgiving way any other malformed
+        # reply does: logged, no-op, the case stays open exactly as it was.
+        eng.log("flow", f"casestate: settle for case {case_id!r} (verb="
+                        f"{verb!r}) rejected — still ARCHITECT-owned (not yet "
+                        f"triaged to the operator) — logged, no-op, never a "
+                        f"bypass of GAP-E's architect-first routing")
         return False
     if verb not in VERBS:
         eng.log("flow", f"casestate: settle for case {case_id!r} carried an "

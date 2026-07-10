@@ -66,6 +66,22 @@ architect log-review), routed to `reviewers.on_review_done` exactly like
 every other structured report here; that module owns its own malformed/
 stale handling (logged, dropped, never a crash on an internal signal).
 
+Wave 18 (GAP-E) adds ONE more structured tag: `architect.triage_verdict`
+(`{"tag": "architect.triage_verdict", "triage_id": <id>, "verdict":
+scope_forward|answer|operator, "note": <optional>}`) — the architect's own
+completion report for a `triage` job (PMT-TRIAGE, `core/architect.py`),
+routed exactly like `architect.reconciled` above. Keyed by the job's OWN
+`triage_id` (`core/architect.py::_next_triage_id`) — deliberately NEVER the
+casestate `case_id`, which is legitimately `None` for a case-less triage
+(an unclassified classify result with no block/gate behind it) and would
+otherwise collide across two independent case-less jobs raised over one
+run. Malformed (no `triage_id`, or an unrecognized verdict) is logged and
+dropped, an internal engine-scripted signal, never adversarial input. A
+well-formed one records into `manifest["triage_verdicts"]` (idempotent: a
+triage_id already recorded is a no-op) — `core/architect.py::
+_advance_triage` is what actually applies the verdict and clears the
+architect's own `current_job` off that record.
+
 No git/subprocess of any kind here; the ONE mutation is a manifest write
 (`core/gate.py::new_state_full`, the SAME full-ladder constructor
 `core/gate_full_rig.py`/`core/tick_rig.py` already use, for ASSIGN — PLUS,
@@ -122,6 +138,8 @@ def route(eng, manifest, worker_reports):
             _route_architect_reconciled(eng, manifest, rep)
         elif tag == "worker.review_done":
             reviewers.on_review_done(eng, manifest, rep)
+        elif tag == "architect.triage_verdict":
+            _route_architect_triage_verdict(eng, manifest, rep)
         # else: worker.done and anything else — not this module's concern.
 
 
@@ -201,6 +219,32 @@ def _route_architect_reconciled(eng, manifest, rep):
     eng.log("flow", f"router: architect.reconciled for block {block!r} -> "
                     f"reconcile-gate record set (core/architect.py::advance "
                     f"clears the architect's own current_job off this)")
+
+
+def _route_architect_triage_verdict(eng, manifest, rep):
+    """`architect.triage_verdict` — the architect's completion report for a
+    `triage` job (PMT-TRIAGE, wave 18/GAP-E, `core/architect.py`). Malformed
+    (no `triage_id`, or an unrecognized `verdict`) is logged and dropped,
+    same forgiving discipline `architect.reconciled` already gets for an
+    internal, engine-scripted signal. Idempotent: a triage_id already
+    recorded is a no-op, never overwritten twice."""
+    triage_id = rep.get("triage_id")
+    verdict = rep.get("verdict")
+    note = rep.get("note")
+    if not triage_id or verdict not in ("scope_forward", "answer", "operator"):
+        eng.log("flow", f"router: dropped a malformed architect.triage_verdict "
+                        f"report (triage_id={triage_id!r} verdict={verdict!r}): {rep!r}")
+        return
+    verdicts = manifest.setdefault("triage_verdicts", {})
+    if triage_id in verdicts:
+        eng.log("flow", f"router: architect.triage_verdict for triage_id="
+                        f"{triage_id!r} — already recorded, no-op")
+        return
+    verdicts[triage_id] = {"verdict": verdict, "note": note}
+    eng.log("flow", f"router: architect.triage_verdict for triage_id="
+                    f"{triage_id!r} -> {verdict!r} recorded (core/"
+                    f"architect.py::advance drains it, applies it, clears "
+                    f"the architect's own current_job off this)")
 
 
 def _route_decision(eng, manifest, rep):

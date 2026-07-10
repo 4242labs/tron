@@ -465,8 +465,10 @@ def run_scenario_2():
        f"tag={tag} slots={slots} stub_idx_before={idx_before} "
        f"stub_idx_after={dict(judge._stub_idx)}")
 
-    # ── invalid/out-of-enum tag -> unclassified -> architect triage,
-    #     logged with the raw body, never a crash ──
+    # ── invalid/out-of-enum tag -> unclassified -> architect triage
+    #     (wave 18/GAP-E: a case-less PMT-TRIAGE job, architect-first),
+    #     logged with the raw body, never a crash, never a direct
+    #     operator page ──
     raw_text_invalid = "the deploy pipeline is on fire, someone please look"
     _set_stub(tron_ctx, "totally.not.a.real.tag", {"note": "made up"})
     queue_len_before = len(manifest.get("architect_queue") or [])
@@ -474,17 +476,21 @@ def run_scenario_2():
         eng, {"text": raw_text_invalid, "sender": {"kind": "worker", "id": "engineer-99"}},
         manifest)
     queue_after = manifest.get("architect_queue") or []
-    triage_job = next((j for j in queue_after if j.get("kind") == "log"
-                       and j.get("type") == "triage"), None)
+    triage_job = next((j for j in queue_after if j.get("kind") == "triage"
+                       and j.get("case_id") is None
+                       and j.get("source") == "classify.unclassified"), None)
     ok("S2-K2 (INVALID-OUTPUT KILLER — must be GREEN): an out-of-enum tag "
        "from the judge collapses to unclassified — never a guessed flow "
        "decision, never a crashed classify",
        tag2 == "unclassified", f"tag2={tag2}")
     ok("S2-K3 (ARCHITECT-TRIAGE KILLER — must be GREEN): unclassified was "
-       "handed to the architect as a real triage job (kind=log, "
-       "type=triage) — a genuine adhoc-block path, not a second LLM call",
+       "handed to the architect FIRST as a real, case-less PMT-TRIAGE job "
+       "(kind=triage, case_id=None, source=classify.unclassified) — a "
+       "genuine scope_forward/answer/operator triage, never a direct "
+       "operator page, never a second LLM call",
        len(queue_after) == queue_len_before + 1 and triage_job is not None
-       and triage_job.get("findings") == [raw_text_invalid],
+       and triage_job.get("detail") == raw_text_invalid
+       and triage_job.get("worker_id") == "engineer-99",
        f"queue_before={queue_len_before} queue_after={queue_after}")
     ok("S2-K4 (FORENSIC-LOG KILLER — must be GREEN): the raw body was "
        "logged (both the home-log line AND a durable events.event record) "

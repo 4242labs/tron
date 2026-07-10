@@ -81,6 +81,33 @@ parked (an open case), or already in-flight (`core/pipeline.py::
 in_flight_blocks`) — never reopens a done block, never re-targets one
 already mid-drive.
 
+Wave 18 (GAP-E, architect-first routing for ALL wall kinds): a FOURTH job
+kind, `triage` (PMT-TRIAGE) — the ONE place a raised wall/escalation
+(`worker.wall`, a `sentry.cap` escalation, a liveness `worker.stalled`
+recovery — every `core/casestate.py::open_case` caller — PLUS `core/
+classify.py`'s own `unclassified` result) lands FIRST, never an immediate
+operator page. `enqueue_triage` (below) is called from TWO places:
+`core/casestate.py::open_case` (a real casestate case behind it, `case_id`
+set) and `core/classify.py::_triage_unclassified` (case-less — raw free
+text with no block/gate to park, `case_id=None`). One job of triage
+throughput per tick, same FIFO discipline as `forward`/`reconcile`/`log`.
+`_advance_triage` (below) orders ONCE (`arch.triage`, a structured ask for a
+verdict ∈ `{scope_forward, answer, operator}`), then waits for a routed
+`architect.triage_verdict` report (`core/router.py`, recorded into
+`manifest["triage_verdicts"]` — the SAME two-step "order then observe a
+report" discipline `reconcile`'s own `architect.reconciled` already uses,
+drained on a LATER tick, never trusted same-call) before applying it:
+`answer`/`operator` resolve in ONE step via `core.casestate.
+architect_resolve` (case-bearing) or directly (case-less: `answer` relays a
+note, `operator` mints via `core.casestate.open_operator_case`) —
+`scope_forward` ADDITIONALLY authors + lands ONE real adhoc block first
+(mirrors `_advance_log`'s own single-entry order-then-poll-and-land shape,
+reusing the Wave-1 landing primitive verbatim) before resolving the
+original case, if any — the wall/escalation only clears once the
+forward-looking work has genuinely landed on trunk. An unrecognized verdict
+falls back to `operator` — never silently dropped, the one safe default:
+it still reaches a human, just via the loudest channel.
+
 No raw git of any kind here — `core.gitobs` (the ONE seam) for the forward
 job's patch-id read, `core.landing.land_via_grant`/`.paperwork_case_id`
 (Wave-1's ONE landing primitive, imported and reused verbatim, never
@@ -143,6 +170,21 @@ def _has_forward_job(manifest, block):
     arch = manifest.get("architect") or {}
     cur = arch.get("current_job")
     return bool(cur and cur.get("kind") == "forward" and cur.get("block") == block)
+
+
+def _has_triage_job(manifest, case_id):
+    """Dedupe for a case-bearing triage job only (`case_id is not None`) —
+    a case-less one (`core/classify.py`'s unclassified path) is NEVER
+    deduped, same "no dedupe across independent occurrences" discipline
+    `enqueue_log_review` already keeps for its own findings."""
+    if case_id is None:
+        return False
+    queue = manifest.get("architect_queue") or []
+    if any(j.get("kind") == "triage" and j.get("case_id") == case_id for j in queue):
+        return True
+    arch = manifest.get("architect") or {}
+    cur = arch.get("current_job")
+    return bool(cur and cur.get("kind") == "triage" and cur.get("case_id") == case_id)
 
 
 def _has_reconcile_job(manifest, block):
@@ -224,6 +266,162 @@ def enqueue(eng, manifest, view, landed_blocks):
     _enqueue_forward_jobs(eng, manifest, view)
     for block in landed_blocks:
         _enqueue_reconcile(eng, manifest, view, block)
+
+
+def _next_triage_id(manifest):
+    """A deterministic, monotonically-numbered triage-job id — a manifest-
+    persisted counter (`manifest["triage_seq"]`), never `uuid`/`random`
+    (mirrors `core/casestate.py::next_case_id`'s own idiom). This is the
+    correlation handle `manifest["triage_verdicts"]` is keyed by — NEVER
+    `case_id`, which is legitimately `None` for a case-less triage job
+    (`core/classify.py`'s unclassified path) and would otherwise collide
+    across two independent case-less jobs raised over the life of one run."""
+    n = int(manifest.get("triage_seq", 0)) + 1
+    manifest["triage_seq"] = n
+    return f"triage-{n}"
+
+
+def enqueue_triage(eng, manifest, case_id, source, block, detail, worker_id=None):
+    """Wave 18 (GAP-E): a raised wall/escalation becomes a PMT-TRIAGE job
+    FIRST — NEVER an immediate operator page. Called from `core/
+    casestate.py::open_case` (case-bearing, `case_id` set — worker.wall/
+    sentry.cap/liveness-stall) and `core/classify.py::_triage_unclassified`
+    (case-less, `case_id=None`, `block=None` — raw free text). Idempotent
+    for a case-bearing job only — see `_has_triage_job`'s own docstring."""
+    manifest.setdefault("architect", new_state())
+    queue = manifest.setdefault("architect_queue", [])
+    if _has_triage_job(manifest, case_id):
+        return
+    triage_id = _next_triage_id(manifest)
+    queue.append({"kind": "triage", "triage_id": triage_id, "case_id": case_id,
+                  "source": source, "block": block, "detail": detail,
+                  "worker_id": worker_id, "ordered": False, "verdict": None,
+                  "note": None, "adhoc": None, "resolved": False})
+    eng.log("flow", f"architect: PMT-TRIAGE queued (triage_id={triage_id!r}, "
+                    f"case_id={case_id!r}, source={source!r}, "
+                    f"block={block!r}) — architect-first, never an immediate "
+                    f"operator page")
+
+
+def _order_triage(eng, job):
+    if not eng.dry:
+        eng._to_worker(
+            ARCHITECT_WID,
+            f"[TRON]  architect — TRIAGE (triage_id={job['triage_id']!r}, "
+            f"case_id={job.get('case_id')!r}, source={job.get('source')!r}, "
+            f"block={job.get('block')!r}): {job.get('detail')}\nReply with a "
+            f"structured architect.triage_verdict (triage_id="
+            f"{job['triage_id']!r}, verdict in "
+            f"scope_forward|answer|operator[, note]).",
+            "arch.triage")
+    job["ordered"] = True
+    eng.log("flow", f"architect[triage:{job['triage_id']}]: ordered triage "
+                    f"(source={job.get('source')!r})")
+
+
+def _advance_triage(eng, manifest, job):
+    """One triage-job step (GAP-E, wave 18) — see module docstring for the
+    full order-then-observe-then-apply shape. Sets `job["resolved"] = True`
+    (the ONE thing `advance`, below, reads to free the architect back to
+    idle) only once the verdict's own effect has genuinely landed — a
+    `scope_forward` verdict never resolves until its adhoc block is
+    genuinely observed `"landed"` (real ancestry), never on a message
+    alone."""
+    import casestate   # lazy — casestate.py itself lazily imports this
+                       # module (see its own module docstring); both are
+                       # always fully loaded by the time either is CALLED
+
+    if not job.get("ordered"):
+        _order_triage(eng, job)
+        return
+
+    if job.get("verdict") is None:
+        verdicts = manifest.get("triage_verdicts") or {}
+        v = verdicts.get(job["triage_id"])
+        if v is None:
+            return   # still waiting on the architect's own routed report
+        verdict = v.get("verdict")
+        if verdict not in ("scope_forward", "answer", "operator"):
+            eng.log("flow", f"architect[triage:{job['triage_id']}]: "
+                            f"unrecognized verdict {verdict!r} — falling back "
+                            f"to 'operator' (never silently dropped — the one "
+                            f"safe default, still reaches a human)")
+            verdict = "operator"
+        job["verdict"] = verdict
+        job["note"] = v.get("note")
+
+    if job["verdict"] in ("answer", "operator"):
+        if job.get("case_id") is not None:
+            casestate.architect_resolve(eng, manifest, job["case_id"], job["verdict"],
+                                        note=job.get("note"))
+        elif job["verdict"] == "operator":
+            casestate.open_operator_case(eng, manifest, job.get("block"),
+                                         job.get("source"), job.get("detail"),
+                                         worker_id=job.get("worker_id"))
+        elif job.get("worker_id") and not eng.dry:
+            eng._to_worker(
+                job["worker_id"],
+                job.get("note") or f"[TRON]  architect answer on triage "
+                                   f"({job.get('source')}): see guidance.",
+                "architect.answer")
+        job["resolved"] = True
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: verdict "
+                        f"{job['verdict']!r} applied — job done")
+        return
+
+    # scope_forward — author + land ONE real adhoc block, THEN resolve the
+    # original case (if any) — never before the adhoc genuinely lands.
+    entry = job.get("adhoc")
+    if entry is None:
+        seq = manifest.setdefault("adhoc_seq", {})
+        n = int(seq.get("triage", 0)) + 1
+        seq["triage"] = n
+        adhoc_id = f"adhoc-triage-{n}"
+        entry = {"block": adhoc_id, "branch": _adhoc_branch(adhoc_id),
+                 "finding": job.get("detail"), "case_id": None, "landed": False,
+                 "ordered": False}
+        job["adhoc"] = entry
+
+    if not entry["ordered"]:
+        if not eng.dry:
+            eng._to_worker(
+                ARCHITECT_WID,
+                f"[TRON]  architect — scope_forward on triage "
+                f"(triage_id={job['triage_id']!r}): author + land ONE "
+                f"upcoming adhoc block ({entry['block']}, meta/blocks/"
+                f"{entry['block']}.md, Status: 📋 To do, plus its "
+                f"pipeline.md row) — I land it once it resolves, then "
+                f"resolve the original wall/escalation.",
+                "arch.log-review")
+        entry["ordered"] = True
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: ordered "
+                        f"adhoc {entry['block']!r}")
+        return
+
+    truth_ref = eng._truth_ref()
+    patch_id = gitobs.patch_id(eng.paths["root"], entry["branch"], truth_ref, eng.dry)
+    land_case_id = entry.get("case_id") or landing.paperwork_case_id(
+        "triage-forward", entry["branch"], patch_id)
+    entry["case_id"] = land_case_id
+
+    outcome = landing.land_via_grant(eng, land_case_id, entry["block"], entry["branch"],
+                                     ARCHITECT_WID, "arch.log-review",
+                                     "architect-triage-forward")
+    if outcome == "landed":
+        entry["landed"] = True
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: adhoc "
+                        f"{entry['block']!r} landed — resolving the original "
+                        f"wall/escalation (never paging the operator)")
+        if job.get("case_id") is not None:
+            casestate.architect_resolve(eng, manifest, job["case_id"],
+                                        "scope_forward", note=job.get("note"))
+        job["resolved"] = True
+    elif outcome == "pending":
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: grant live "
+                        f"for {land_case_id}, awaiting land.sh")
+    else:
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: {outcome} "
+                        f"(case {land_case_id}, branch not authored yet?)")
 
 
 def _advance_forward(eng, manifest, job):
@@ -414,6 +612,10 @@ def advance(eng, manifest):
             _advance_log(eng, manifest, cur)
             if cur.get("landed_all"):
                 arch["status"], arch["current_job"] = "idle", None
+        elif cur.get("kind") == "triage":
+            _advance_triage(eng, manifest, cur)
+            if cur.get("resolved"):
+                arch["status"], arch["current_job"] = "idle", None
         else:
             eng.log("flow", f"architect: current_job has an unknown kind "
                             f"{cur.get('kind')!r} — held, never advanced")
@@ -430,6 +632,8 @@ def advance(eng, manifest):
             _advance_forward(eng, manifest, job)
         elif job["kind"] == "log":
             _advance_log(eng, manifest, job)
+        elif job["kind"] == "triage":
+            _advance_triage(eng, manifest, job)
         eng.log("flow", f"architect: dispatch {job}")
 
     return {"status": arch["status"], "current_job": arch.get("current_job")}

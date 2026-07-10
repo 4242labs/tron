@@ -412,6 +412,7 @@ class RunHistory:
         self.adhoc_landed_tick = {}
         self.cadence_at_dispatch = {}    # agent_id -> manifest["cadence"] snapshot, dispatch tick
         self.reconciled_reported = set()  # M-05 (wave 9): blocks already reported architect.reconciled
+        self.triage_answered = set()      # wave 18 (GAP-E): triage_ids already answered
         self.tick_history = []           # (i, outcomes, spawned, session_end)
 
     def _track(self, block):
@@ -538,12 +539,33 @@ class RunHistory:
                 if block not in self.adhoc_landed_tick:
                     self.adhoc_landed_tick[block] = i
 
+    def react_architect_triage(self, i, manifest):
+        """Wave 18 (GAP-E): a `sentry.cap` escalation on a held reviewer now
+        opens a case that is architect-first (`core/casestate.py::
+        open_case` -> `core/architect.py::enqueue_triage`), never an
+        immediate operator page. This rig's own C-K5/C-K7 exercise the
+        OPERATOR-facing surface (an `eng._page_operator` firing at all,
+        never wedging the drive) — so it always scripts the architect to
+        answer `operator`, the SAME "escalate all the way through" shape
+        every other re-pointed rig in this wave uses, letting the
+        pre-existing operator-facing assertions hold with the ONE added
+        architect hop genuinely exercised in between."""
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if (cur and cur.get("kind") == "triage" and cur.get("ordered")
+                and cur.get("triage_id") not in self.triage_answered):
+            append_jsonl(self.tron_ctx.worker_inbox,
+                        {"tag": "architect.triage_verdict",
+                         "triage_id": cur["triage_id"], "verdict": "operator"})
+            self.triage_answered.add(cur["triage_id"])
+
     def react(self, i, manifest, *, attest=True, findings_first=None, findings_second=None):
         self.react_engineers(i, manifest)
         self.react_reviewer(i, manifest, attest=attest,
                             findings_first=findings_first or [], findings_second=findings_second or [])
         self.react_architect_reconcile(i, manifest)
         self.react_architect_log(i, manifest)
+        self.react_architect_triage(i, manifest)
 
     def record_done_ticks(self, i, outcomes):
         for block, (outcome, _detail) in outcomes.items():
@@ -783,6 +805,22 @@ def run_scenario_c():
         eng, tron_ctx, hist, max_ticks=80,
         attest=False, findings_first=finding, findings_second=finding,
         stop_when=stop_when)
+
+    # ── wave 18 (GAP-E): the cap escalation opens an ARCHITECT-first case
+    #     now (never an immediate operator page) — `stop_when` above fires
+    #     the instant `manifest["escalations"]` appears, which is BEFORE the
+    #     architect's own (scripted-in-react) `operator` verdict has had a
+    #     chance to land. Keep driving (bounded, `react`'s own
+    #     `react_architect_triage` answers it) until the page genuinely
+    #     fires, before asserting on it below — never a pre-timed/scripted
+    #     resume, same "observe it for real" discipline this rig's own
+    #     `maybe_resume`-style rigs already keep. ──
+    for _ in range(20):
+        if eng.pages:
+            break
+        tick.tick(eng)
+        hist.react(0, state.load(tron_ctx), attest=False,
+                  findings_first=finding, findings_second=finding)
 
     final_manifest = state.load(tron_ctx)
     rid = next(iter(hist.reviewer_seen), None)

@@ -102,6 +102,7 @@ from ctx import Ctx             # noqa: E402 — engine/ctx.py, the real runtime
 import gate                      # noqa: E402 — core/gate.py, the DONE ladder (stage constants only)
 import state                       # noqa: E402 — core/state.py
 import casestate                    # noqa: E402 — core/casestate.py, THE FLOOR's own constants + open_case
+import architect                     # noqa: E402 — core/architect.py, wave 18's triage job (KILLER 4)
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, THE MODULE UNDER TEST (real _page_operator)
 
 SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
@@ -383,8 +384,26 @@ class RunState:
         self.landed_cases = set()
         self.spawn_tick = {}
         self.close_tick = {}
+        self.triage_answered = set()   # wave 18 (GAP-E): triage_ids already answered
+
+    def react_architect_triage(self, manifest, inbox_path):
+        """Wave 18 (GAP-E): both fixture blocks' walls now open ARCHITECT-
+        first cases (`core/casestate.py::open_case` -> `core/architect.py::
+        enqueue_triage`) — never an immediate operator page. This rig's
+        whole point is exercising THE FLOOR (GAP-A) on OPERATOR-owned
+        cases, so it always scripts the architect to answer `operator` for
+        whatever triage job is currently ordered — the SAME generic,
+        one-at-a-time hook `core/casestate_rig.py`'s own re-point uses."""
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if (cur and cur.get("kind") == "triage" and cur.get("ordered")
+                and cur.get("triage_id") not in self.triage_answered):
+            append_jsonl(inbox_path, {"tag": "architect.triage_verdict",
+                                      "triage_id": cur["triage_id"], "verdict": "operator"})
+            self.triage_answered.add(cur["triage_id"])
 
     def react(self, i, manifest, inbox_path):
+        self.react_architect_triage(manifest, inbox_path)
         workers = manifest.get("workers") or {}
         gates = manifest.get("gates") or {}
         for block in ORDER:
@@ -683,8 +702,9 @@ def main():
            f"session={final_manifest.get('session')}")
 
         # ══════════════════════════════════════════════════════════════
-        # KILLER 4 — a block-less escalation still pages the operator
-        # (the minimal GAP-E slice this brick's spec calls for)
+        # KILLER 4 — a block-less escalation is architect-first (wave 18/
+        # GAP-E), and STILL genuinely reaches the operator once triaged —
+        # never a silent, unclassified discard
         # ══════════════════════════════════════════════════════════════
         eng_iso = Engine(Ctx(inst))   # a FRESH, throwaway Engine — never .start()-ed,
         eng_iso.dry = False           # never touching the main drive's own manifest;
@@ -695,16 +715,54 @@ def main():
                                   "a block-less escalation — never a silent "
                                   "unclassified discard", worker_id=None)
         iso_case = (iso_manifest.get("cases") or {}).get(cid)
+        iso_pages_pre_triage = list((iso_manifest.get("operator_pages") or {}).values())
+        triage_job_pre = next((j for j in (iso_manifest.get("architect_queue") or [])
+                               if j.get("kind") == "triage" and j.get("case_id") == cid), None)
+        ok("BL0 (ARCHITECT-FIRST KILLER — must be GREEN): `open_case` for a "
+           "block-less escalation NEVER pages the operator itself — it "
+           "opens an ARCHITECT-owned case and queues a real PMT-TRIAGE job "
+           "for it, same as any wall/cap escalation",
+           iso_case is not None and iso_case.get("block") is None
+           and iso_case.get("decision") is None and iso_case.get("owner") == "architect"
+           and len(iso_pages_pre_triage) == 0 and triage_job_pre is not None,
+           f"iso_case={iso_case} iso_pages_pre_triage={iso_pages_pre_triage} "
+           f"triage_job_pre={triage_job_pre}")
+
+        # ── drive the REAL architect.advance() (production code, never a
+        #     shortcut) through its own order-then-observe-then-apply shape:
+        #     ONE call orders (`arch.triage`, a real eng_iso._to_worker
+        #     call), then — exactly as `core/router.py::
+        #     _route_architect_triage_verdict` would record a routed
+        #     `architect.triage_verdict` report — the scripted `operator`
+        #     verdict is written directly into `manifest["triage_verdicts"]`
+        #     (this rig has no tick/inbox loop of its own for this isolated
+        #     slice), and a SECOND advance() call applies it ──
+        architect.advance(eng_iso, iso_manifest)
+        ordered_job = (iso_manifest.get("architect") or {}).get("current_job")
+        ok("BL0b: the architect genuinely ORDERED the triage (`core/"
+           "architect.py::_order_triage`, a real eng_iso._to_worker call, "
+           "arch.triage kind) before ever applying any verdict",
+           ordered_job is not None and ordered_job.get("kind") == "triage"
+           and ordered_job.get("ordered") is True and ordered_job.get("verdict") is None,
+           f"ordered_job={ordered_job}")
+
+        triage_id = ordered_job["triage_id"]
+        iso_manifest.setdefault("triage_verdicts", {})[triage_id] = {"verdict": "operator", "note": None}
+        architect.advance(eng_iso, iso_manifest)
+
         iso_pages = list((iso_manifest.get("operator_pages") or {}).values())
         iso_page_events = [e for e in eng_iso.events.log if e.get("type") == "operator_page"]
-        ok("BL1 (BLOCK-LESS-STILL-PAGED KILLER — must be GREEN): a case opened "
-           "with block=None still durably RECORDED a page (manifest["
-           "'operator_pages'], a real eng._page_operator call) — never a silent, "
-           "unclassified discard",
-           iso_case is not None and iso_case.get("block") is None
-           and iso_case.get("decision") is None
+        iso_case_after = (iso_manifest.get("cases") or {}).get(cid)
+        ok("BL1 (BLOCK-LESS-STILL-PAGED KILLER — must be GREEN): once the "
+           "architect's OWN `operator` triage verdict resolved it, the "
+           "block-less case DURABLY RECORDED a page (manifest["
+           "'operator_pages'], a real eng._page_operator call) — never a "
+           "silent, unclassified discard",
+           iso_case_after is not None and iso_case_after.get("block") is None
+           and iso_case_after.get("decision") is None
+           and iso_case_after.get("owner") == "operator"
            and len(iso_pages) == 1 and iso_pages[0].get("block") is None,
-           f"iso_case={iso_case} iso_pages={iso_pages}")
+           f"iso_case_after={iso_case_after} iso_pages={iso_pages}")
         ok("BL2: the SAME block-less page also emitted a real 'operator_page' "
            "event (`eng.events`) — the durable trace is never manifest-only",
            len(iso_page_events) == 1 and iso_page_events[0]["payload"].get("block") is None,

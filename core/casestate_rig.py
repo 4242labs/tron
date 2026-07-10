@@ -82,7 +82,8 @@ BLOCKS = {
     BLOCK_S: {"branch": f"feat/{BLOCK_S}", "agent_id": f"engineer-{BLOCK_S}"},
 }
 ORDER = [BLOCK_R, BLOCK_A, BLOCK_S]
-MAX_TICKS = 80
+MAX_TICKS = 120   # wave 18 (GAP-E): headroom for the architect-first hop
+                   # (order tick + drained-verdict tick) on every wall/cap
 
 _results = []
 
@@ -295,6 +296,14 @@ class MiniEng:
         self.spawn_calls.append((agent_id, block))
         self.workers[agent_id] = {"block": block, "status": "spawned"}
 
+    def _spawn_architect(self):
+        # Wave 18 (GAP-E): `core/architect.py::advance` calls this lazily
+        # the first tick it ever pops a job — now genuinely exercised,
+        # since every `core/casestate.py::open_case` call (every wall/cap
+        # this rig raises) routes ARCHITECT-FIRST. No real transport,
+        # exactly like `_spawn_worker`/`_to_worker` above.
+        pass
+
     def _page_operator(self, case_id, block, detail, worker_id=None, **_kwargs):
         # **_kwargs: wave 17 (GAP-A) widened the real `eng._page_operator`
         # call surface (`manifest=`/`page_kind=`, `core/casestate.py`'s own
@@ -347,6 +356,27 @@ def main():
     landed_cases = set()
     real_land_calls = {}
     tick_log = []            # (i, res, manifest) per tick
+    triage_answered = set()   # wave 18 (GAP-E): triage_ids already answered
+
+    def react_architect_triage(manifest):
+        """Wave 18 (GAP-E): EVERY wall/escalation this rig raises (R's and
+        A's worker.wall, S's sentry.cap) now opens an ARCHITECT-FIRST case
+        (`core/casestate.py::open_case` -> `core/architect.py::
+        enqueue_triage`) — never an immediate operator page. This rig's
+        whole point is exercising the OPERATOR-facing resume/abandon
+        surface, so it always scripts the architect to answer `operator`
+        for whatever triage job is CURRENTLY ordered (one at a time, FIFO —
+        the SAME generic hook serves R, A, and S's cases without any
+        per-block branching) — the architect hop genuinely fires (order
+        tick, drained-verdict tick) before any case is ever operator-owned."""
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job")
+        if (cur and cur.get("kind") == "triage" and cur.get("ordered")
+                and cur.get("triage_id") not in triage_answered):
+            append_jsonl(tron_ctx.worker_inbox,
+                        {"tag": "architect.triage_verdict",
+                         "triage_id": cur["triage_id"], "verdict": "operator"})
+            triage_answered.add(cur["triage_id"])
 
     def react(manifest):
         """Rig-as-worker's ONE reaction per tick, for every block the engine
@@ -358,6 +388,7 @@ def main():
         OWN generation is bumped (by the MAIN loop, once the operator
         resumes its sentry-cap case) — the SAME 'stuck-then-resumed' shape
         `core/sentry_rig.py` already proves for the bare-escalation case."""
+        react_architect_triage(manifest)
         workers = manifest.get("workers") or {}
         gates = manifest.get("gates") or {}
 
@@ -458,12 +489,14 @@ def main():
     ok("P1 (WALL->PARK KILLER — must be GREEN): wall-resume-01's worker.wall "
        "opened a parked case — gate BLOCKED (gate.STAGE_ESCALATED, the "
        "vocabulary core/pipeline.py already excludes from in-flight), case "
-       "in manifest['cases'] with decision=None, source='worker.wall', "
-       "operator paged (a real eng._page_operator call recorded)",
+       "in manifest['cases'] with decision=None, source='worker.wall'; "
+       "wave 18 (GAP-E): the case is ARCHITECT-owned, NOT paged the SAME "
+       "tick — the operator is never reached the same tick a wall raises",
        case_r is not None and case_r.get("decision") is None
        and case_r.get("source") == "worker.wall"
+       and case_r.get("owner") == "architect"
        and gates3.get(BLOCK_R, {}).get("stage") == gate.STAGE_ESCALATED
-       and any(p[1] == BLOCK_R for p in eng.pages),
+       and not any(p[1] == BLOCK_R for p in eng.pages),
        f"case_r={case_r} gate_r_stage={gates3.get(BLOCK_R, {}).get('stage')} pages={eng.pages}")
     ok("P2: wall-resume-01's slot was genuinely FREED — no longer in-flight "
        "(pipeline.in_flight_blocks excludes a terminal gate) — proven by "
@@ -510,7 +543,67 @@ def main():
        and case_id_a in cases4 and cases4[case_id_a].get("decision") is None,
        f"cases4 keys={list(cases4)}")
 
-    # ══ tick 5 — operator RESUMEs wall-resume-01's case ══
+    # ══ wave 18 (GAP-E): an operator.decision naming a case that is STILL
+    #     architect-owned must be REJECTED — the operator can never bypass
+    #     the architect's own triage. Proven directly against a synthetic,
+    #     throwaway manifest (never the real drive above — this rig's own
+    #     architect-first hop resolves too fast, within a tick or two of a
+    #     wall, for a live "still architect-owned" window to reliably land
+    #     a scripted premature reply in; a direct `casestate.settle` call is
+    #     the SAME deterministic-unit-check discipline W1/W2 (below) already
+    #     use for the malformed-wall fail-loud proof) ══
+    def _bypass_rejected():
+        synth = {"cases": {"case-bypass-1": {
+            "case_id": "case-bypass-1", "block": "synthetic-block",
+            "source": "worker.wall", "kind": "wall", "worker_id": None,
+            "detail": "synthetic — never a real dispatch", "decision": None,
+            "owner": "architect"}}}
+        settled = casestate.settle(eng, synth, "case-bypass-1", "resume")
+        case_after = synth["cases"].get("case-bypass-1")
+        return (settled is False and case_after is not None
+               and case_after.get("decision") is None
+               and case_after.get("owner") == "architect")
+
+    ok("G1 (NO-OPERATOR-BYPASS KILLER — must be GREEN): `core.casestate."
+       "settle` REJECTS (returns False, logged no-op) an operator.decision "
+       "naming a case that is STILL architect-owned (not yet triaged to "
+       "the operator) — the case stays open, un-resumed, `owner` "
+       "untouched; the operator can never bypass GAP-E's architect-first "
+       "routing",
+       _bypass_rejected(), "checked via a direct core.casestate.settle call")
+
+    # ══ drive until the ARCHITECT genuinely triages BOTH R and A (order
+    #     tick + drained-verdict tick each, `react`'s own `react_architect_
+    #     triage` answering `operator` every time) — never a pre-timed
+    #     assumption of how many ticks that takes ══
+    def wait_for_operator_owned(case_id, label, max_wait=20):
+        for _ in range(max_wait):
+            m_now = state.load(tron_ctx)
+            c = (m_now.get("cases") or {}).get(case_id)
+            if c is not None and c.get("owner") == "operator":
+                return m_now, c
+            run_tick()
+        raise RuntimeError(f"{label}: case {case_id!r} never became "
+                           f"operator-owned within {max_wait} ticks")
+
+    m_r_paged, case_r_paged = wait_for_operator_owned(case_id_r, "wall-resume-01")
+    ok("P1b (ARCHITECT-FIRST-THEN-PAGED KILLER — must be GREEN): wall-"
+       "resume-01's case was genuinely paged (a real eng._page_operator "
+       "call recorded) ONLY once the architect's own scripted `operator` "
+       "triage verdict resolved it — never at the SAME tick the wall "
+       "raised (P1, above)",
+       case_r_paged.get("owner") == "operator"
+       and any(p[0] == case_id_r for p in eng.pages),
+       f"case_r_paged={case_r_paged} pages={eng.pages}")
+
+    m_a_paged, case_a_paged = wait_for_operator_owned(case_id_a, "wall-abandon-01")
+    ok("P4b: wall-abandon-01's case was ALSO genuinely (architect-first) "
+       "paged — its own INDEPENDENT triage, never conflated with R's",
+       case_a_paged.get("owner") == "operator"
+       and any(p[0] == case_id_a for p in eng.pages),
+       f"case_a_paged={case_a_paged}")
+
+    # ══ operator RESUMEs wall-resume-01's NOW operator-owned case ══
     gen[BLOCK_R] = 1
     spawn_count_before_resume = sum(1 for a, _b in eng.spawn_calls if a == BLOCKS[BLOCK_R]["agent_id"])
     inject({"tag": "operator.decision", "slots": {"case_id": case_id_r, "verb": "resume"}})
@@ -530,7 +623,7 @@ def main():
        f"spawn_count before={spawn_count_before_resume} after={spawn_count_after_resume} "
        f"spawn_calls={eng.spawn_calls}")
 
-    # ══ tick 6 — operator ABANDONs wall-abandon-01's case ══
+    # ══ operator ABANDONs wall-abandon-01's NOW operator-owned case ══
     inject({"tag": "operator.decision", "slots": {"case_id": case_id_a, "verb": "abandon"}})
     res6, m6 = run_tick()
     cases6 = m6.get("cases") or {}
@@ -544,9 +637,9 @@ def main():
        BLOCK_A in (m6.get("abandoned_blocks") or []) and BLOCK_A not in gates6,
        f"abandoned_blocks={m6.get('abandoned_blocks')} gate_a={gates6.get(BLOCK_A)}")
 
-    # ══ tick 7 — a DUPLICATE resume on wall-resume-01's ALREADY-cleared
-    #     case_id — must be a safe no-op, never wrongly clearing/reopening
-    #     anything, never disturbing R's now-genuinely-progressing gate ══
+    # ══ a DUPLICATE resume on wall-resume-01's ALREADY-cleared case_id —
+    #     must be a safe no-op, never wrongly clearing/reopening anything,
+    #     never disturbing R's now-genuinely-progressing gate ══
     r_stage_before_dup = (m6.get("gates") or {}).get(BLOCK_R, {}).get("stage")
     inject({"tag": "operator.decision", "slots": {"case_id": case_id_r, "verb": "resume"}})
     res7, m7 = run_tick()
@@ -587,19 +680,25 @@ def main():
     case_id_s = None
     resumed_s_injected = False
     session_ended = None
-    i = 7
+    i = tick_log[-1][0]
+    s_case_seen_architect_owned = False
     while i < MAX_TICKS:
         i += 1
         res, m = run_tick()
         cases = m.get("cases") or {}
-        if case_id_s is None:
-            found = next((c for c in cases.values()
-                         if c.get("block") == BLOCK_S and c.get("source") == "sentry.cap"), None)
-            if found:
-                case_id_s = found["case_id"]
-                gen[BLOCK_S] = 1
-                inject({"tag": "operator.decision", "slots": {"case_id": case_id_s, "verb": "resume"}})
-                resumed_s_injected = True
+        found = next((c for c in cases.values()
+                     if c.get("block") == BLOCK_S and c.get("source") == "sentry.cap"), None)
+        if found is not None and found.get("owner") == "architect":
+            s_case_seen_architect_owned = True
+        if case_id_s is None and found is not None and found.get("owner") == "operator":
+            # wave 18 (GAP-E): the architect's own `react_architect_triage`
+            # (inside `react()`, above) has already escalated S's case to
+            # the operator by the time this fires — never resumed while
+            # still architect-owned.
+            case_id_s = found["case_id"]
+            gen[BLOCK_S] = 1
+            inject({"tag": "operator.decision", "slots": {"case_id": case_id_s, "verb": "resume"}})
+            resumed_s_injected = True
         se = res.get("session_end")
         if se is not None:
             session_ended = se
@@ -623,6 +722,12 @@ def main():
        and any(r.get("block") == BLOCK_S for r in (final_manifest.get("escalations") or [])),
        f"case_id_s={case_id_s} escalations="
        f"{[r for r in (final_manifest.get('escalations') or []) if r.get('block') == BLOCK_S]}")
+    ok("S1b (ARCHITECT-FIRST KILLER — must be GREEN): cap-escalate-01's own "
+       "sentry.cap case was OBSERVED architect-owned (not yet paged) before "
+       "it ever became operator-owned — the SAME architect-first hop R/A's "
+       "own worker.wall cases went through (P1/P1b, above), never an "
+       "immediate operator page off a sentry cap either",
+       s_case_seen_architect_owned, f"s_case_seen_architect_owned={s_case_seen_architect_owned}")
     ok("S2 (SENTRY-CASE-RESUME KILLER — must be GREEN): the operator's "
        "resume on cap-escalate-01's sentry-opened case cleared it (no "
        "longer in manifest['cases']) and it re-drove all the way to a "

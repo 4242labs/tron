@@ -53,17 +53,22 @@ stay out of scope here):
   **Invalid-output exhaustion / a self-declared `unclassified` tag** →
   `_triage_unclassified`: logged (forensic — `eng.log` + a durable
   `eng.events.event("unclassified", ...)` record, RAW body included, never
-  truncated-away in the log line alone) and handed to the architect —
-  `core/architect.py::enqueue_log_review` REUSED VERBATIM (never forked)
-  with `typ="triage"` and the raw text as the ONE finding: the exact same
-  "author an adhoc block per finding, or none" mechanism wave 10 already
-  built for a review's findings, now doing double duty for T5's `PMT-
-  TRIAGE` path — the architect steers an unclassifiable report forward
-  (authors it as upcoming work) using its own project-context judgment,
-  never a second LLM judgment call of this module's own (the retired
-  second judgment stays retired). `unclassified` itself is STILL returned
-  to the caller (the `*` SENTRY catch-all, T5) — triage is a SIDE EFFECT of
-  classifying `unclassified`, never a replacement for the tag itself.
+  truncated-away in the log line alone) and handed to the architect FIRST
+  — wave 18 (GAP-E): `core/architect.py::enqueue_triage` REUSED VERBATIM
+  (never forked), a case-less PMT-TRIAGE job (`case_id=None`, `block=None`
+  — no gate/block to park, this is raw free text) carrying the raw body as
+  its `detail`. The architect's own scripted (L1)/real (L3) triage verdict
+  (`scope_forward`/`answer`/`operator`) then steers it: `scope_forward`
+  authors it forward as upcoming work (the SAME adhoc-block mechanism wave
+  10's own `enqueue_log_review` already established, reused by `core/
+  architect.py::_advance_triage`'s own `scope_forward` arm); `operator`
+  mints a genuine operator-owned case (`core/casestate.py::
+  open_operator_case`) — R3's own "say it's the operator's, which becomes a
+  wall" — never a second LLM judgment call of this module's own (the
+  retired second judgment stays retired). `unclassified` itself is STILL
+  returned to the caller (the `*` SENTRY catch-all, T5) — triage is a SIDE
+  EFFECT of classifying `unclassified`, never a replacement for the tag
+  itself.
 
 Duck-typed `eng` contract: `eng.ctx` (routing.yaml + judge's own context
 reads), `eng.log`, `eng.events` (an `EventLog`/`_Events`-shaped `.event(...)`
@@ -142,25 +147,29 @@ def _settle_from_text(manifest, text):
 
 
 def _triage_unclassified(eng, manifest, text, sender, attempts):
-    """unclassified -> the architect (`PMT-TRIAGE`, rebuild-spec.md T5) —
-    NEVER a second LLM judgment. Reuses `core/architect.py::
-    enqueue_log_review` VERBATIM with `typ="triage"`: the architect steers
-    an unclassifiable report exactly the way it already steers a review
-    finding (author it forward as an upcoming adhoc block, or — its OWN
-    project-context judgment, `core/architect.py`'s own concern, never this
-    module's — say it's the operator's, which becomes a wall per R3).
-    `manifest` may be `None` (a direct unit-level `classify()` call with no
-    tick/manifest context) — triage bookkeeping is then skipped, but the
-    FORENSIC log/event record below still fires unconditionally: raw body
-    is NEVER lost, whether or not there's a manifest to queue a job into."""
+    """unclassified -> the architect FIRST (`PMT-TRIAGE`, rebuild-spec.md T5
+    + wave 18/GAP-E) — NEVER a second LLM judgment, NEVER a direct operator
+    page. Reuses `core/architect.py::enqueue_triage` VERBATIM, case-less
+    (`case_id=None`, `block=None` — raw free text, no gate/block to park):
+    the architect's own scripted (L1)/real (L3) triage verdict steers it —
+    author it forward as an upcoming adhoc block (`scope_forward`), or —
+    its OWN project-context judgment, `core/architect.py`'s own concern,
+    never this module's — say it's the operator's, which mints a genuine
+    operator-owned case per R3 (`operator`, via `core/casestate.py::
+    open_operator_case`). `manifest` may be `None` (a direct unit-level
+    `classify()` call with no tick/manifest context) — triage bookkeeping
+    is then skipped, but the FORENSIC log/event record below still fires
+    unconditionally: raw body is NEVER lost, whether or not there's a
+    manifest to queue a job into."""
     raw = str(text)[:2000]
     last_attempt = str(attempts[-1])[:500] if attempts else ""
     eng.log("flow", f"classify: unclassified from sender={sender!r} -> "
-                    f"architect triage (PMT-TRIAGE); raw={raw!r} "
-                    f"last_attempt={last_attempt!r}")
+                    f"architect triage (PMT-TRIAGE, architect-first); "
+                    f"raw={raw!r} last_attempt={last_attempt!r}")
     eng.events.event("unclassified", sender=sender, raw=raw, last_attempt=last_attempt)
     if manifest is not None:
-        architect.enqueue_log_review(eng, manifest, "triage", [raw])
+        architect.enqueue_triage(eng, manifest, None, "classify.unclassified",
+                                 None, raw, worker_id=(sender or {}).get("id"))
 
 
 def classify(eng, msg, manifest=None):
