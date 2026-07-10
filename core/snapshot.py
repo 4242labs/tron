@@ -140,6 +140,21 @@ def _classify_reports(eng, manifest, raw_reports):
             out["block"] = merged_slots["block"]
         if "agent_id" not in out and merged_slots.get("agent_id"):
             out["agent_id"] = merged_slots["agent_id"]
+        # IDENTITY BRIDGE: a REAL worker report (scripts/report.sh, or the
+        # courier's harvested turn-output) carries the worker id ONLY in
+        # `sender.id` — `report.sh` writes `sender:{kind:"worker",id:<wid>}`
+        # and never a top-level `agent_id`, and `classify_message` emits none
+        # either. Every downstream handler (`core/router.py::_route_online`/
+        # `_route_wall`, `core/reviewers.py::on_review_done`, `core/liveness.py
+        # ::touch`) reads `agent_id`/`worker_id` at the top level, so without
+        # this bridge a real report is dropped as "malformed" (the T2-01
+        # wall). Promote `sender.id` -> both keys when absent; every scripted
+        # rig writes a top-level `agent_id` directly, so this is inert for
+        # them.
+        sender_id = (rep.get("sender") or {}).get("id")
+        if sender_id:
+            out.setdefault("agent_id", sender_id)
+            out.setdefault("worker_id", sender_id)
         resolved.append(out)
     return resolved
 
@@ -171,7 +186,22 @@ def build(eng):
     local_reports = {}
     for rep in worker_reports:
         if rep.get("tag") == "worker.done" and rep.get("block"):
-            local_reports[rep["block"]] = rep.get("slots") or {}
+            # A `worker.done` IS the worker asserting a local pass ("done
+            # <block> — local: <evidence>", worker-contract.md §3) — "done is
+            # a trigger, not truth" (the TRUTH is re-checked git-observably at
+            # gate.trunk). A REAL report.sh `--tag done --block` carries only
+            # `{block}` in slots — no `verdict`/`evidence` (report.sh has no
+            # such flags; classify_message emits none) — so `gate.local`'s
+            # `{"verdict":"pass","evidence":<str>}` contract could never be
+            # met by a real worker (the T2-01 gate.local wall). Synthesize the
+            # pass verdict from the done report, evidence = its own text; a
+            # scripted rig already puts verdict/evidence in slots, so
+            # setdefault leaves it untouched.
+            slots = dict(rep.get("slots") or {})
+            slots.setdefault("verdict", "pass")
+            slots.setdefault("evidence", (rep.get("text") or "").strip()
+                             or f"{rep['block']}: worker reported done (no evidence text)")
+            local_reports[rep["block"]] = slots
 
     return Snapshot(manifest=manifest, gates=gates, trunk_tip=trunk_tip,
                     worker_reports=worker_reports, local_reports=local_reports,
