@@ -3,29 +3,45 @@
 `build(eng) -> Snapshot` performs the WHOLE observe phase in one call
 (contracts/blueprint-contracts.md §5's "load MANIFEST → ... → build
 snapshot"): `core.state.load` (fresh manifest off disk), drain
-`ctx.worker_inbox` (structured `tag`+`slots` JSON lines — NO LLM/classify in
-this brick; a `worker.done` line IS a local-pass report, read structurally),
-then one `core.gitobs` trunk-tip read. Nothing here is retained between
-ticks — `core.tick.tick` discards the `Snapshot` at tick end; this module
-keeps no module-level state of its own.
+`ctx.worker_inbox` (`tag`+`slots` structured JSON lines, resolved without the
+model, PLUS free-text `{text, sender}` lines — the ONE real classify_message
+call, per line — since wave 13, `core/classify.py`), then one `core.gitobs`
+trunk-tip read. Nothing here is retained between ticks — `core.tick.tick`
+discards the `Snapshot` at tick end; this module keeps no module-level state
+of its own.
+
+Wave 13 (`core/classify.py`): EVERY drained line — structured or free-text —
+is resolved to its `(tag, slots)` HERE, in this SAME observe pass, via
+`classify.classify(eng, rep, manifest)`: a structured line (already carrying
+its own `tag`) resolves deterministically, the model never consulted
+(`classify.py`'s own structured-bypass check, first); a genuinely free-text
+line is the one place per tick the model is touched. This is what pins the
+model to OBSERVE and keeps `decide`/`act`/`route` pure: by the time `core/
+router.py::route` or `core/gate.py::advance` ever sees a `worker_reports`
+entry, its `tag` is ALREADY resolved — neither module imports `classify`
+or `engine/judge.py`, and calls it never. `slots.block`/`slots.agent_id`
+(the shape `classify_message`'s own contract pulls a block id / agent id
+INTO, per `routing.yaml`'s `tools:` entry) are promoted to the report's
+top level when the line didn't already carry one, so a classify-derived
+`worker.done` line reads identically to a hand-written structured one to
+every downstream reader (`local_reports`, below, `core/router.py`'s own
+`_route_online`/`_route_wall`/`_route_decision`).
 
 The inbox drain follows the SAME at-least-once idiom `engine/fsm.py::
-_claim_inboxes` uses (learned by reading, re-expressed fresh here for the
-structured shape this brick reads — never copied, never the raw-text+
-classify path that module also carries): rotate the live inbox to a `.proc`
-sidecar (atomic rename — a fresh append landing after the rename starts a
-new inbox, never lost to a full-file rewrite); if a `.proc` already exists
-(the crash residue of a prior tick that drained but never got to persist),
-read THAT again instead of rotating a new one, so a report a crashed tick
-already consumed from the live file is never silently dropped. The sidecar
-is NOT deleted here — `release` (below) is the caller's job, invoked only
-AFTER `core.state.save` succeeds, so a crash before persist leaves the
-sidecar for the next tick to re-drain. This is the ONE non-git-observable
-input `core/gate.py`'s own docstring calls out (`local_report`, `gate.local`
-'s predicate — "the ONE piece of the DONE ladder that isn't purely
-git-observable"); everything else a gate stage needs is re-derived from real
-git/grants state on every call, so only THIS input needs the persist-gated
-release discipline.
+_claim_inboxes` uses (learned by reading, re-expressed fresh here — never
+copied): rotate the live inbox to a `.proc` sidecar (atomic rename — a fresh
+append landing after the rename starts a new inbox, never lost to a
+full-file rewrite); if a `.proc` already exists (the crash residue of a
+prior tick that drained but never got to persist), read THAT again instead
+of rotating a new one, so a report a crashed tick already consumed from the
+live file is never silently dropped. The sidecar is NOT deleted here —
+`release` (below) is the caller's job, invoked only AFTER `core.state.save`
+succeeds, so a crash before persist leaves the sidecar for the next tick to
+re-drain. This is the ONE non-git-observable input `core/gate.py`'s own
+docstring calls out (`local_report`, `gate.local`'s predicate — "the ONE
+piece of the DONE ladder that isn't purely git-observable"); everything else
+a gate stage needs is re-derived from real git/grants state on every call,
+so only THIS input needs the persist-gated release discipline.
 
 `gates` is a direct alias onto `manifest.setdefault("gates", {})` — mutating
 a `gate_state` dict inside it (exactly what `core.gate.advance` does)
@@ -54,6 +70,7 @@ if _HERE not in sys.path:
 # note (it re-imports "state" too — same cached module, no re-resolution).
 import state    # noqa: E402 — core/state.py
 import gitobs   # noqa: E402 — core/gitobs.py, the ONE git-observation seam
+import classify # noqa: E402 — core/classify.py, wave 13's ONE LLM seam, run HERE (observe)
 
 
 Snapshot = collections.namedtuple(
@@ -65,7 +82,13 @@ def _drain_inbox(ctx, log):
     """Rotate `ctx.worker_inbox` to a `.proc` sidecar (or re-read a `.proc`
     a crashed prior tick already rotated — at-least-once). Returns
     `(reports, sidecar_path_or_None)`. A malformed/structurally-invalid line
-    is logged and skipped — one poison line must never sink the whole tick."""
+    is logged and skipped — one poison line must never sink the whole tick.
+    A well-formed line is either ALREADY structured (carries its own `tag`)
+    or genuinely free-text (carries `text` — `classify_message`'s own input
+    shape, `{text, sender}`); `build()`, below, resolves EVERY one of these
+    to a tag via `core.classify.classify` before this tick's `route`/`act`
+    ever sees it — a line with NEITHER key is the only shape still dropped
+    here as structurally invalid."""
     path = ctx.worker_inbox
     proc = path + ".proc"
     if not os.path.exists(proc):
@@ -89,21 +112,48 @@ def _drain_inbox(ctx, log):
         except json.JSONDecodeError as e:
             log("flow", f"snapshot: dropped a malformed worker-inbox line: {e}")
             continue
-        if not isinstance(rec, dict) or "tag" not in rec:
+        if not isinstance(rec, dict) or ("tag" not in rec and "text" not in rec):
             log("flow", f"snapshot: dropped a structurally invalid worker-inbox line: {line!r}")
             continue
         reports.append(rec)
     return reports, proc
 
 
+def _classify_reports(eng, manifest, raw_reports):
+    """Wave 13: resolve EVERY drained line to its `(tag, slots)` here, in the
+    observe pass — `core.classify.classify` does the structured-bypass check
+    internally (a line already carrying a `tag` never touches the model);
+    a free-text line is the one real classify_message call. `slots.block`/
+    `slots.agent_id` (classify_message's own contract pulls these INTO
+    slots) are promoted to the report's top level when the line didn't
+    already carry one of its own, so a classify-derived report reads
+    identically to a hand-written structured one to every downstream reader
+    (`local_reports` below, `core/router.py`'s own per-tag handlers)."""
+    resolved = []
+    for rep in raw_reports:
+        tag, slots = classify.classify(eng, rep, manifest)
+        out = dict(rep)
+        out["tag"] = tag
+        merged_slots = {**(rep.get("slots") or {}), **(slots or {})}
+        out["slots"] = merged_slots
+        if "block" not in out and merged_slots.get("block"):
+            out["block"] = merged_slots["block"]
+        if "agent_id" not in out and merged_slots.get("agent_id"):
+            out["agent_id"] = merged_slots["agent_id"]
+        resolved.append(out)
+    return resolved
+
+
 def build(eng):
     """Assemble this tick's immutable view — the whole observe phase, in one
-    call: fresh manifest (`core.state.load`), the structured reports this
-    tick's inbox drain surfaced, and one real trunk-tip read
-    (`core.gitobs.tip_sha`, never a raw git call)."""
+    call: fresh manifest (`core.state.load`), this tick's inbox drain
+    resolved to tagged reports (`_classify_reports`, wave 13 — the ONE
+    place `core/classify.py` runs, see module docstring), and one real
+    trunk-tip read (`core.gitobs.tip_sha`, never a raw git call)."""
     ctx = eng.ctx
     manifest = state.load(ctx)
-    worker_reports, sidecar = _drain_inbox(ctx, eng.log)
+    raw_reports, sidecar = _drain_inbox(ctx, eng.log)
+    worker_reports = _classify_reports(eng, manifest, raw_reports)
 
     root = eng.paths["root"]
     main_branch = eng.paths.get("main_branch", "main")

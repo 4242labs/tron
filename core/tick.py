@@ -16,11 +16,17 @@ leftovers) and re-derives everything else from real git (`core.gitobs`, via
 from a message this process merely remembers sending.
 
   observe   `core.snapshot.build(eng)` — `core.state.load` (fresh manifest)
-            + drain `ctx.worker_inbox` (structured `tag`+`slots` JSON lines;
-            NO LLM/classify in this brick — a `worker.done` line IS the
-            local-pass report and a `worker.online` line IS the ASSIGN
-            report, both read structurally) + one real trunk-tip read. See
-            `core/snapshot.py`'s own docstring for the inbox's persist-gated,
+            + drain `ctx.worker_inbox` (structured `tag`+`slots` JSON lines
+            AND genuinely free-text `{text, sender}` lines) + one real
+            trunk-tip read. Wave 13 (`core/classify.py`): THIS is where the
+            model is touched — every drained line is resolved to a tag here,
+            in observe, before route/decide/act ever run; a `worker.done`
+            line IS the local-pass report and a `worker.online` line IS the
+            ASSIGN report, both read structurally once resolved (the
+            structured-bypass check inside `classify()` means a line that
+            already carried its own `tag` costs zero model calls, exactly as
+            before this wave). See `core/snapshot.py`'s own docstring for
+            both the classify wiring and the inbox's persist-gated,
             at-least-once drain discipline.
 
   route     `core/router.py::route` (wave 5, structured — NO LLM/classify):

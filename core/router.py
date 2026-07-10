@@ -1,21 +1,25 @@
-"""core.router — structured routing (NO LLM/classify in this brick): the
+"""core.router — structured routing (NO LLM/classify IN THIS MODULE): the
 ASSIGN half of the two-step spawn->online->assign handshake
 (`contracts/rebuild-spec.md` C1/D1; `blueprint-contracts.md` §5's "Branch
 ownership" rule). `core/switchboard.py` owns SPAWN (identity-only); this
-module drains this tick's structured `tag`+`slots` worker reports
-(`core/snapshot.py`'s own drain — a `worker.online` line IS the online
-report, read structurally, exactly like `worker.done` already is for the
-DONE-gate's local-pass report) and, for each well-formed `worker.online`
-report, ASSIGNS: opens the block's gate at `gate.local`, bound to the
-worker's OWN REPORTED branch (`worker.branch`, carried in the report's
-`slots` — NEVER a guessed `feat/<block>`; the worker names its own branch,
-the engine only ever records the name it reports).
+module drains this tick's ALREADY-TAGGED worker reports (`core/snapshot.py`
+'s own drain — every line, structured or originally free-text, has its
+`tag`+`slots` resolved by `core/classify.py` during the observe pass, BEFORE
+this module ever runs; a `worker.online` line IS the online report, read
+structurally, exactly like `worker.done` already is for the DONE-gate's
+local-pass report) and, for each well-formed `worker.online` report,
+ASSIGNS: opens the block's gate at `gate.local`, bound to the worker's OWN
+REPORTED branch (`worker.branch`, carried in the report's `slots` — NEVER a
+guessed `feat/<block>`; the worker names its own branch, the engine only
+ever records the name it reports).
 
 Real classify (`classify_message`, the sole LLM entrypoint per T2 of
-`rebuild-spec.md`) is a later wave, pinned to the observe phase — this
-router only ever acts on an ALREADY-STRUCTURED `tag`+`slots` shape, same
-discipline `core/snapshot.py`'s `local_reports` drain already keeps for
-`worker.done`.
+`rebuild-spec.md`) is wave 13, `core/classify.py` — pinned to the OBSERVE
+phase (`core/snapshot.py::build`), never here: this router imports neither
+`classify` nor `engine/judge.py` and only ever acts on an ALREADY-RESOLVED
+`tag`+`slots` shape, same discipline `core/snapshot.py`'s `local_reports`
+drain already keeps for `worker.done` — `decide`/`route`/`act` stay pure,
+by construction, not by convention.
 
 State-guarded, idempotent: a report for an agent-id with no matching
 "spawning" worker record (unknown, already assigned, or already released) —
