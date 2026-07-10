@@ -1,7 +1,9 @@
 """core.tick — the bounded, crash-safe TICK HOST (contracts/blueprint-
-contracts.md §5's tick model; rebuild-spec.md T1-B / B1-B11).
+contracts.md §5's tick model; rebuild-spec.md T1-B / B1-B11 + C1/D1's
+DISPATCH front end, wave 5).
 
-`tick(eng)` is ONE bounded pass: observe -> decide -> act -> persist -> exit.
+`tick(eng)` is ONE bounded pass: observe -> route -> decide -> act -> fill ->
+persist -> exit.
 No state carries between calls in memory — everything that must survive a
 wake lives in `ctx.state` (`manifest.yaml`, via `core.state`) and is reloaded
 FRESH at the top of every call (inside `core.snapshot.build`). This is
@@ -16,15 +18,24 @@ from a message this process merely remembers sending.
   observe   `core.snapshot.build(eng)` — `core.state.load` (fresh manifest)
             + drain `ctx.worker_inbox` (structured `tag`+`slots` JSON lines;
             NO LLM/classify in this brick — a `worker.done` line IS the
-            local-pass report, read structurally) + one real trunk-tip read.
-            See `core/snapshot.py`'s own docstring for the inbox's
-            persist-gated, at-least-once drain discipline.
+            local-pass report and a `worker.online` line IS the ASSIGN
+            report, both read structurally) + one real trunk-tip read. See
+            `core/snapshot.py`'s own docstring for the inbox's persist-gated,
+            at-least-once drain discipline.
+
+  route     `core/router.py::route` (wave 5, structured — NO LLM/classify):
+            drains this tick's `worker.online` reports and ASSIGNS — opens
+            the block's gate at `gate.local`, bound to the worker's OWN
+            reported `worker.branch` (never a guessed `feat/<block>`). Runs
+            BEFORE `decide` so a worker that came online THIS tick has its
+            new gate driven THIS SAME tick, not next.
 
   decide    pure-ish: for each in-flight block gate in the snapshot (every
-            entry in `manifest["gates"]` not already `closed`/`escalated`),
-            look up whatever local-pass report THIS tick's drain surfaced
-            for it (or `None`) — no mutation yet, just the (block,
-            gate_state, local_report) triples `act` will drive.
+            entry in `manifest["gates"]` not already `closed`/`escalated`,
+            INCLUDING any `route` just opened above), look up whatever
+            local-pass report THIS tick's drain surfaced for it (or `None`)
+            — no mutation yet, just the (block, gate_state, local_report)
+            triples `act` will drive.
 
   act       idempotent: call `core.gate.advance` exactly once per in-flight
             block (one observable step each — `core.gate.advance`'s own
@@ -40,19 +51,31 @@ from a message this process merely remembers sending.
             for the tick result (a manifest field for now — sentry is a
             later wave).
 
+  fill      `core/switchboard.py::fill` (wave 5) — SPAWN into whatever
+            worker slots are STILL free after `act` above: a gate that
+            closed THIS tick frees its slot the same tick (PULSE's own
+            ordering, blueprint-contracts.md §5), so `fill` must run AFTER
+            `act`, never before. State-guarded off the manifest alone
+            (`core/pipeline.py`'s own in-flight read) — a block already
+            in-flight (a live worker awaiting ASSIGN, or an open gate) is
+            never re-picked, so a block is dispatched exactly once, whether
+            across ticks or within this same call.
+
   persist   `core.state.save` — atomic, and ONLY after the whole pass above
             has run to completion. Then, and only then, the drained inbox
             sidecar is released (`core.snapshot.release`). If this process
             dies anywhere before this line, NOTHING durable has changed: the
             next `tick(eng)` call reloads the exact prior manifest and (if a
             `.proc` sidecar survived) re-drains the same report — safe,
-            because every mutation `act` performed is re-derivable from real
-            git/grants state, never trusted from memory alone.
+            because every mutation `act`/`route`/`fill` performed is either
+            re-derivable from real git/grants state or itself a plain,
+            re-derivable-on-replay manifest write, never trusted from memory
+            alone.
 
 Keeps ALL git observation inside `core.gitobs` (via `core.gate`/
-`core.snapshot`); this module itself makes no file-IO or git/subprocess call
-of any kind — it only orchestrates `core.snapshot` + `core.gate` +
-`core.state`.
+`core.snapshot`/`core.pipeline`); this module itself makes no file-IO or
+git/subprocess call of any kind — it only orchestrates `core.snapshot` +
+`core.router` + `core.gate` + `core.switchboard` + `core.state`.
 """
 import os
 import sys
@@ -67,23 +90,30 @@ if _HERE not in sys.path:
 # "state" to `core/state.py` here first keeps it correctly bound for the
 # rest of the process no matter what a caller's own `sys.path` setup does
 # afterward.
-import state      # noqa: E402 — core/state.py
-import snapshot   # noqa: E402 — core/snapshot.py, the per-tick immutable view
-import gate       # noqa: E402 — core/gate.py, the DONE ladder this host drives
+import state        # noqa: E402 — core/state.py
+import snapshot     # noqa: E402 — core/snapshot.py, the per-tick immutable view
+import gate         # noqa: E402 — core/gate.py, the DONE ladder this host drives
+import router       # noqa: E402 — core/router.py, wave 5's structured ASSIGN
+import switchboard  # noqa: E402 — core/switchboard.py, wave 5's SPAWN
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
 
 
 def tick(eng):
-    """One bounded, crash-safe tick: observe -> decide -> act -> persist ->
-    exit. Returns a compact, NON-durable result dict for the rig/log —
-    `{"advanced": [block, ...], "closed": [block, ...],
+    """One bounded, crash-safe tick: observe -> route -> decide -> act ->
+    fill -> persist -> exit. Returns a compact, NON-durable result dict for
+    the rig/log — `{"advanced": [block, ...], "closed": [block, ...],
       "escalated": [(block, detail), ...], "outcomes": {block: (outcome,
-      detail)}}` — the manifest (via `core.state`) is the only durable
-    record of what happened; this return value is discarded by the caller
-    like everything else in the `Snapshot`."""
+      detail)}, "spawned": [agent_id, ...]}` — the manifest (via
+    `core.state`) is the only durable record of what happened; this return
+    value is discarded by the caller like everything else in the `Snapshot`."""
     # ── observe ──
     snap = snapshot.build(eng)
+
+    # ── route (structured — NO LLM/classify in this brick): ASSIGN any
+    #     worker that reported online this tick, before deciding what to
+    #     drive below (a just-assigned gate is driven THIS tick, not next) ──
+    router.route(eng, snap.manifest, snap.worker_reports)
 
     # ── decide (pure-ish: read the snapshot, decide what `act` gets fed) ──
     plan = [(block, gate_state, snap.local_reports.get(block))
@@ -91,7 +121,7 @@ def tick(eng):
             if gate_state.get("stage") not in _TERMINAL_STAGES]
 
     # ── act (idempotent) ──
-    result = {"advanced": [], "closed": [], "escalated": [], "outcomes": {}}
+    result = {"advanced": [], "closed": [], "escalated": [], "outcomes": {}, "spawned": []}
     for block, gate_state, local_report in plan:
         stage_before = gate_state.get("stage")
         outcome, detail = gate.advance(eng, block, gate_state, local_report=local_report)
@@ -102,6 +132,11 @@ def tick(eng):
             result["closed"].append(block)
         elif outcome == "escalate":
             result["escalated"].append((block, detail))
+
+    # ── fill (SPAWN into whatever slots are STILL free after `act` — a gate
+    #     that closed above frees its slot the same tick, PULSE's own
+    #     ordering; state-guarded off the manifest, idempotent) ──
+    result["spawned"] = switchboard.fill(eng, snap)
 
     # ── persist (atomic, AFTER the whole pass) ──
     state.save(eng.ctx, snap.manifest)

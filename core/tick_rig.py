@@ -167,6 +167,30 @@ def seed_block_doc(root, block, block_file_rel):
     return block_file_rel
 
 
+def seed_empty_pipeline(root, pipeline_rel, blocks_rel):
+    """Wave-5 non-interference fixture: a REAL, git-tracked pipeline + blocks
+    dir with ZERO dispatchable rows, so `core.gitobs.read_pipeline_view`'s
+    `git archive` has real paths to snapshot (never a missing-pathspec
+    failure) and `core.switchboard`'s SPAWN arm (added to `core.tick.tick`
+    since this rig was written) always reads "nothing to dispatch" here —
+    this rig stays scoped to driving an ALREADY in-flight, directly-seeded
+    gate only, exactly as before."""
+    _git(["checkout", "-B", MAIN, MAIN], root)
+    ppath = os.path.join(root, pipeline_rel)
+    os.makedirs(os.path.dirname(ppath), exist_ok=True)
+    with open(ppath, "w") as f:
+        f.write("# Pipeline\n\n## Roadmap\n\nNo rows — core.tick_rig's own "
+                "wave-5 non-interference fixture (this rig drives an "
+                "already in-flight gate only, never a fresh dispatch).\n")
+    bdir = os.path.join(root, blocks_rel)
+    os.makedirs(bdir, exist_ok=True)
+    with open(os.path.join(bdir, "block-template.md"), "w") as f:
+        f.write("# unused placeholder — engine/reader.py::load_blocks skips this filename\n")
+    _git(["add", "-A"], root)
+    _git(["commit", "-m", "seed: empty wave-5 dispatch fixture (no rows)"], root)
+    _git(["checkout", "--detach", MAIN], root)
+
+
 def make_code_commit(root, branch, code_file_rel, marker):
     _git(["checkout", "-B", branch, MAIN], root)
     path = os.path.join(root, code_file_rel)
@@ -226,7 +250,19 @@ class MiniEng:
     `core/gate.py` need, PLUS `.ctx` is a REAL `engine.ctx.Ctx` (not a rig
     stub) pointing at a real instance dir, so `core.tick`/`core.state`/
     `core.snapshot` exercise the REAL path-resolver contract end to end
-    (`.state`, `.worker_inbox`, `.grants_dir`, `.scratch_dir`)."""
+    (`.state`, `.worker_inbox`, `.grants_dir`, `.scratch_dir`).
+
+    Wave 5 (`core/switchboard.py`) added a SPAWN arm to `core.tick.tick`
+    itself: it fires whenever a worker slot is free, reading
+    `core/pipeline.py::dispatchable`'s trunk-pinned pipeline read. THIS rig
+    is scoped to driving an ALREADY in-flight gate only (the wave-4 spec's
+    own seeding requirement, `gate.new_state_full` called directly, never a
+    fresh dispatch) — `pipeline_rel`/`blocks_rel` are pointed at paths this
+    rig never seeds, so `dispatchable` always reads an absent pipeline (a
+    valid "nothing to dispatch" state, `engine/reader.py::parse_pipeline`'s
+    own contract for a missing file) and the SPAWN arm never fires here,
+    proven by `spawn_calls` staying empty for the whole drive (see FINAL's
+    own assertion below)."""
     def __init__(self, root, tron_ctx, test_command):
         self.paths = {
             "root": root,
@@ -234,6 +270,9 @@ class MiniEng:
             "test_command": test_command,     # the project's DECLARED trunk-validation command
             "test_env": None,
             "ci_check_name": None,            # None -> command mode, never CI mode, in this rig
+            "worker_count": 1,
+            "pipeline_rel": "meta/pipeline-not-seeded-by-tick-rig.md",
+            "blocks_rel": "meta/blocks-not-seeded-by-tick-rig/",
         }
         self.dry = False                 # HARD RULE: real trunk observation throughout
         self.ctx = tron_ctx              # REAL engine.ctx.Ctx
@@ -241,6 +280,7 @@ class MiniEng:
         self.log_lines = []
         self.orders = []
         self.workers = {}                # wid -> {"block":..., "status": "assigned"|"released"}
+        self.spawn_calls = []            # wave-5 non-interference proof — must stay empty
 
     def log(self, channel, msg):
         self.log_lines.append((channel, msg))
@@ -257,6 +297,12 @@ class MiniEng:
     def _release_worker(self, wid, reason="released"):
         self.workers[wid] = {**self.workers.get(wid, {}), "status": "released", "reason": reason}
 
+    def _spawn_worker(self, agent_id, block):
+        """Wave 5's SPAWN stub — must NEVER fire in this rig (see class
+        docstring): `pipeline_rel`/`blocks_rel` point at paths this rig never
+        seeds, so `core/pipeline.py::dispatchable` always reads empty."""
+        self.spawn_calls.append((agent_id, block))
+
 
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
@@ -266,6 +312,8 @@ LOCAL_PASS_REPORT = {"verdict": "pass",
 
 def main():
     root = build_root()
+    seed_empty_pipeline(root, "meta/pipeline-not-seeded-by-tick-rig.md",
+                        "meta/blocks-not-seeded-by-tick-rig")
     inst = os.path.join(root, "meta", "agents", "tron")   # engine/land_paperwork_rig.py's own
     os.makedirs(inst, exist_ok=True)                       # instance-dir convention
     tron_ctx = Ctx(inst)
@@ -486,6 +534,12 @@ def main():
        final_main == record_tip and total_real_lands == 2,
        f"final_main={final_main} record_tip={record_tip} real_land_calls={real_land_calls} "
        f"total={total_real_lands}")
+
+    ok("WAVE5: `core.switchboard`'s SPAWN arm (added to `core.tick.tick` "
+       "since this rig was written) never fired across the whole drive — "
+       "this rig seeds no pipeline, so it stays scoped to driving an "
+       "ALREADY in-flight gate only, exactly as before",
+       eng.spawn_calls == [], f"spawn_calls={eng.spawn_calls}")
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.tick_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

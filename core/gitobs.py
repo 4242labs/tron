@@ -18,6 +18,12 @@ Two kinds of reads live here:
     a standalone public function — implemented directly here (plain
     read-only `git log`), so it lives in the seam instead of inline in
     control-plane logic.
+  - `read_pipeline_view`: the wave-5 DISPATCH read `core/pipeline.py` needs —
+    the canon pipeline/blocks view AT TRUNK TIP, never the working tree
+    (mirrors `engine/fsm.py`'s own `_refresh` seam: `trunk.snapshot_tree` the
+    PINNED tree's `pipeline.md` + `blocks/` into a scratch dir, then parse via
+    `engine/reader.py`, the respected deterministic no-LLM canon parser —
+    imported as-is here, never forked, exactly like `trunk`).
 
 A later wave may fully vendor these reads into `core/` (dropping the
 `engine/trunk.py` dependency entirely) — until then, this is the single,
@@ -34,6 +40,7 @@ if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 
 import trunk    # noqa: E402 — respected contract, imported as-is (never forked); ONLY here
+import reader   # noqa: E402 — respected contract (engine/reader.py), the canon pipeline parser
 
 
 def tip_sha(root, branch, dry=False):
@@ -98,3 +105,37 @@ def last_touching_sha(root, ref, path):
     if r.returncode != 0:
         return ""
     return r.stdout.strip()
+
+
+def read_pipeline_view(root, main_branch, pipeline_rel, blocks_rel, snapshot_dir, dry=False):
+    """The wave-5 DISPATCH read: the canon dispatch view (`blueprint-contracts.md`
+    §7) AT TRUNK TIP — never the live working tree (a mid-commit worker's own
+    edit, e.g. a record commit in flight, must stay invisible until it actually
+    lands; `engine/fsm.py`'s own W9 rationale for the same PINNED-tree read).
+
+    Resolves the trunk tip (`trunk.tip_sha`), snapshots `pipeline_rel` +
+    `blocks_rel` OUT OF THAT PINNED SHA into `snapshot_dir` (`trunk.
+    snapshot_tree` — a `git archive` extract, atomic-swapped into place), then
+    parses the extracted files via `engine/reader.py::load` (the respected,
+    deterministic, no-LLM canon parser — imported as-is, never forked).
+
+    Returns `(view, trunk_sha)` — `view` is `reader.load`'s merged
+    living-doc-order rows, each enriched with its block file's headers.
+    Fail-loud: raises `RuntimeError` on an unresolvable trunk tip or a failed
+    snapshot — this seam never hands a control-plane caller a silently
+    guessed/empty/stale view; a caller that wants "reuse the last good view on
+    a transient read failure" (fsm.py's own discipline) makes that choice
+    itself, on the exception, never inside this seam."""
+    if dry:
+        raise RuntimeError("read_pipeline_view: cannot read a dry-run trunk")
+    sha = trunk.tip_sha(root, main_branch, dry)
+    if not sha:
+        raise RuntimeError(f"read_pipeline_view: unresolvable trunk tip on {main_branch!r}")
+    rel_paths = [pipeline_rel, blocks_rel.rstrip("/")]
+    ok, err = trunk.snapshot_tree(root, sha, rel_paths, snapshot_dir)
+    if not ok:
+        raise RuntimeError(f"read_pipeline_view: trunk snapshot @ {sha[:8]} failed: {err}")
+    ppath = os.path.join(snapshot_dir, pipeline_rel)
+    bpath = os.path.join(snapshot_dir, blocks_rel.rstrip("/"))
+    view = reader.load(ppath, bpath)
+    return view, sha
