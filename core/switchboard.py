@@ -40,6 +40,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import pipeline   # noqa: E402 — core/pipeline.py, the dispatch-eligible read + in-flight count
+import reviewers  # noqa: E402 — core/reviewers.py, wave 10's cadence-PULL reviewer dispatch
 
 
 def _agent_id(block):
@@ -73,7 +74,18 @@ def fill(eng, snapshot, view=None):
     result — pass it to reuse the SAME trunk-pinned pipeline read
     `core/tick.py` also threads through `core/session.py::check` this tick,
     instead of this call minting its OWN second trunk read/snapshot.
-    Omitted, `pipeline.dispatchable` fetches its own (unchanged behavior)."""
+    Omitted, `pipeline.dispatchable` fetches its own (unchanged behavior).
+
+    Wave 10 (`core/reviewers.py`): priority is a DUE cadence reviewer
+    BEFORE the next block by pipeline order (blueprint §1 SWITCHBOARD's own
+    priority — adhoc is a later-wave addition, unchanged note from wave 5).
+    A reviewer SHARES this same free-slot pool (`reviewers.dispatch`
+    records a `manifest["workers"]` entry exactly like an engineer spawn
+    below, so `_active_worker_count` already accounts for it with no
+    change to that helper) — never a second slot-accounting mechanism. A
+    project with no `cadence` configured at all (every rig before this
+    wave) sees `reviewers.due_type` return `None` every call — a no-op,
+    this whole arm falls through unchanged to the block-dispatch loop."""
     manifest = snapshot.manifest
     workers = manifest.setdefault("workers", {})
     worker_count = max(1, int(eng.paths.get("worker_count", 1) or 1))
@@ -82,9 +94,18 @@ def fill(eng, snapshot, view=None):
     if free <= 0:
         return []
 
+    spawned = []
+    while free > 0:
+        typ = reviewers.due_type(eng, manifest)
+        if not typ:
+            break
+        spawned.append(reviewers.dispatch(eng, manifest, typ))
+        free -= 1
+    if free <= 0:
+        return spawned
+
     candidates = pipeline.dispatchable(eng, manifest, view=view)
 
-    spawned = []
     for block in candidates:
         if free <= 0:
             break

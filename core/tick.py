@@ -131,6 +131,7 @@ import session       # noqa: E402 — core/session.py, wave 6's clean SESSION-EN
 import sentry        # noqa: E402 — core/sentry.py, wave 7's ONE pacing ladder (nudge/cap)
 import casestate      # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
 import architect      # noqa: E402 — core/architect.py, wave 9's persistent pool-excluded architect
+import reviewers      # noqa: E402 — core/reviewers.py, wave 10's cadence-PULL reviewers
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
 
@@ -206,6 +207,12 @@ def tick(eng):
     #     `advance` (below) runs on the OTHER side of `fill` ──
     landed_this_tick = [block for block, (outcome, _detail) in result["outcomes"].items()
                         if outcome == "record_landed"]
+    # ── wave 10 (M-05-adjacent, `core/reviewers.py`): cadence is PULL —
+    #     bump every configured type's counter once per block that landed
+    #     ✅ THIS tick (deduped via `seen_done`), off the SAME list
+    #     `architect.enqueue` reads right below. A project with no cadence
+    #     configured is an immediate no-op (see that module's own docstring) ──
+    reviewers.bump_cadence(eng, snap.manifest, landed_this_tick)
     architect.enqueue(eng, snap.manifest, view, landed_this_tick)
 
     # ── sentry (T1, wave 7): the ONE pacing ladder — nudge/cap any gate

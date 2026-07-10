@@ -268,6 +268,106 @@ def _advance_forward(eng, manifest, job):
                         f"branch not authored yet?)")
 
 
+def _adhoc_branch(adhoc_id):
+    return f"arch/{adhoc_id}-logreview"
+
+
+def enqueue_log_review(eng, manifest, typ, findings):
+    """Wave 10 (`core/reviewers.py`): a `<type>` review's DONE-REVIEW gate
+    just attested (`reviewers.on_review_done`'s second hand-back) — queue
+    the architect's forward-looking `log-review` job: turn the review's
+    findings into UPCOMING adhoc block files, or none (a clean review).
+    Idempotent bookkeeping only (`manifest["architect"]`/`architect_queue`
+    may not exist yet — the very FIRST architect_queue write of the whole
+    run, if this project has no missing block files and no reconcile ever
+    fired); one `log` job per attested review cycle, never deduped against
+    a prior one (each cycle's findings are independent, unlike `forward`/
+    `reconcile`'s block-keyed dedupe)."""
+    manifest.setdefault("architect", new_state())
+    queue = manifest.setdefault("architect_queue", [])
+    queue.append({"kind": "log", "type": typ, "findings": list(findings or []),
+                  "ordered": False, "adhoc": [], "landed_all": False})
+    eng.log("flow", f"architect: log-review queued for the {typ} review "
+                    f"({len(findings or [])} finding(s))")
+
+
+def _advance_log(eng, manifest, job):
+    """One `log`-job step: order ONCE (mints the adhoc block ids + branch
+    names for every finding, up front, off a manifest-persisted per-type
+    sequence — `manifest["adhoc_seq"]`, mirroring `core/casestate.py::
+    next_case_id`'s own "deterministic, monotonic, never uuid/random"
+    idiom), then every subsequent call re-checks each still-unlanded entry's
+    branch and attempts its content-bound land via the Wave-1 primitive,
+    reused verbatim — exactly `_advance_forward`'s own "order once, then
+    poll+land every entry" shape, generalized over a LIST instead of one
+    block. Zero findings (a clean review) needs no order at all — the job
+    completes on this SAME call, nothing ever queued or landed. `job[
+    "landed_all"]` is set ONLY once EVERY entry's `land_via_grant` has
+    itself reported `"landed"` (real ancestry observed) — never on a
+    message alone, and never for a job still holding un-authored entries."""
+    if not job.get("ordered"):
+        findings = job.get("findings") or []
+        entries = []
+        if findings:
+            typ = job.get("type") or "adhoc"
+            seq = manifest.setdefault("adhoc_seq", {})
+            n = int(seq.get(typ, 0))
+            for finding in findings:
+                n += 1
+                adhoc_id = f"adhoc-{typ}-{n}"
+                entries.append({"block": adhoc_id, "branch": _adhoc_branch(adhoc_id),
+                                "finding": finding, "case_id": None, "landed": False})
+            seq[typ] = n
+        job["adhoc"] = entries
+        job["ordered"] = True
+        if not entries:
+            job["landed_all"] = True
+            eng.log("flow", f"architect[log:{job.get('type')}]: clean review — "
+                            f"no findings, nothing queued")
+            return
+        if not eng.dry:
+            eng._to_worker(
+                ARCHITECT_WID,
+                f"[TRON]  architect — log-review for the {job.get('type')} "
+                f"review: author + land {len(entries)} upcoming adhoc block "
+                f"file(s), one per finding ({', '.join(e['block'] for e in entries)}), "
+                f"each on its OWN branch (meta/blocks/<id>.md, Status: 📋 To do, "
+                f"plus its pipeline.md row) — I land each once it resolves.",
+                "arch.log-review")
+        eng.log("flow", f"architect[log:{job.get('type')}]: ordered "
+                        f"{len(entries)} adhoc block(s): "
+                        f"{[e['block'] for e in entries]}")
+        return
+
+    entries = job.get("adhoc") or []
+    if not entries:
+        job["landed_all"] = True
+        return
+
+    truth_ref = eng._truth_ref()
+    for e in entries:
+        if e.get("landed"):
+            continue
+        block, branch = e["block"], e["branch"]
+        patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
+        case_id = e.get("case_id") or landing.paperwork_case_id("logreview", branch, patch_id)
+        e["case_id"] = case_id
+        outcome = landing.land_via_grant(eng, case_id, block, branch, ARCHITECT_WID,
+                                         "arch.log-review", "architect-logreview")
+        if outcome == "landed":
+            e["landed"] = True
+            eng.log("flow", f"architect[log:{job.get('type')}]: adhoc block "
+                            f"{block!r} landed via {branch} -> dispatchable")
+        elif outcome == "pending":
+            eng.log("flow", f"architect[log:{job.get('type')}]: grant live for "
+                            f"{case_id}, awaiting land.sh")
+        else:
+            eng.log("flow", f"architect[log:{job.get('type')}]: {outcome} (case "
+                            f"{case_id}, branch not authored yet?)")
+
+    job["landed_all"] = all(e.get("landed") for e in entries)
+
+
 def _order_reconcile(eng, job):
     """One reconcile-job order: a structured `arch.reconcile` message, sent
     once. No content-check of this module's own (no LLM in this brick — see
@@ -310,6 +410,10 @@ def advance(eng, manifest):
             _advance_forward(eng, manifest, cur)
             if cur.get("landed"):
                 arch["status"], arch["current_job"] = "idle", None
+        elif cur.get("kind") == "log":
+            _advance_log(eng, manifest, cur)
+            if cur.get("landed_all"):
+                arch["status"], arch["current_job"] = "idle", None
         else:
             eng.log("flow", f"architect: current_job has an unknown kind "
                             f"{cur.get('kind')!r} — held, never advanced")
@@ -324,6 +428,8 @@ def advance(eng, manifest):
             _order_reconcile(eng, job)
         elif job["kind"] == "forward":
             _advance_forward(eng, manifest, job)
+        elif job["kind"] == "log":
+            _advance_log(eng, manifest, job)
         eng.log("flow", f"architect: dispatch {job}")
 
     return {"status": arch["status"], "current_job": arch.get("current_job")}

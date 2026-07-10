@@ -81,6 +81,24 @@ def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def _architect_busy(manifest):
+    """Wave 10 (`core/architect.py`'s `log-review` job, `core/reviewers.py`'s
+    DONE-REVIEW gate attestation that queues it): between a reviewer's
+    release and its log-review's adhoc block(s) actually landing on trunk,
+    NOTHING else may be in-flight per `pipeline.in_flight_blocks` — the
+    adhoc block has no pipeline row yet, so it is structurally invisible to
+    `view` until it lands (the SAME "no block file -> invisible to scope"
+    gap `core/architect.py`'s own `forward` job already has for a missing
+    block file; that job's rigs sidestep it by keeping another real block
+    genuinely pending the whole time). A `log`-shaped job is FORWARD-
+    LOOKING work in progress, exactly like a queued `reconcile`/`forward`
+    job — this run is not settled while the architect still holds one,
+    queued or current, whether or not anything else happens to be
+    in-flight too."""
+    arch = manifest.get("architect") or {}
+    return bool(manifest.get("architect_queue")) or arch.get("status") == "busy"
+
+
 def check(manifest, view):
     """One pure pass over `view` (a `core.pipeline.read_view(eng)` result,
     caller-fetched) + `manifest` (for in-flight state) — see module
@@ -148,7 +166,7 @@ def check(manifest, view):
             "(a real gap — never silently 'end' on this, surface it): "
             f"{stuck}")
 
-    if pending_ids or inflight:
+    if pending_ids or inflight or _architect_busy(manifest):
         return None   # not settled yet — legitimate, no error
 
     done_count = sum(1 for row in view

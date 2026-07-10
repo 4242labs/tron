@@ -54,6 +54,14 @@ same discipline:
   a structural claim the router can validate up front the way a wall's own
   content can).
 
+Wave 10 (`core/reviewers.py`) adds ONE more structured tag this SAME pass
+drains: `worker.review_done` (`{"tag": "worker.review_done", "agent_id":
+<id>, "type": <type>, "slots": {"findings": [...]}}`) — the DONE-REVIEW
+gate's hand-back (first HOLDS/attest-coverage, second RELEASES + queues an
+architect log-review), routed to `reviewers.on_review_done` exactly like
+every other structured report here; that module owns its own malformed/
+stale handling (logged, dropped, never a crash on an internal signal).
+
 No git/subprocess of any kind here; the ONE mutation is a manifest write
 (`core/gate.py::new_state_full`, the SAME full-ladder constructor
 `core/gate_full_rig.py`/`core/tick_rig.py` already use, for ASSIGN — PLUS,
@@ -71,6 +79,7 @@ if _HERE not in sys.path:
 
 import gate        # noqa: E402 — core/gate.py, the DONE-ladder constructor this ASSIGN opens
 import casestate    # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
+import reviewers    # noqa: E402 — core/reviewers.py, wave 10's DONE-REVIEW gate
 
 
 def route(eng, manifest, worker_reports):
@@ -93,6 +102,8 @@ def route(eng, manifest, worker_reports):
             _route_decision(eng, manifest, rep)
         elif tag == "architect.reconciled":
             _route_architect_reconciled(eng, manifest, rep)
+        elif tag == "worker.review_done":
+            reviewers.on_review_done(eng, manifest, rep)
         # else: worker.done and anything else — not this module's concern.
 
 

@@ -150,13 +150,81 @@ def _escalate(eng, manifest, block, gate_state, stage, holding, now):
     return detail
 
 
+def _pace_reviewers(eng, manifest, now):
+    """Wave 10 (`core/reviewers.py`): the DONE-REVIEW gate's `held` stage
+    (a reviewer that reported ONE `worker.review_done` but never attested
+    the second) is paced by the SAME ladder, off the SAME clock, as any
+    block-gate stage — "a reviewer holds (paced by sentry like any stage;
+    no silent hang)", wave 10's own words. A reviewer's state lives on its
+    OWN `manifest["workers"][agent_id]` record (never a `manifest["gates"]`
+    entry — see `core/reviewers.py`'s own docstring for why), so this walks
+    `manifest["workers"]` directly instead of `snapshot.gates`; a `"held"`
+    status is the ONE thing paced here — `"reviewing"` (still working, no
+    coverage claim made yet) is never idle-capped by this ladder, exactly
+    like an engineer still at `gate.local` before its own first report.
+
+    On cap: `manifest["escalations"]` gets the SAME structured record shape
+    a block-gate cap already produces (`block` reads the pseudo-block id
+    `review:<type>`, so a reader can't tell the two apart by SHAPE, only by
+    that field's own value); `core.casestate.open_case` opens the SAME
+    parked-operator case a block-gate cap already does (and — since a
+    review pseudo-block carries no `manifest["gates"]` entry for it to
+    tag — internally no-ops on that half, harmlessly); the worker record is
+    popped directly here (the ONLY thing that frees a reviewer's slot, per
+    `core/reviewers.py`'s own docstring) rather than relying on a gate
+    stage's own terminal-vocabulary shortcut, which does not exist for a
+    review pseudo-block."""
+    nudged, escalated = [], []
+    workers = manifest.get("workers") or {}
+    for agent_id, w in list(workers.items()):
+        if w.get("status") != "held":
+            continue
+        typ = w.get("type") or "?"
+        block = f"review:{typ}"
+
+        if w.get("holding_since") is None:
+            w["holding_since"] = now
+            w.pop("nudged_at", None)
+            continue
+
+        holding = now - w["holding_since"]
+
+        if holding >= GATE_IDLE_CAP:
+            detail = (f"gate.review[{block}] ({agent_id}) idle at attest for "
+                     f"{holding} pace unit(s) (>= gate_idle_cap={GATE_IDLE_CAP}) "
+                     f"— sentry escalated (a reviewer never self-caps; capping "
+                     f"lives only in core.sentry, exactly like a block gate)")
+            record = {"block": block, "stage": "review", "holding": holding,
+                     "gate_idle_cap": GATE_IDLE_CAP, "detail": detail, "at": now}
+            manifest.setdefault("escalations", []).append(record)
+            eng.log("flow", f"sentry: ESCALATED {block} — {detail}")
+            workers.pop(agent_id, None)   # the ONE thing that frees a reviewer's slot
+            casestate.open_case(eng, manifest, block, "sentry.cap", detail,
+                                worker_id=agent_id, kind="cap")
+            eng._release_worker(agent_id, reason=f"sentry-cap ({block})")
+            escalated.append((block, detail))
+            continue
+
+        if holding >= GATE_NUDGE_AFTER and w.get("nudged_at") is None:
+            _nudge(eng, block, w, "review", holding)
+            w["nudged_at"] = now
+            nudged.append(block)
+
+    return nudged, escalated
+
+
 def pace(eng, snapshot):
     """Walk every in-flight gate in `snapshot.gates`, nudge/cap exactly as
     described in the module docstring. Returns `{"nudged": [block, ...],
     "escalated": [(block, detail), ...]}` — a NON-durable convenience for
     the caller (`core/tick.py` folds `escalated` into its own tick result,
     same shape `core.gate.advance`'s own escalate outcomes already use);
-    `manifest["escalations"]` is the durable record."""
+    `manifest["escalations"]` is the durable record.
+
+    Wave 10: ALSO paces any `held` reviewer (`_pace_reviewers`, below) off
+    the SAME clock reading THIS call already minted — one shared "now" for
+    every stage, block gate or review hold alike, same discipline the
+    module docstring's own multi-gate proof already establishes."""
     manifest = snapshot.manifest
     gates = snapshot.gates
     now = _clock(eng, manifest)
@@ -192,5 +260,9 @@ def pace(eng, snapshot):
             _nudge(eng, block, gate_state, stage, holding)
             gate_state["nudged_at"] = now
             nudged.append(block)
+
+    r_nudged, r_escalated = _pace_reviewers(eng, manifest, now)
+    nudged.extend(r_nudged)
+    escalated.extend(r_escalated)
 
     return {"nudged": nudged, "escalated": escalated}
