@@ -134,6 +134,7 @@ import switchboard         # noqa: E402 — core/switchboard.py, SWITCHBOARD's S
 import architect            # noqa: E402 — core/architect.py, the persistent pool-excluded architect
 import casestate              # noqa: E402 — core/casestate.py, wave 8's parked-case FSM (dispatch filter)
 import tick as core_tick       # noqa: E402 — core/tick.py, the whole per-tick pass
+import knobs as knobs_mod       # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
 
 
 class BootupError(RuntimeError):
@@ -176,17 +177,16 @@ class Engine:
         self.paths["worker_count"] = 1   # floor 1 (core/switchboard.py's own floor) until start()
         jobs.configure(ctx.workers_dir)   # real worker-store root (idempotent to call twice)
 
-    # ── knobs (plain YAML file IO — no git, ctx.load_knobs()'s own contract) ──
+    # ── knobs (plain YAML file IO — no git; core/knobs.py owns the shape) ──
     def _knobs(self):
-        """`knobs.yaml`, or `{}` when the project ships none at all — the
-        SAME "missing file -> nothing configured" guard `core/reviewers.py::
-        _cadence_cfg`/`core/liveness.py::_silence_knobs` already keep (this
-        module reads the same file for `grant_ttl`/the cadence seed;
-        `ctx.load_knobs()` itself raises on a missing file, so every caller
-        of it in this stack guards existence first)."""
-        if not os.path.exists(self.ctx.knobs_file):
-            return {}
-        return self.ctx.load_knobs() or {}
+        """`core/knobs.py::Knobs`, read fresh off `self.ctx` — the ONE
+        knobs.yaml seam (wave 16). Replaces this method's own pre-wave-16
+        flat top-level read (`ctx.load_knobs() or {}`), which silently
+        missed every knob the schema nests under `knobs:` (`grant_ttl`
+        happened to coincide with its own hardcoded `.get(key, 60)`
+        fallback; `cadence` happens to already live at the top level — see
+        `core/knobs.py`'s own module docstring for the full story)."""
+        return knobs_mod.load(self.ctx)
 
     # ── duck-typed surface: logging + trunk identity + grants ──
     def log(self, channel, msg):
@@ -214,7 +214,7 @@ class Engine:
         return main if local else f"origin/{main}"
 
     def _grant_ttl(self):
-        return float(self._knobs().get("grant_ttl", 60))
+        return self._knobs().grant_ttl
 
     # ── duck-typed surface: engine -> worker mailbox + release (real, TRON's own folder) ──
     def _to_worker(self, worker_id, text, kind):
@@ -254,8 +254,7 @@ class Engine:
     # ── role/model resolution (engine/roles.py, ADR-0002 D4 respected as-is) ──
     def _roles_config(self):
         if self._roles is None:
-            knobs = self._knobs()
-            cadence_types = list((knobs.get("cadence") or {}).keys())
+            cadence_types = list(self._knobs().cadence.keys())
             self._roles = roles_mod.RolesConfig.load(
                 self.paths["roles_path"], self.paths["root"], cadence_types=cadence_types)
         return self._roles
@@ -394,7 +393,7 @@ class Engine:
         scope_ids = self._resolve_scope(scope, view)
 
         # A4/A5: write the manifest — scope + counts + a zeroed cadence seed.
-        cadence_cfg = self._knobs().get("cadence") or {}
+        cadence_cfg = self._knobs().cadence
         manifest["scope"] = {"requested": scope, "ids": scope_ids}
         manifest["counts"] = {"worker_count": self.paths["worker_count"], "architect_count": 1}
         cadence = manifest.setdefault("cadence", {})

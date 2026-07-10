@@ -310,14 +310,20 @@ def write_project_yaml(inst_dir, root, test_command):
 
 def write_knobs(inst_dir, worker_count=1, cadence=None, silence_ping_min=DEFAULT_SILENCE_PING_MIN,
                 silence_escalate_min=DEFAULT_SILENCE_ESCALATE_MIN, grant_ttl=DEFAULT_GRANT_TTL):
+    """SCHEMA-COMPLIANT nested form (`contracts/schema/knobs.schema.yaml`,
+    wave 16 — closes the fidelity gap a FLAT write here used to mask: the
+    real scaffold nests these fields under a top-level `knobs:` map;
+    `cadence:` is its own top-level block, a sibling of `knobs:`, never
+    nested)."""
     doc = {
-        "worker_count": worker_count,             # informational — Engine.start's own param governs
-        "silence_ping_min": silence_ping_min,
-        "silence_escalate_min": silence_escalate_min,
-        "grant_ttl": grant_ttl,
+        "knobs": {
+            "worker_count": worker_count,      # informational — Engine.start's own param governs
+            "silence_ping_min": silence_ping_min,
+            "silence_escalate_min": silence_escalate_min,
+            "grant_ttl": grant_ttl,
+        },
+        "cadence": dict(cadence) if cadence else {},
     }
-    if cadence:
-        doc["cadence"] = dict(cadence)
     with open(os.path.join(inst_dir, "knobs.yaml"), "w") as f:
         yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)
 

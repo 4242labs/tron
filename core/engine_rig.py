@@ -302,24 +302,30 @@ def write_project_yaml(inst_dir, root):
 
 
 def write_knobs(inst_dir):
-    """Deliverable knobs: `worker_count` (informational — `Engine.start`'s
-    own `worker_count` PARAM is what actually governs the pool, exactly the
-    headless-launcher shape `tron-meta/sims/autopilot/bootstrap.py` uses;
-    nothing in `core/` reads a `worker_count` knob), `cadence: {code: 2}`
-    (`core.reviewers._cadence_cfg`'s own read target), `silence_ping_min`/
-    `silence_escalate_min` (`core.liveness._silence_knobs`'s own read
-    target — set generously high relative to `MAX_TICKS` so the ladder is
-    genuinely CONFIGURED [not a no-op] but never actually fires across this
-    fixture's real run: `core/liveness_rig.py`, wave 11, already proves the
-    ping/stall ladder itself exhaustively; this brick's own job is the
-    WHOLE-ENGINE wiring proof, not a second liveness proof), `grant_ttl`
-    (`Engine._grant_ttl`'s own read target)."""
+    """Deliverable knobs, SCHEMA-COMPLIANT nested form (`contracts/schema/
+    knobs.schema.yaml`, wave 16 — closes the fidelity gap the old FLAT
+    write here used to mask): `worker_count` (informational — `Engine.
+    start`'s own `worker_count` PARAM is what actually governs the pool,
+    exactly the headless-launcher shape `tron-meta/sims/autopilot/
+    bootstrap.py` uses; nothing in `core/` reads a `worker_count` knob),
+    `silence_ping_min`/`silence_escalate_min` (`core.liveness._silence_
+    knobs`'s own read target — set generously high relative to `MAX_TICKS`
+    so the ladder is genuinely CONFIGURED [not a no-op] but never actually
+    fires across this fixture's real run: `core/liveness_rig.py`, wave 11,
+    already proves the ping/stall ladder itself exhaustively; this brick's
+    own job is the WHOLE-ENGINE wiring proof, not a second liveness proof),
+    `grant_ttl` (`Engine._grant_ttl`'s own read target), all nested under
+    `knobs:`; `cadence: {code: 2}` (`core.reviewers._cadence_cfg`'s own
+    read target) is its OWN top-level block, a sibling of `knobs:`, never
+    nested."""
     doc = {
-        "worker_count": 1,
+        "knobs": {
+            "worker_count": 1,
+            "silence_ping_min": 80,
+            "silence_escalate_min": 160,
+            "grant_ttl": 60,
+        },
         "cadence": {CADENCE_TYPE: CADENCE_THRESHOLD},
-        "silence_ping_min": 80,
-        "silence_escalate_min": 160,
-        "grant_ttl": 60,
     }
     with open(os.path.join(inst_dir, "knobs.yaml"), "w") as f:
         yaml.safe_dump(doc, f, sort_keys=False, default_flow_style=False)

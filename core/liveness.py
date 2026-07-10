@@ -76,17 +76,21 @@ idiom; this module never double-paces the same worker two different ways):
         equivalent; distinct `kind`, never impersonating a gate stage's own
         order).
 
-Knobs (`silence_ping_min` / `silence_escalate_min`) are read from the
-project's `knobs.yaml`, via `eng.ctx.load_knobs()` — the SAME loader/
-"missing file or missing key reads as nothing configured" discipline `core/
-reviewers.py::_cadence_cfg` already established for its own `cadence` map.
-Absent either key, `sweep` is a genuine no-op (returns immediately, touches
-NOTHING — not even the transient `_reported` flags `core/router.py::touch`
-may have set this tick, which is harmless: nothing else in this stack ever
-reads that flag) — every rig before this wave (landing/gate/gate_full/tick/
-dispatch/multiblock/sentry/casestate/architect/reviewers) ships no
+Knobs (`silence_ping_min` / `silence_escalate_min`) are read via `core/
+knobs.py` (wave 16 — the ONE knobs.yaml seam; this module used to read
+`eng.ctx.load_knobs()`'s TOP LEVEL directly, which silently missed both
+knobs on a real, schema-compliant project, since the schema nests them
+under a top-level `knobs:` map — see `core/knobs.py`'s own module
+docstring for the full story). Absent either key — checked via `Knobs.
+declared(name)`, never a bare `None`-means-absent guess — `sweep` is a
+genuine no-op (returns immediately, touches NOTHING — not even the
+transient `_reported` flags `core/router.py::touch` may have set this
+tick, which is harmless: nothing else in this stack ever reads that flag):
+every rig before this wave (landing/gate/gate_full/tick/dispatch/
+multiblock/sentry/casestate/architect/reviewers) ships no
 `silence_ping_min`/`silence_escalate_min` knob at all, so this brick never
-touches any of their flows.
+touches any of their flows — preserved exactly, now correctly checked at
+the NESTED location instead of the buggy flat one.
 
 Clock: the SAME pluggable-clock discipline `core/sentry.py` uses — `eng.
 _now()` when the caller provides one, read once per `sweep()` call, else an
@@ -106,11 +110,11 @@ already need (`eng._to_worker`, `eng.dry`, `eng.log`, `eng.ctx`,
 — no new REQUIRED surface, so every existing `core/*_rig.py` eng fixture
 keeps working completely unmodified.
 
-No git/subprocess of any kind in this module: `eng.ctx.load_knobs()` is
-plain YAML file IO (guarded by an `os.path.exists` check, exactly like
-`core/reviewers.py::_cadence_cfg`); everything else is a plain manifest
-mutation, the same "workers/gates are a direct alias onto the manifest"
-idiom every other `core/*.py` module in this stack already uses.
+No git/subprocess of any kind in this module: knob reads go through `core/
+knobs.py::load` (plain YAML file IO under the hood, `engine/ctx.py::Ctx.
+load_knobs`); everything else is a plain manifest mutation, the same
+"workers/gates are a direct alias onto the manifest" idiom every other
+`core/*.py` module in this stack already uses.
 """
 import os
 import sys
@@ -120,32 +124,27 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import casestate   # noqa: E402 — core/casestate.py, the parked-case recovery primitive
+import knobs as knobs_mod   # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
 
 
 def _silence_knobs(eng):
-    """`knobs.yaml`'s `silence_ping_min`/`silence_escalate_min` scalars, via
-    `eng.ctx.load_knobs()` — or `{}` when the project ships no `knobs.yaml`
-    at all (every rig BEFORE this wave; mirrors `core/reviewers.py::
-    _cadence_cfg`'s identical "no knobs file -> nothing configured" read, so
-    a project with a `knobs.yaml` that configures OTHER knobs only — e.g.
-    `core/reviewers_rig.py`'s own `cadence:` map — reads as "no silence
-    knobs configured" here too, never a crash on an unrelated file)."""
+    """`core/knobs.py::Knobs`, read fresh off `eng.ctx` — or the module's
+    own empty singleton when `eng` carries no `ctx` at all (this module's
+    pre-wave-16 tolerance for a duck-typed `eng` stand-in without one,
+    preserved: `core/knobs.py::load(None)` already degrades to "nothing
+    configured" the same way a missing knobs.yaml file does)."""
     ctx = getattr(eng, "ctx", None)
-    path = getattr(ctx, "knobs_file", None) if ctx else None
-    if not path or not os.path.exists(path):
-        return {}
-    knobs = ctx.load_knobs() or {}
-    return knobs if isinstance(knobs, dict) else {}
+    return knobs_mod.load(ctx)
 
 
 def _ping_min(eng):
-    v = _silence_knobs(eng).get("silence_ping_min")
-    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    k = _silence_knobs(eng)
+    return k.silence_ping_min if k.declared("silence_ping_min") else None
 
 
 def _escalate_min(eng):
-    v = _silence_knobs(eng).get("silence_escalate_min")
-    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    k = _silence_knobs(eng)
+    return k.silence_escalate_min if k.declared("silence_escalate_min") else None
 
 
 def _clock(eng, manifest):

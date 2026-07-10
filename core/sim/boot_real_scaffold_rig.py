@@ -318,41 +318,41 @@ def main():
     finally:
         jobs.spawn_runner = real_spawn_runner
 
-    # ── compat finding (non-fatal to boot): knobs.yaml's REAL nested shape
-    #     vs. this stack's flat-top-level knobs reader (core/engine.py::
-    #     _knobs, core/liveness.py::_silence_knobs) ──
-    knobs_finding = None
+    # ── wave 16 PROOF (was a "compat finding" pre-wave-16 — see git history):
+    #     the real knobs.yaml's NESTED shape now resolves correctly through
+    #     core/knobs.py, the ONE seam core/engine.py::_knobs, core/
+    #     liveness.py::_silence_knobs, core/reviewers.py::_cadence_cfg all
+    #     route through — silence_ping_min/silence_escalate_min (the exact
+    #     wave-15 killer: previously silently None on this REAL scaffold,
+    #     because the old readers looked at knobs.yaml's flat top level) now
+    #     resolve to the real project's OWN declared 6/8, liveness ACTIVE ──
+    knobs_diverging = None
+    knobs_seen = None
     if boot_exc is None and eng is not None:
         with open(staged_knobs_path) as f:
             real_knobs_doc = yaml.safe_load(f) or {}
         nested = real_knobs_doc.get("knobs") or {}
-        flat_seen = eng._knobs()
-        diverging = [k for k in ("grant_ttl", "silence_ping_min", "silence_escalate_min")
-                    if k in nested and flat_seen.get(k) != nested.get(k)]
-        if diverging:
-            knobs_finding = (
-                "COMPAT FINDING (non-fatal — boot still succeeds via silent "
-                "defaults): the real trivial-tip-converter knobs.yaml follows "
-                "the RESPECTED schema (contracts/schema/knobs.schema.yaml), "
-                f"which nests {diverging} under a top-level `knobs:` map "
-                f"(declared values: { {k: nested.get(k) for k in diverging} }). "
-                "core/engine.py::_knobs / core/liveness.py::_silence_knobs / "
-                "core/reviewers.py::_cadence_cfg all read knobs.yaml's TOP "
-                "LEVEL directly (no `.get('knobs', {})` unwrap) — every "
-                "core/*_rig.py and core.sim.scaffold's own synthetic "
-                "knobs.yaml write FLAT (unnested), which is why this gap was "
-                "never caught before this wave. Effect on the real project: "
-                f"{ {k: flat_seen.get(k) for k in diverging} } is what this "
-                "stack actually uses (silent engine defaults / None), NOT "
-                "the real project's own declared values — grant_ttl happens "
-                "to coincide (60==60); silence_ping_min/silence_escalate_min "
-                "do NOT (declared 6/8, this stack sees None -> "
-                "core/liveness.py's own docstring: 'never a ping/escalate at "
-                "all'). `cadence:` is unaffected (already top-level in both "
-                "the real file and the reader).")
-            print("=" * 72)
-            print(knobs_finding)
-            print("=" * 72)
+        seen = eng._knobs()
+        checks = {"grant_ttl": seen.grant_ttl, "silence_ping_min": seen.silence_ping_min,
+                 "silence_escalate_min": seen.silence_escalate_min}
+        knobs_seen = checks
+        knobs_diverging = [k for k in checks if k in nested and checks[k] != nested[k]]
+        ok("N1 (WAVE-16 FIX — must be GREEN): the real trivial-tip-converter "
+           "knobs.yaml's NESTED silence_ping_min/silence_escalate_min "
+           "resolve through core/knobs.py to their DECLARED values 6/8 "
+           "(liveness ACTIVE) — NOT None (the wave-15 finding this rig used "
+           "to print as a non-fatal compat finding, now fixed)",
+           (seen.silence_ping_min, seen.silence_escalate_min) == (6, 8),
+           f"silence_ping_min={seen.silence_ping_min!r} "
+           f"silence_escalate_min={seen.silence_escalate_min!r} "
+           f"declared(nested)={ {k: nested.get(k) for k in ('silence_ping_min', 'silence_escalate_min')} }")
+        ok("N2: no divergence between core/knobs.py's resolved values and "
+           "the real file's own nested declarations for grant_ttl/"
+           "silence_ping_min/silence_escalate_min",
+           knobs_diverging == [], f"diverging={knobs_diverging} checks={checks} nested={nested}")
+        print(f"WAVE-16 knobs resolution: silence_ping_min={seen.silence_ping_min} "
+             f"silence_escalate_min={seen.silence_escalate_min} grant_ttl={seen.grant_ttl} "
+             f"(declared nested values: {nested})")
 
     # ══ 3. optional echo-tier transport smoke ══
     echo_result = {"attempted": False, "ok": False, "detail": "skipped"}
@@ -388,7 +388,8 @@ def main():
     print(f"copy root={root}")
     print(f"live instance dir={inst}")
     print(f"boot exception={f'{type(boot_exc).__name__}: {boot_exc}' if boot_exc else None}")
-    print(f"knobs compat finding={'YES — see above' if knobs_finding else 'none'}")
+    print(f"knobs resolved (wave-16 fix, core/knobs.py)={knobs_seen} "
+         f"diverging-from-declared={knobs_diverging}")
     print(f"echo smoke={echo_result}")
 
     return 0 if passed == len(_results) else 1
