@@ -52,6 +52,7 @@ CLI: `python3 -m core.sim.live --workers 1 --budget-min 60 [--poll-sec 20]
 [--scaffold-src <dir>]`. Run SPARINGLY — this spends real tokens.
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -138,6 +139,54 @@ def _pulse(eng, root, manifest, loop_i, started_at):
     return {"os_procs": procs, "cases": len(cases), "pages": len(pages)}
 
 
+def _courier(eng, manifest, delivered):
+    """THE COURIER — harvest each worker's turn OUTPUT into the engine inbox.
+
+    Delivery must NOT depend on the LLM choosing to run `report.sh` (a real
+    agent replies in prose instead — the tron-06 wall). So each loop, read
+    every worker's `timeline.jsonl` `turn_done` events and append any not-yet-
+    delivered turn text to `ctx.worker_inbox` as a free-text `{text, sender}`
+    report — exactly the shape `report.sh` free-text produces, which
+    `core.classify` then resolves. A structured `report.sh --tag` line (when
+    the agent DID run it) still lands directly and its deterministic tag wins;
+    the courier is the robust fallback, never the only path. `delivered` (a
+    set of `(wid, seq)`) dedupes across loops so a turn is couriered once."""
+    inbox = eng.ctx.worker_inbox
+    workers = manifest.get("workers") or {}
+    couriered = 0
+    for wid in list(workers.keys()):
+        tl = os.path.join(eng.ctx.worker_dir(wid), jobs.TIMELINE)
+        if not os.path.isfile(tl):
+            continue
+        try:
+            with open(tl) as fh:
+                lines = fh.readlines()
+        except OSError:
+            continue
+        for ln in lines:
+            try:
+                ev = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("event") != "turn_done":
+                continue
+            key = (wid, ev.get("seq"))
+            if key in delivered:
+                continue
+            delivered.add(key)
+            text = (ev.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                with open(inbox, "a") as ib:
+                    ib.write(json.dumps({"text": text,
+                                         "sender": {"kind": "worker", "id": wid}}) + "\n")
+                couriered += 1
+            except OSError:
+                pass
+    return couriered
+
+
 def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
              poll_sec=DEFAULT_POLL_SEC, scope="all", max_loops=100000,
              adapter="host-cli"):
@@ -185,8 +234,18 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         print(f"live: bootup complete — first dispatch={boot_spawn}")
 
         prev_pages = 0
+        delivered = set()   # (wid, seq) already couriered — see _courier
         while loop_i < max_loops:
             loop_i += 1
+            # THE COURIER runs BEFORE observe so this tick sees the harvested
+            # reports — delivery never depends on the agent running report.sh.
+            try:
+                n = _courier(eng, state.load(ctx), delivered)
+                if n:
+                    print(f"  courier: delivered {n} turn-output report(s) to the inbox", flush=True)
+            except Exception as e:   # noqa: BLE001 — the courier must never kill the loop
+                print(f"  courier: error (non-fatal): {e}", flush=True)
+
             try:
                 res = eng.tick()
             except Exception as e:   # noqa: BLE001 — surface a driver/engine fault, then tear down
@@ -204,11 +263,13 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
                 reason = session_end.get("reason") if isinstance(session_end, dict) else str(session_end)
                 break
 
+            # DATA-GATHERING mode: a new operator page is LOGGED and the run
+            # CONTINUES (never pause on the first wall) — one run surfaces every
+            # downstream wall instead of one-at-a-time. Budget/session-end are
+            # the only stops.
             if pulse["pages"] > prev_pages:
-                outcome = "operator_page"
-                reason = (f"the engine paged the operator ({pulse['pages']} page(s)) — "
-                          f"pausing for the human, per architect-first routing")
-                break
+                print(f"  [WALL] operator page #{pulse['pages']} — logged, continuing "
+                      f"to gather downstream walls", flush=True)
             prev_pages = pulse["pages"]
 
             if (time.time() - started_at) / 60.0 >= budget_min:
@@ -272,7 +333,22 @@ def build_parser():
     return ap
 
 
+def _install_sigterm():
+    """SIGTERM -> KeyboardInterrupt so `run_live`'s `finally` (fleet teardown)
+    runs on an external `kill`, not just on a graceful exit — no orphans when
+    the run is stopped from outside."""
+    import signal
+
+    def _handler(signum, frame):
+        raise KeyboardInterrupt(f"signal {signum}")
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError):
+        pass
+
+
 def main(argv=None):
+    _install_sigterm()
     args = build_parser().parse_args(argv)
     try:
         result = run_live(scaffold_src=args.scaffold_src, worker_count=args.worker_count,
