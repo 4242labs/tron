@@ -39,13 +39,16 @@ re-expressed for THIS module's event-driven hook rather than that module's
 type is dispatched (`dispatch`, below) — never on report, never on release.
 
 The threshold is read from the project's `knobs.yaml` `cadence: {<type>:
-<n>}` map, via `eng.ctx.load_knobs()` (`engine/ctx.py`'s existing loader —
-no new file IO of this module's own). A project with no `knobs.yaml` at all
-(every rig BEFORE this wave — landing/gate/gate_full/tick/dispatch/
-multiblock/sentry/casestate never seed one) reads as "no cadence types
-configured" — `due_type` always returns `None` — so none of those 8 rigs'
-own flows are touched by this brick at all, never a crash on a missing
-file.
+<n>}` map, via `core/knobs.py::load` (wave 16 — the ONE knobs.yaml seam;
+`cadence:` is its own top-level block, a sibling of `knobs:`, never
+nested — this module's read was already correctly shaped pre-wave-16, but
+now routes through the shared seam instead of its own ad-hoc `eng.ctx.
+load_knobs()` call, so no module but `core/knobs.py` reads the file's
+shape). A project with no `knobs.yaml` at all (every rig BEFORE this wave
+— landing/gate/gate_full/tick/dispatch/multiblock/sentry/casestate never
+seed one) reads as "no cadence types configured" — `due_type` always
+returns `None` — so none of those 8 rigs' own flows are touched by this
+brick at all, never a crash on a missing file.
 
 `due_type(eng, manifest)` — the SWITCHBOARD-side PULL check (`core/
 switchboard.py::fill`, extended): the first type whose counter has reached
@@ -114,13 +117,12 @@ alongside its existing `worker.online`/`worker.wall`/`operator.decision`/
 `architect.reconciled` dispatch) — never handled inline in `core/tick.py`,
 same discipline every other structured tag already gets.
 
-No git/subprocess of any kind in this module: `eng.ctx.load_knobs()` is
-plain YAML file IO (`engine/ctx.py`'s existing loader, guarded here by an
-`os.path.exists` check so a project with no knobs file at all reads as
-"nothing configured" rather than a raised `FileNotFoundError` — see
-`due_type`'s own note); everything else is a plain manifest mutation, the
-same "gates is a direct alias onto the manifest" idiom every other
-`core/*.py` module already uses.
+No git/subprocess of any kind in this module: knob reads go through `core/
+knobs.py::load` (plain YAML file IO under the hood, guarded there so a
+project with no knobs file at all reads as "nothing configured" rather
+than a raised `FileNotFoundError` — see `due_type`'s own note); everything
+else is a plain manifest mutation, the same "gates is a direct alias onto
+the manifest" idiom every other `core/*.py` module already uses.
 """
 import os
 import sys
@@ -130,6 +132,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import architect   # noqa: E402 — core/architect.py, the log-review queue this gate feeds on attest
+import knobs as knobs_mod   # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
 
 
 def review_block(typ):
@@ -140,19 +143,13 @@ def review_block(typ):
 
 
 def _cadence_cfg(eng):
-    """`knobs.yaml`'s `cadence: {<type>: <n>}` map, via `eng.ctx.load_knobs()`
-    — or `{}` when the project ships no `knobs.yaml` at all (every rig
-    BEFORE this wave; `engine/ctx.py::load_knobs` itself raises
-    `FileNotFoundError` on a missing file, so this checks existence FIRST —
-    "no knobs file" is a legitimate "nothing configured" read, never an
-    error this module swallows)."""
+    """`knobs.yaml`'s top-level `cadence: {<type>: <n>}` map, via `core/
+    knobs.py::load` — `{}` when the project ships no `knobs.yaml` at all
+    (every rig BEFORE this wave; `core/knobs.py::load` itself degrades a
+    missing file to "nothing configured" — "no knobs file" is a legitimate
+    read, never an error this module swallows)."""
     ctx = getattr(eng, "ctx", None)
-    path = getattr(ctx, "knobs_file", None) if ctx else None
-    if not path or not os.path.exists(path):
-        return {}
-    knobs = ctx.load_knobs() or {}
-    cfg = knobs.get("cadence")
-    return cfg if isinstance(cfg, dict) else {}
+    return knobs_mod.load(ctx).cadence
 
 
 def bump_cadence(eng, manifest, landed_blocks):

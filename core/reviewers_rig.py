@@ -218,13 +218,20 @@ def seed_pipeline(root):
 
 def write_knobs(tron_ctx, cadence):
     """The ONE new file this brick's rigs write that no prior `core/*_rig.py`
-    ever needed: `knobs.yaml`'s `cadence: {<type>: <n>}` map —
-    `core.reviewers._cadence_cfg`'s own read target (via `eng.ctx.
-    load_knobs()`, `engine/ctx.py`'s existing loader, real file IO — never
-    faked/monkeypatched)."""
+    ever needed: `knobs.yaml`'s top-level `cadence: {<type>: <n>}` map —
+    `core.reviewers._cadence_cfg`'s own read target (via `core.knobs.load`,
+    real file IO — never faked/monkeypatched). SCHEMA-COMPLIANT (`contracts/
+    schema/knobs.schema.yaml`, wave 16): `cadence:` stays its own top-level
+    block, a sibling of `knobs:`, never nested — a bare `knobs: {worker_
+    count: null}` rides along so the file satisfies the schema's REQUIRED
+    `knobs:`/`worker_count` shape, deliberately declaring NEITHER silence
+    knob (the precedent `core/liveness.py`'s own docstring names by name:
+    proves a knobs.yaml configuring OTHER knobs only still reads as "no
+    silence knobs configured", never a crash on an unrelated file)."""
     os.makedirs(os.path.dirname(tron_ctx.knobs_file), exist_ok=True)
     with open(tron_ctx.knobs_file, "w") as f:
-        yaml.safe_dump({"cadence": cadence}, f, sort_keys=False, default_flow_style=False)
+        yaml.safe_dump({"knobs": {"worker_count": None}, "cadence": cadence},
+                       f, sort_keys=False, default_flow_style=False)
 
 
 def make_code_commit(root, branch, code_file_rel, marker):

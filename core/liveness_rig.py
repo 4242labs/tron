@@ -220,10 +220,14 @@ def write_knobs(tron_ctx):
     """The ONE new file this brick's rig writes that no prior `core/*_rig.py`
     ever needed (`core/reviewers_rig.py`'s own `knobs.yaml` sets `cadence:`
     only, never either silence knob): `core.liveness._silence_knobs`'s own
-    read target, via `eng.ctx.load_knobs()` — real file IO, never faked."""
+    read target, via `core.knobs.load` — real file IO, never faked.
+    SCHEMA-COMPLIANT nested form (`contracts/schema/knobs.schema.yaml`,
+    wave 16): both silence knobs nested under `knobs:` (a `worker_count`
+    key rides along — the schema's own REQUIRED key)."""
     os.makedirs(os.path.dirname(tron_ctx.knobs_file), exist_ok=True)
     with open(tron_ctx.knobs_file, "w") as f:
-        yaml.safe_dump({"silence_ping_min": PING_MIN, "silence_escalate_min": ESCALATE_MIN},
+        yaml.safe_dump({"knobs": {"worker_count": 2, "silence_ping_min": PING_MIN,
+                                  "silence_escalate_min": ESCALATE_MIN}},
                        f, sort_keys=False, default_flow_style=False)
 
 
@@ -376,10 +380,11 @@ def main():
     ok("pre0: rig starts with NO manifest.yaml on disk at all (a brand-new "
        "instance, never yet ticked)",
        not os.path.exists(tron_ctx.state), f"state={tron_ctx.state}")
-    ok("pre1: knobs.yaml carries ONLY the two silence knobs this brick "
-       "reads — real file IO, never faked/monkeypatched",
-       tron_ctx.load_knobs() == {"silence_ping_min": PING_MIN,
-                                 "silence_escalate_min": ESCALATE_MIN},
+    ok("pre1: knobs.yaml carries ONLY the two silence knobs (+ worker_count) "
+       "this brick reads, nested under `knobs:` per the schema — real file "
+       "IO, never faked/monkeypatched",
+       tron_ctx.load_knobs() == {"knobs": {"worker_count": 2, "silence_ping_min": PING_MIN,
+                                           "silence_escalate_min": ESCALATE_MIN}},
        f"knobs={tron_ctx.load_knobs()}")
 
     # ── per-block worker-stand-in state (mirrors core/dispatch_rig.py's react()) ──
