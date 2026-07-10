@@ -216,6 +216,28 @@ class Engine:
     def _grant_ttl(self):
         return self._knobs().grant_ttl
 
+    def _worker_working(self, worker_id):
+        """OPTIONAL liveness hook (`core/liveness.py::_worker_active`): True
+        iff this worker's real `worker_runner.py` is provably MID-TURN — its
+        runner record is alive (`engine/jobs.py::is_alive`, a live pid in a
+        non-terminal state) AND its declared `state` is `"working"` (an agent
+        actively executing a turn, per `engine/worker_runner.py::_write_state`
+        — NOT `idle`/`online`/`error`). A build turn posts nothing to the
+        engine inbox until it finishes (a single `claude -p` turn is atomic
+        and can run for many minutes), so WITHOUT this the silence ladder
+        would falsely stall a legitimately-working worker; WITH it, an
+        actively-working runner counts as "seen" and only a truly silent-AND-
+        not-working worker (dead/hung→timeout→error/idle-at-gate) accrues
+        silence. Real, non-stubbed (reads TRON's own runner.json only, no
+        git, no second process); under `self.dry` there is no real runner, so
+        it reports not-working (the report-only ladder governs, unchanged)."""
+        if self.dry:
+            return False
+        rec = jobs.find(worker_id)
+        if rec is None or not jobs.is_alive(worker_id):
+            return False
+        return rec.get("state") == "working"
+
     # ── duck-typed surface: engine -> worker mailbox + release (real, TRON's own folder) ──
     def _to_worker(self, worker_id, text, kind):
         """Real, non-stubbed: one line appended to the worker's OWN mailbox

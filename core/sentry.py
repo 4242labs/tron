@@ -22,8 +22,17 @@ its CURRENT stage:
     manifest", `core/state.py`'s own durable store, no separate side table)
     are (re)anchored to the CURRENT clock reading; no holding time is
     counted on this call — progress clears the clock.
-  - A stage that reads the SAME as last call's HOLDS: `holding = now -
-    holding_since`.
+  - A stage whose worker is provably MID-TURN (the OPTIONAL
+    `eng._worker_working(wid)` hook — the SAME one `core/liveness.py` uses)
+    re-anchors its episode every call: a long `claude -p` build/land turn
+    posts nothing observable until it finishes (minutes), so counting that
+    wall-clock as "idle holding" would falsely escalate a legitimately-
+    working worker. Only genuine IDLE-at-gate time accrues toward nudge/cap
+    (the legacy `jobs.runner_idle` idle-cap discipline). Absent the hook
+    (every pre-existing rig fixture), this is inert — pacing behaves exactly
+    as before.
+  - A stage that reads the SAME as last call's HOLDS (and whose worker is NOT
+    working): `holding = now - holding_since`.
       * At `holding >= GATE_NUDGE_AFTER` (once per holding episode —
         `nudged_at` guards a second nudge on a later call while still
         holding) the stage's order is RE-SENT via `eng._to_worker` — a
@@ -103,6 +112,29 @@ GATE_NUDGE_AFTER = 3   # ticks holding at one stage, no progress -> re-nudge (on
 GATE_IDLE_CAP = 6      # ticks holding at one stage, no progress -> escalate (exactly once)
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
+
+
+def _worker_working(eng, wid):
+    """OPTIONAL, duck-typed: True iff this gate's worker is provably MID-TURN
+    (`eng._worker_working(wid)` — `core/engine.py` wires it to a real
+    `worker_runner.py` in `state: "working"`; the SAME hook `core/liveness.py`
+    uses). A gate stage a worker legitimately hasn't satisfied YET because it
+    is still executing its turn (a `claude -p` build/land turn posts nothing
+    observable until it finishes, minutes later) must NOT accrue idle-holding
+    toward nudge/cap — only genuine IDLE-at-gate time counts (the legacy
+    `jobs.runner_idle` idle-cap discipline, 01-11 FX-2, re-expressed for this
+    stack's pluggable-hook idiom). Absent the hook (every pre-existing
+    `core/*_rig.py` fixture) or on a hook that errors, reads False — the
+    pacing ladder then behaves exactly as before, so no prior rig changes."""
+    if not wid:
+        return False
+    fn = getattr(eng, "_worker_working", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn(wid))
+    except Exception:   # noqa: BLE001 — a broken hook must never crash the ladder
+        return False
 
 
 def _clock(eng, manifest):
@@ -256,6 +288,17 @@ def pace(eng, snapshot):
             # seen this gate) — progress clears the clock; no holding time
             # accrues on the tick a gate actually moved.
             gate_state["holding_stage"] = stage
+            gate_state["holding_since"] = now
+            gate_state.pop("nudged_at", None)
+            continue
+
+        if _worker_working(eng, gate_state.get("wid")):
+            # The worker is provably mid-turn — it IS making progress, just
+            # not yet observably at this gate stage (a long build/land turn
+            # posts nothing until it finishes). Re-anchor the episode: only
+            # genuine idle-at-gate time ever accrues toward nudge/cap, never
+            # a live turn's own wall-clock. (No prior rig sets the hook, so
+            # this branch is inert for all of them.)
             gate_state["holding_since"] = now
             gate_state.pop("nudged_at", None)
             continue

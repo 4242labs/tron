@@ -42,10 +42,25 @@ any `review:<type>` pseudo-block worker — a reviewer's own silence is ALREADY
 paced by `core/sentry.py::_pace_reviewers`, off the identical `holding_since`
 idiom; this module never double-paces the same worker two different ways):
 
-  - A worker whose flag says it reported THIS tick has its `last_seen`
+  - A worker whose flag says it reported THIS tick — OR whose runner is
+    provably MID-TURN (the OPTIONAL `eng._worker_working(wid)` hook returns
+    True: a real `worker_runner.py` in `state: "working"`, an agent actively
+    executing a turn, not silent at all — see below) — has its `last_seen`
     (re)anchored to `now` and its episode cleared (`pinged_at` dropped) —
     "a worker that reports resets its liveness episode" (the design's own
-    words), whether or not it was ever pinged first.
+    words), whether or not it was ever pinged first. This is what stops a
+    real build turn (silent by nature — a single `claude -p` turn posts
+    NOTHING to the engine inbox until it finishes, which can be many minutes)
+    from being falsely declared stalled while it is legitimately working: an
+    ACTIVELY-WORKING runner counts as seen; only a worker that is BOTH not
+    reporting AND not working (a dead/hung/exited process, `state: idle`/
+    `error`/gone) accrues silence toward ping/stall. A turn that genuinely
+    hangs still recovers: `worker_runner.py`'s own turn-timeout flips it to
+    `turn_error`/`state: error` (no longer "working"), so silence resumes
+    accruing and the stall ladder fires as before. The hook is OPTIONAL and
+    duck-typed exactly like `eng._now()` — absent (every pre-existing
+    `core/*_rig.py` fixture), `sweep` behaves exactly as before (report-only
+    "seen"), so no prior rig changes.
   - A worker `sweep` has never seen before (no `last_seen` on file yet — the
     spawn->online window, before `core/switchboard.py::fill` even wrote a
     `last_seen`, since that module is never edited by this brick) starts a
@@ -125,6 +140,30 @@ if _HERE not in sys.path:
 
 import casestate   # noqa: E402 — core/casestate.py, the parked-case recovery primitive
 import knobs as knobs_mod   # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
+
+
+def _worker_active(eng, wid, reported):
+    """A worker is ACTIVE this tick if it reported (`reported`, the transient
+    flag `core/router.py::touch` set) OR its runner is provably MID-TURN —
+    the OPTIONAL, duck-typed `eng._worker_working(wid)` hook (a real
+    `worker_runner.py` in `state: "working"`; `core/engine.py` wires it to
+    `engine/jobs.py`, a rig may inject a fake, and an `eng` without it — every
+    pre-existing fixture — degrades to report-only "seen", unchanged). This is
+    the ONE thing that keeps a legitimately-working, inbox-silent build turn
+    from being falsely stalled; a hung turn stops being "working"
+    (`worker_runner.py`'s turn-timeout → `state: error`), so the stall ladder
+    still recovers it. Never raises out: a hook that itself errors reads as
+    "not provably working" (fail toward the existing silence ladder, never a
+    crash)."""
+    if reported:
+        return True
+    fn = getattr(eng, "_worker_working", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn(wid))
+    except Exception:   # noqa: BLE001 — a broken hook must never crash the sweep
+        return False
 
 
 def _silence_knobs(eng):
@@ -225,7 +264,9 @@ def sweep(eng, snapshot):
             continue
 
         reported = w.pop("_reported", False)
-        if reported:
+        if _worker_active(eng, wid, reported):
+            # Reported this tick OR provably mid-turn (a real working runner)
+            # — either way genuinely active: reset the liveness episode.
             w["last_seen"] = now
             w.pop("pinged_at", None)
             continue
