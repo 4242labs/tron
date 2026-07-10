@@ -20,29 +20,36 @@ Net effect: the Nth re-authoring of a same-named branch is reported LANDED —
 a false `docs_landed` fires — while its content never reaches trunk. Silent
 loss, not a wedge; the worst shape a landing primitive can take.
 
-THE FIX (this module), two layers deep:
+THE FIX (this module): landing identity is CONTENT-BOUND — ONE invariant,
+constructed at one place and enforced at one place:
 
-  1. Content-bound identity is the CALLER's job (`paperwork_case_id` below):
-     the case-id embeds the patch-id, so new content -> new case-id -> a
-     receipt from stale content can never even be LOOKED UP under the new
-     case-id in the first place. This is the real fix — it also means
-     `land.sh` (UNCHANGED, a respected contract) never sees a stale consumed
-     receipt for genuinely new content, because the case-id it's invoked with
-     is itself new.
+  - CONSTRUCTED by `paperwork_case_id` below: the case-id embeds the branch's
+    patch-id, so new content -> new case-id -> a receipt from stale content
+    can never even be LOOKED UP under the new case-id in the first place.
+    This also means `land.sh` (UNCHANGED, a respected contract) never sees a
+    stale consumed receipt for genuinely new content, because the case-id
+    it's invoked with is itself new.
 
-  2. Belt-and-suspenders, INSIDE the primitive regardless of what case-id
-     scheme a caller uses: before trusting a consumed receipt found under
-     `case_id`, re-derive the branch's CURRENT patch-id and compare it to the
-     receipt's own `patch_id` field. A receipt only short-circuits `"landed"`
-     when its content still matches what's on the branch RIGHT NOW (or when
-     the branch's current content is unresolvable — e.g. a since-deleted
-     branch post-land, the one case a live ancestry read can no longer see at
-     all, where the receipt is the ONLY surviving proof and must still be
-     trusted). A receipt whose patch-id has diverged is STALE for this
-     content: never short-circuit on it — fall through to observe/mint/order
-     exactly as if no receipt existed, so the new content gets a real grant
-     and a real land. Even a caller that (mis)reuses a colliding case-id can
-     never have unlanded content masked by an old receipt.
+  - ENFORCED at the single landing seam, `land_via_grant` below, regardless
+    of what case-id scheme a caller uses: before trusting a consumed receipt
+    found under `case_id`, re-derive the branch's CURRENT patch-id and
+    compare it to the receipt's own `patch_id` field. A receipt only
+    short-circuits `"landed"` when its content still matches what's on the
+    branch RIGHT NOW (or when the branch's current content is unresolvable —
+    e.g. a since-deleted branch post-land, the one case a live ancestry read
+    can no longer see at all, where the receipt is the ONLY surviving proof
+    and must still be trusted). A receipt whose patch-id has diverged is
+    STALE for this content: never short-circuit on it — fall through to
+    observe/mint/order exactly as if no receipt existed, so the new content
+    gets a real grant and a real land.
+
+  This is one invariant, not a hedge: construction makes the stale-receipt
+  path structurally unreachable for a well-behaved caller (this module's own
+  `gate.py` caller included); enforcement is the SAME invariant's single
+  checkpoint, so even a caller that (mis)reuses a colliding case-id can never
+  have unlanded content masked by an old receipt. There is exactly one
+  content-bound-identity mechanism here, expressed twice — construct, then
+  enforce — never two independent mechanisms.
 
 Otherwise this ports `engine/land.py::land_via_grant`'s sequence faithfully:
 observe-first (real ancestry), patch-id fail-closed (`grants.mint`'s own
@@ -52,9 +59,12 @@ unchanged live grant), observe-and-consume.
 
 Duck-types the engine context exactly like `land.py` does: `eng.paths`,
 `eng.dry`, `eng.ctx.grants_dir`, `eng.events`, `eng.log`, `eng._truth_ref()`,
-`eng._to_worker`, `eng._grant_ttl()`. Reuses `grants.py`/`trunk.py` as-is
-(imported, never forked) — both are respected contracts this module does not
-and must not modify.
+`eng._to_worker`, `eng._grant_ttl()`. Trunk reads (`tip_sha`, `patch_id`,
+`is_ancestor`) go through `core.gitobs` — the new stack's single
+git-observation seam — never a direct `import trunk` here. Reuses `grants.py`
+as-is (imported, never forked; a clean library, not git observation — may be
+vendored into `core/` in a later pass) — a respected contract this module
+does not and must not modify.
 """
 import os
 import re
@@ -65,9 +75,11 @@ _APP_ROOT = os.path.dirname(_HERE)
 _ENGINE_DIR = os.path.join(_APP_ROOT, "engine")
 if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 import grants   # noqa: E402  — respected contract, imported as-is (never forked)
-import trunk    # noqa: E402  — respected contract, imported as-is (never forked)
+import gitobs   # noqa: E402  — core/gitobs.py, the ONE git-observation seam
 
 # Mirrors grants.CASE_ID_TOKEN's safe-token alphabet (land.sh's own
 # pre-interpolation guard) — used here only to SANITIZE a branch name into a
@@ -132,8 +144,8 @@ def _order_land(eng, wid, block, case_id, branch, kind="gate.land"):
 def _observe_landed(eng, branch, truth_ref):
     """Ported verbatim from `land.py::_observe_landed`: has `branch`'s tip
     already reached trunk? Committed-ref read only, never working-tree/say-so."""
-    tip = trunk.tip_sha(eng.paths["root"], branch, eng.dry)
-    return trunk.is_ancestor(eng.paths["root"], tip, truth_ref, eng.dry)
+    tip = gitobs.tip_sha(eng.paths["root"], branch, eng.dry)
+    return gitobs.is_ancestor(eng.paths["root"], tip, truth_ref, eng.dry)
 
 
 def _consume_grant_administratively(eng, case_id, result="engine-observed"):
@@ -168,18 +180,20 @@ def land_via_grant(eng, case_id, block, branch, wid, kind, scope):
         return "fail-closed"
     truth_ref = eng._truth_ref()
 
-    # THE FIX, layer 2 (belt-and-suspenders — layer 1 is `paperwork_case_id`
-    # making this arm structurally unreachable for a caller that content-binds
-    # its own case-ids, but the primitive stays honest even if a caller
-    # doesn't): a consumed receipt is trusted ONLY when its patch_id still
-    # matches the branch's CURRENT content, or when current content is
-    # unresolvable (a since-deleted branch — the receipt is the only proof
-    # left, same rationale land.py's original short-circuit relied on). A
-    # receipt whose patch-id has DIVERGED is stale for this content and must
-    # never mask it — fall through to observe/mint/order for the real thing.
+    # THE FIX, enforced (the same content-bound-identity invariant
+    # `paperwork_case_id` CONSTRUCTS — see module docstring — makes this arm
+    # structurally unreachable for a caller that content-binds its own
+    # case-ids, but this is the invariant's one enforcement point, so the
+    # primitive stays honest even if a caller doesn't): a consumed receipt is
+    # trusted ONLY when its patch_id still matches the branch's CURRENT
+    # content, or when current content is unresolvable (a since-deleted
+    # branch — the receipt is the only proof left, same rationale land.py's
+    # original short-circuit relied on). A receipt whose patch-id has
+    # DIVERGED is stale for this content and must never mask it — fall
+    # through to observe/mint/order for the real thing.
     consumed = grants.read_consumed(eng.ctx.grants_dir, case_id)
     if consumed:
-        cur_pid_for_receipt = trunk.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
+        cur_pid_for_receipt = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
         if not cur_pid_for_receipt or consumed.get("patch_id") == cur_pid_for_receipt:
             return "landed"
         eng.log("flow", f"land[{case_id}] {scope}: consumed receipt is STALE for "
@@ -194,7 +208,7 @@ def land_via_grant(eng, case_id, block, branch, wid, kind, scope):
         eng.log("flow", f"land[{case_id}] {scope}: observed landed -> consumed")
         return "landed"
 
-    pid = trunk.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
+    pid = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
     grant, fresh = _mint_or_reuse_grant(eng, case_id, block, branch, pid)
     if not grant:
         if not eng.dry:
