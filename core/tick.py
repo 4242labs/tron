@@ -132,17 +132,19 @@ import sentry        # noqa: E402 — core/sentry.py, wave 7's ONE pacing ladder
 import casestate      # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
 import architect      # noqa: E402 — core/architect.py, wave 9's persistent pool-excluded architect
 import reviewers      # noqa: E402 — core/reviewers.py, wave 10's cadence-PULL reviewers
+import liveness        # noqa: E402 — core/liveness.py, wave 11's worker-silence side-system
 
 _TERMINAL_STAGES = (gate.STAGE_CLOSED, gate.STAGE_ESCALATED)
 
 
 def tick(eng):
     """One bounded, crash-safe tick: observe -> route -> decide -> act ->
-    architect enqueue -> sentry (pace) -> fill -> architect advance ->
-    persist -> exit (-> session-end, wave 6).
+    architect enqueue -> sentry (pace) -> liveness (sweep) -> fill ->
+    architect advance -> persist -> exit (-> session-end, wave 6).
     Returns a compact, NON-durable result dict for the rig/log —
     `{"advanced": [block, ...], "closed": [block, ...], "escalated":
-      [(block, detail), ...], "nudged": [block, ...], "outcomes":
+      [(block, detail), ...], "nudged": [block, ...], "pinged": [wid, ...],
+      "stalled": [(block, wid, case_id), ...], "outcomes":
       {block: (outcome, detail)}, "spawned": [agent_id, ...], "architect":
       {"status", "current_job"}, "session_end": {"ended_at", "reason"} |
       None}` — the manifest (via `core.state`) is the only durable record
@@ -165,7 +167,8 @@ def tick(eng):
                         f"{manifest0['session']['ended_at']} — no-op re-tick "
                         f"(idempotent terminal, no observe/route/act/fill)")
         return {"advanced": [], "closed": [], "escalated": [], "nudged": [],
-                "outcomes": {}, "spawned": [], "architect": manifest0.get("architect"),
+                "pinged": [], "stalled": [], "outcomes": {}, "spawned": [],
+                "architect": manifest0.get("architect"),
                 "session_end": manifest0.get("session")}
 
     # ── observe ──
@@ -183,7 +186,7 @@ def tick(eng):
 
     # ── act (idempotent) ──
     result = {"advanced": [], "closed": [], "escalated": [], "nudged": [],
-              "outcomes": {}, "spawned": []}
+              "pinged": [], "stalled": [], "outcomes": {}, "spawned": []}
     for block, gate_state, local_report in plan:
         stage_before = gate_state.get("stage")
         outcome, detail = gate.advance(eng, block, gate_state, local_report=local_report)
@@ -226,6 +229,21 @@ def tick(eng):
     pace_result = sentry.pace(eng, snap)
     result["nudged"].extend(pace_result["nudged"])
     result["escalated"].extend(pace_result["escalated"])
+
+    # ── liveness (T1, wave 11): the ONE worker-SILENCE ladder — ping/stall
+    #     any worker that hasn't reported ANYTHING (not gate-stage progress;
+    #     `sentry.pace` above already owns that) since its own `last_seen`
+    #     (set THIS tick, in `route`, above — so a worker that reported this
+    #     very tick is never treated as silent for it). Run AFTER `sentry.
+    #     pace` (a distinct, non-competing ladder — see `core/liveness.py`'s
+    #     own docstring for why the two never double-pace the same worker)
+    #     and STRICTLY BEFORE persist/fill, same reasoning as sentry: a
+    #     fresh stall's parked case (and freed slot) must be durable AND
+    #     already excluded from `fill`'s dispatch view the SAME tick it
+    #     fires, never a tick late ──
+    liveness_result = liveness.sweep(eng, snap)
+    result["pinged"].extend(liveness_result["pinged"])
+    result["stalled"].extend(liveness_result["stalled"])
 
     # ── fill (SPAWN into whatever slots are STILL free after `act` — a gate
     #     that closed above frees its slot the same tick, PULSE's own

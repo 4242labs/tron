@@ -80,6 +80,7 @@ if _HERE not in sys.path:
 import gate        # noqa: E402 — core/gate.py, the DONE-ladder constructor this ASSIGN opens
 import casestate    # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
 import reviewers    # noqa: E402 — core/reviewers.py, wave 10's DONE-REVIEW gate
+import liveness     # noqa: E402 — core/liveness.py, wave 11's worker-silence side-system
 
 
 def route(eng, manifest, worker_reports):
@@ -88,9 +89,22 @@ def route(eng, manifest, worker_reports):
     parked case), and `operator.decision` (settle a parked case) line;
     anything else (local-pass `worker.done` reports included) is `core/
     snapshot.py`'s own concern, fed to `core.gate.advance` separately by
-    `core/tick.py` — never double-handled here."""
+    `core/tick.py` — never double-handled here.
+
+    Wave 11 (`core/liveness.py`): BEFORE any of the per-tag dispatch below,
+    every drained report touches its own reporting worker's record
+    (`liveness.touch` — a transient `_reported` flag `core/liveness.py::
+    sweep` turns into a fresh `last_seen` reading later THIS SAME tick,
+    after `core/tick.py` has run `router.route` — see that module's own
+    docstring for why the ACTUAL clock read happens there, not here). This
+    is the ONLY place `last_seen` gets marked live — a worker's own report
+    is what proves it isn't silent, independent of which specific tag it
+    sent."""
     workers = manifest.setdefault("workers", {})
     gates = manifest.setdefault("gates", {})
+
+    for rep in worker_reports:
+        liveness.touch(workers, gates, rep)
 
     for rep in worker_reports:
         tag = rep.get("tag")
