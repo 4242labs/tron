@@ -22,14 +22,25 @@ Design record: `tron-meta` `logs/architecture/adr-0004-engine-rewrite.md` + `log
 | `router.py` | Structured-report routing (no LLM yet): `worker.online`/`worker.branch` → ASSIGN (open `gate.local` on the reported branch); `worker.wall` → open case; `operator.decision` → settle; `architect.reconciled` → clear reconcile-gate. |
 | `session.py` | Fail-loud session-end terminal — a clean marker only when every in-scope block is done + nothing in-flight; `RuntimeError` on a genuinely stuck state (never a silent "end"). |
 | `sentry.py` | ONE pacing ladder for every gate stage — nudge at `gate_nudge_after`, escalate at `gate_idle_cap`; progress resets pacing. The only place capping lives. |
-| `casestate.py` | Parked-case FSM — raise-and-defer (wall/escalation → parked case, block blocked, slot freed) + operator `resume`/`amend`/`abandon` settle ≤1 tick. |
-| `architect.py` | Persistent, pool-excluded architect — FIFO queue with `forward` (author a missing block file) + `reconcile` (M-05 gate the next block). *(in progress)* |
+| `casestate.py` | Parked-case FSM — raise-and-defer (wall/escalation → parked case, block blocked, slot freed) + operator `resume`/`amend`/`abandon` settle ≤1 tick. Wall kinds route **architect-first** (triage); only an architect `operator` verdict pages. Operator-page **floor**: an unanswered page re-pings, never a permanent silent drop. Fleet-outage self-release (systemic death → bounded pause → architect-first). |
+| `architect.py` | Persistent, pool-excluded architect — FIFO queue with `forward` (author a missing block file) + `reconcile` (M-05 gate the next block) + `triage` (verdict on a wall) + `log` (review remediation). |
+| `reviewers.py` | Cadence PULL — a landed-block counter reaches threshold → switchboard dispatches a reviewer (never auto-fired); DONE-REVIEW gate (first hand-back challenges full coverage → held → attest → release); a review is a milestone, its log-review becomes adhoc blocks (or none). |
+| `liveness.py` | Timer side-system (not classify) — a worker silent past `silence_ping_min` → `heartbeat.ping`; past `silence_escalate_min` → engine-produced `worker.stalled` → recover (re-dispatch / parked case). A live worker is never pinged. |
+| `engine.py` | The `Engine` entrypoint — assembles every module; `start(scope, worker_count, models)` (bootup: write manifest, spawn persistent architect, first dispatch) + `tick()`/`run()`. The whole engine runs bootup→done through here. |
+| `classify.py` | The ONE LLM judgment, pinned to the **observe** phase so `decide` stays pure. Structured `tag`+`slots` reports bypass it (no model call); free-text → `judge.call` → tag → route; invalid → bounded retry → `unclassified` → architect triage. The only module that calls the model. |
+| `knobs.py` | The fail-loud config seam — schema-nested reads (fields under the top-level `knobs:` map, per `contracts/schema/knobs.schema.yaml`); a missing knob raises `KnobsError`, never silently resolves to `None`. |
+| `sim/` | Fresh, unbiased SIM apparatus — `scaffold.py` (fresh mockup builder), `worker.py` (scripted/transcript-ready worker+architect+reviewer driver), `run.py` (`run_sim` reusable driver), `real_tier.py` (real `jobs.spawn_runner` wiring), `launch.py` (CLI; `--dry-boot` default, `--no-dry-boot --tier host-cli` for real L3). L2 rig `sim_l2_rig.py`; real-scaffold boot `boot_real_scaffold_rig.py`. |
 
 ## Running the rigs (deterministic, ~0 tokens)
 
 ```bash
 cd tron-app/.worktrees/l1-harness-landing-fix/core
-for r in landing gate gate_full tick dispatch multiblock sentry casestate; do python3 ${r}_rig.py; done
+for r in landing gate gate_full tick dispatch multiblock sentry casestate architect \
+         reviewers liveness engine classify knobs opfloor wallrouting outage trunkchurn; do
+  python3 ${r}_rig.py
+done
+python3 sim/sim_l2_rig.py           # L2 scripted full-workflow SIM (happy + adversarial)
+python3 sim/boot_real_scaffold_rig.py   # real trivial-tip-converter scaffold boots through core.Engine
 ```
 Each prints `PASS (n/m)` and drives real git + real `land.sh`. A rig is the WAKE daemon + the
 worker(s): it calls `tick.tick(eng)` in a loop and, when the engine orders work/land/close, does the
