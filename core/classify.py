@@ -209,9 +209,34 @@ def _triage_unclassified(eng, manifest, text, sender, attempts):
                     f"architect triage (PMT-TRIAGE, architect-first); "
                     f"raw={raw!r} last_attempt={last_attempt!r}")
     eng.events.event("unclassified", sender=sender, raw=raw, last_attempt=last_attempt)
-    if manifest is not None:
-        architect.enqueue_triage(eng, manifest, None, "classify.unclassified",
-                                 None, raw, worker_id=(sender or {}).get("id"))
+    if manifest is None:
+        return
+    # An UNCLASSIFIED message from the architect ITSELF must never spawn a new
+    # architect triage: the architect cannot triage its own narration, and doing
+    # so self-perpetuated a phantom-triage loop AND left the triage it was
+    # narrating about unresolved — wedging the architect busy on it and blocking
+    # session-end (the s3 first-honest-SIM tail). If the architect is narrating
+    # the resolution of its CURRENT triage job, record a benign 'answer' verdict
+    # for THAT job so `architect._advance_triage` resolves it and the architect
+    # frees back to idle (the architect's clean escalation path is a structured
+    # `architect.triage_verdict`, unaffected here); with no in-flight triage it
+    # is mere narration — logged above, dropped here, never a self-triage.
+    if (sender or {}).get("id") == architect.ARCHITECT_WID:
+        arch = manifest.get("architect") or {}
+        cur = arch.get("current_job") or {}
+        if cur.get("kind") == "triage" and cur.get("triage_id"):
+            verdicts = manifest.setdefault("triage_verdicts", {})
+            verdicts.setdefault(cur["triage_id"],
+                                {"verdict": "answer", "note": raw[:200]})
+            eng.log("flow", f"classify: unclassified architect narration -> benign "
+                            f"'answer' verdict recorded for its own in-flight triage "
+                            f"{cur['triage_id']!r} (self-triage loop guard)")
+        else:
+            eng.log("flow", "classify: unclassified architect narration, no in-flight "
+                            "triage -> logged, not triaged (self-triage loop guard)")
+        return
+    architect.enqueue_triage(eng, manifest, None, "classify.unclassified",
+                             None, raw, worker_id=(sender or {}).get("id"))
 
 
 def classify(eng, msg, manifest=None):

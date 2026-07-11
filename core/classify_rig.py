@@ -621,11 +621,45 @@ def run_prior_rigs():
            r.returncode == 0, last_line or (r.stdout[-300:] + r.stderr[-300:]))
 
 
+def run_scenario_self_triage_guard():
+    """s3 first-honest-SIM lock: an UNCLASSIFIED message from the architect
+    ITSELF never spawns a new triage — it resolves its OWN in-flight triage
+    benignly (or drops as narration) — never the phantom-triage self-loop that
+    left the triage unresolved and wedged the architect busy at session-end.
+    A real worker's unclassified message STILL triages (GAP-E net intact)."""
+    root = build_root()
+    tron_ctx = _tron_ctx(root)
+    eng = MiniEng(root, tron_ctx, worker_count=1)
+    arch_id = architect.ARCHITECT_WID
+    mA = {"architect": {"status": "busy",
+                        "current_job": {"kind": "triage", "triage_id": "triage-1",
+                                        "worker_id": "engineer-01-03"}},
+          "architect_queue": []}
+    classify._triage_unclassified(
+        eng, mA, "Sorted: it's a branch declaration, no architect action.",
+        {"kind": "worker", "id": arch_id}, ["unclassified"])
+    ok("SG1 (SELF-TRIAGE-GUARD LOCK — must be GREEN): architect narration of "
+       "its own in-flight triage records a benign 'answer' verdict and spawns "
+       "NO new triage (no phantom self-loop, no session-end wedge)",
+       (mA.get("triage_verdicts") or {}).get("triage-1", {}).get("verdict") == "answer"
+       and len(mA.get("architect_queue") or []) == 0,
+       f"verdicts={mA.get('triage_verdicts')} queue={mA.get('architect_queue')}")
+    mB = {"architect": {"status": "idle", "current_job": None}, "architect_queue": []}
+    classify._triage_unclassified(
+        eng, mB, "help — I'm blocked on a missing local fixture dep",
+        {"kind": "worker", "id": "engineer-01-04"}, ["unclassified"])
+    ok("SG2 (SAFETY-NET PARITY — must be GREEN): a real worker's unclassified "
+       "message STILL enqueues an architect triage (GAP-E net intact)",
+       len(mB.get("architect_queue") or []) == 1,
+       f"queue={mB.get('architect_queue')}")
+
+
 def main():
     run_scenario_1()
     run_scenario_2()
     run_grep_proof()
     run_prior_rigs()
+    run_scenario_self_triage_guard()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.classify_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
