@@ -68,6 +68,7 @@ import session                # noqa: E402 — core/session.py, the abandoned-bl
 import pipeline                # noqa: E402 — core/pipeline.py, the in-flight/slot-freed proof read
 import sentry                 # noqa: E402 — core/sentry.py, the cap-escalation-opens-a-case proof
 import casestate               # noqa: E402 — core/casestate.py, the module under test
+import architect               # noqa: E402 — core/architect.py, ARCHITECT_WID (self-wall guard lock)
 
 SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
 MAIN = "main"
@@ -884,6 +885,22 @@ def main():
        "01-03" in (m_c.get("reconciled") or [])
        and "01-02" not in (m_c.get("reconciled") or []),
        f"reconciled={m_c.get('reconciled')}")
+
+    # ══ Z4 (SELF-WALL GUARD, s6): a worker.wall FROM the architect is narration
+    #    (it can't wall/triage itself) — resolve its in-flight triage benignly,
+    #    open NO new case/triage. ══
+    m_d = {"architect": {"status": "busy",
+                        "current_job": {"kind": "triage", "triage_id": "triage-9"}},
+           "cases": {}, "architect_queue": [], "workers": {}, "gates": {}}
+    router._route_wall(lock_eng, m_d,
+        {"tag": "worker.wall", "agent_id": architect.ARCHITECT_WID,
+         "text": "Operator's call — grant re-mint, a clean one; worker proceeds."})
+    ok("Z4 (SELF-WALL GUARD — must be GREEN): a worker.wall from the architect "
+       "resolves its in-flight triage benignly and opens NO new case/triage",
+       (m_d.get("triage_verdicts") or {}).get("triage-9", {}).get("verdict") == "answer"
+       and not m_d.get("cases") and len(m_d.get("architect_queue") or []) == 0,
+       f"verdicts={m_d.get('triage_verdicts')} cases={list((m_d.get('cases') or {}).keys())} "
+       f"queue={len(m_d.get('architect_queue') or [])}")
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.casestate_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
