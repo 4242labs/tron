@@ -867,6 +867,24 @@ def main():
        and lock_eng2.workers.get("eng-Y", {}).get("status") == "released",
        f"worker={lock_eng2.workers.get('eng-Y')} gate={m_b['gates']['10-02']['stage']}")
 
+    # ══ Z3 (01-03 RECONCILE-STALL LOCK, s2): a reconcile completion records
+    #    the architect's OWN in-flight reconcile job block, NEVER a block id
+    #    classify parsed from the report's prose (which named the just-LANDED
+    #    block, not the gated one) — else current_job never clears and the
+    #    dependent block stays permanently gated. ══
+    m_c = {"architect": {"status": "busy",
+                         "current_job": {"kind": "reconcile", "block": "01-03",
+                                         "after": "01-02"}},
+           "reconciled": []}
+    router._route_architect_reconciled(
+        lock_eng, m_c, {"tag": "architect.reconciled", "block": "01-02"})
+    ok("Z3 (RECONCILE-STALL LOCK — must be GREEN): a reconcile report records "
+       "the architect's in-flight job block (01-03), NOT the block its prose "
+       "named (01-02) — current_job can clear, dependent block dispatches",
+       "01-03" in (m_c.get("reconciled") or [])
+       and "01-02" not in (m_c.get("reconciled") or []),
+       f"reconciled={m_c.get('reconciled')}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.casestate_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")

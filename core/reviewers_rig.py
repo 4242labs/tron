@@ -898,10 +898,33 @@ def run_scenario_c():
     print(f"session_ended_tick_after_cap={session_ended_tick2}")
 
 
+def run_scenario_d_review_done_type_derive():
+    """Z-lock (s2 first-honest-SIM): a `worker.review_done` that omits `type`
+    (classify didn't parse one out of the reviewer's free-text hand-back) must
+    NOT be dropped when the sender is a reviewer ON FILE — the type is derived
+    from its own worker record, so the attestation is never silently lost."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+    eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    aid = "reviewer-code-1"
+    manifest = {"workers": {aid: {"block": reviewers.review_block("code"),
+                                  "type": "code", "status": "reviewing", "wid": aid}}}
+    reviewers.on_review_done(
+        eng, manifest, {"tag": "worker.review_done", "agent_id": aid})  # NO type
+    ok("D-TYPE (REVIEW-DONE TYPE-DERIVE LOCK — must be GREEN): a review_done "
+       "with no parsed `type`, from a reviewer on file, is accepted (type "
+       "derived from its worker record) not dropped — status held, not lost",
+       manifest["workers"].get(aid, {}).get("status") == "held",
+       f"worker={manifest['workers'].get(aid)}")
+
+
 def main():
     run_scenario_a()
     run_scenario_b()
     run_scenario_c()
+    run_scenario_d_review_done_type_derive()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.reviewers_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
