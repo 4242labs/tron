@@ -99,6 +99,13 @@ def _install_cwd(mapping):
     live._proc_cwd = lambda pid: mapping.get(int(pid), "")
 
 
+def _install_pgid(mapping):
+    """Stub live._proc_pgid so a pid resolves to `mapping[pid]` (else None),
+    letting the rig exercise pgid-LINEAGE ownership (ADR-0006 R2a) without real
+    process groups."""
+    live._proc_pgid = lambda pid: mapping.get(int(pid))
+
+
 class _RS:
     def __init__(self, wids):
         self.spawn_calls = [{"worker_id": w} for w in wids]
@@ -171,10 +178,44 @@ def main():
     # ── the driver's own pid is never flagged, even as a worker-shaped line ──
     _install_jobs(alive_ids=[])
     _install_cwd({})
+    _install_pgid({})
     self_line = f"{os.getpid()} python3 {ROOT}/meta/agents/tron/workers/x/worker_runner.py x"
     _install_pgrep({"worker_runner.py": self_line + "\n", "claude": ""})
     orphans = live._owned_orphans(_RS([]), ROOT)
     ok("O8: the driver's OWN pid is excluded even if it matches a worker pattern",
+       orphans == [], f"orphans={orphans}")
+
+    # ── ADR-0006 R2a PGID-LINEAGE KILLER (must be GREEN): the B1 false-negative
+    #    that CWD ALONE still misses — a re-parented claude with NO root in argv
+    #    AND an UNREADABLE cwd (a /proc race), whose runner already died. Its pgid
+    #    still equals the dead runner's pid (inherited, persists post-death), and
+    #    that pid is recoverable from the persisted runner.json — so pgid-lineage
+    #    flags it where both argv and cwd came up empty. ──
+    live.jobs.index = lambda: {"engineer-01-99": {"pid": RUNNER_PID, "state": "dead"}}
+    live.jobs.is_alive = lambda wid, idx=None: False        # runner crashed before teardown
+    live.jobs.find = lambda wid, idx=None: (idx or live.jobs.index()).get(wid)
+    _install_cwd({})                                         # cwd UNREADABLE (empty) — cwd net fails
+    _install_pgid({CLAUDE_PID: RUNNER_PID})                 # child inherited the dead runner's pgid
+    _install_pgrep({"worker_runner.py": "", "claude": CLAUDE + "\n"})
+    orphans = live._owned_orphans(_RS(["engineer-01-99"]), ROOT)
+    ok("O11 (PGID-LINEAGE FALSE-NEGATIVE KILLER — must be GREEN): a re-parented claude "
+       "with no root in argv AND unreadable cwd, whose runner died, IS flagged by its "
+       "inherited pgid (the one net argv+cwd both miss)",
+       len(orphans) == 1 and "claude.exe" in orphans[0], f"orphans={orphans}")
+
+    # ── R2a NO-FALSE-POSITIVE: a FOREIGN claude (another Claude Code session) with
+    #    unreadable cwd, no root in argv, and a pgid NOT among this run's runner
+    #    pids is NEVER flagged — pgid-lineage is a POSITIVE signal, never fail-open. ──
+    live.jobs.index = lambda: {"engineer-01-99": {"pid": RUNNER_PID, "state": "dead"}}
+    live.jobs.is_alive = lambda wid, idx=None: False
+    live.jobs.find = lambda wid, idx=None: (idx or live.jobs.index()).get(wid)
+    _install_cwd({})
+    _install_pgid({CLAUDE_OTHER_PID: 999999})               # foreign pgid, not in run_pgids
+    _install_pgrep({"worker_runner.py": "", "claude": CLAUDE_OTHER + "\n"})
+    orphans = live._owned_orphans(_RS(["engineer-01-99"]), ROOT)
+    ok("O12 (R2a NO FALSE-POSITIVE — must be GREEN): a foreign claude session (unreadable "
+       "cwd, no root in argv, pgid not ours) is NOT flagged — pgid-lineage never fail-opens "
+       "onto another Claude Code session",
        orphans == [], f"orphans={orphans}")
 
     passed = sum(1 for _, c, _ in _results if c)

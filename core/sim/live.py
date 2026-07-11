@@ -139,17 +139,42 @@ def _proc_cwd(pid):
         return ""
 
 
-def _worker_owned_by_root(pid, root, cmdline):
-    """True iff a worker-exec process belongs to THIS run's `root`. A
-    `worker_runner.py` is spawned as `python3 <root>/.../worker_runner.py` so its
-    root is in argv; but a real `claude` CHILD gets `root` only via `Popen(cwd=…)`
-    (engine/worker_runner.py) — NEVER in argv — so an argv-substring test alone
-    MISSES a re-parented `claude` that outlived its crashed `worker_runner` (the
-    exact false-NEGATIVE peer review caught: the old `root in ln` filter silently
-    passed a live orphaned token-burning child as clean). So also resolve the
-    process's CWD: a real worker's cwd is its worker dir UNDER `root`."""
+def _proc_pgid(pid):
+    """Best-effort `os.getpgid(pid)` — None when unavailable (the process exited,
+    or a permission/OS error). Factored out so the orphan rig can stub it."""
+    try:
+        return os.getpgid(int(pid))
+    except (ProcessLookupError, PermissionError, OSError, ValueError):
+        return None
+
+
+def _worker_owned_by_root(pid, root, cmdline, run_pgids=frozenset()):
+    """True iff a worker-exec process belongs to THIS run's `root`, by ANY of
+    three POSITIVE ownership signals (never a fail-open assumption of absence —
+    ADR-0006 R2a):
+      1. `root` in argv — a `worker_runner.py` is spawned as
+         `python3 <root>/.../worker_runner.py`, so its root is in the command line.
+      2. pgid-LINEAGE — a real `claude` CHILD gets `root` only via `Popen(cwd=…)`,
+         NEVER in argv, so signal 1 alone MISSES a re-parented `claude` that
+         outlived its crashed runner. But the runner leads its own process group
+         (`jobs.spawn_runner` start_new_session=True) and the runner forks `claude`
+         WITHOUT start_new_session, so the child INHERITS the runner's pgid — which
+         equals the runner's pid, and STAYS that even after the runner dies and the
+         child re-parents to init. `run_pgids` is the set of this run's spawned-
+         runner pids; a survivor whose pgid is in it is deterministically ours.
+      3. CWD under `root` — a belt-and-suspenders positive signal (a real worker's
+         cwd is its worker dir under `root`); retained but no longer the sole net.
+    Signal 2 is what closes the B1 false-NEGATIVE: a re-parented `claude` whose
+    argv lacks `root` AND whose `/proc/<pid>/cwd` is unreadable (a race) is still
+    caught by its inherited pgid. Every signal is POSITIVE, so a foreign `claude`
+    (another Claude Code session) — foreign pgid, no root in argv, foreign cwd —
+    is never spuriously flagged (no false-positive REJECT)."""
     if root in cmdline:
         return True
+    if run_pgids:
+        pgid = _proc_pgid(pid)
+        if pgid is not None and pgid in run_pgids:
+            return True
     r = root.rstrip("/")
     cwd = _proc_cwd(pid)
     return cwd == r or cwd.startswith(r + "/")
@@ -170,9 +195,18 @@ def _owned_orphans(rs, root):
     a clean teardown)."""
     survivors = []
     idx = jobs.index()
+    # ADR-0006 R2a: this run's OWNED process-group ids — each spawned runner's pid
+    # (it leads its own pgid; every `claude` it forks inherits it). A crashed
+    # runner's runner.json persists on disk, so its pid is still recoverable here
+    # for lineage matching after death. Used to attribute a re-parented `claude`
+    # child by pgid when neither its argv nor its cwd resolves ownership.
+    run_pgids = set()
     for wid in sorted({c["worker_id"] for c in (rs.spawn_calls or [])}):
+        rec = jobs.find(wid, idx) or {}
+        pid = rec.get("pid")
+        if pid:
+            run_pgids.add(int(pid))
         if jobs.is_alive(wid, idx):
-            rec = jobs.find(wid, idx) or {}
             survivors.append(f"{wid} (pid={rec.get('pid')}) — spawned worker still alive after teardown")
     self_pid = os.getpid()
     for pat in ("worker_runner.py", "claude"):
@@ -194,7 +228,7 @@ def _owned_orphans(rs, root):
             # worker child whose argv LACKS root is still caught by its cwd.
             if pid == self_pid or not _is_worker_exec(parts[1]):
                 continue
-            if not _worker_owned_by_root(pid, root, parts[1]):
+            if not _worker_owned_by_root(pid, root, parts[1], run_pgids):
                 continue          # a worker exec for some OTHER run's root — not ours
             if ln not in survivors:
                 survivors.append(ln)
@@ -502,6 +536,34 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
             reasons.append(f"no operator page carried the planted-wall signature "
                            f"{expect_signature!r} — the planted escalation never reached "
                            f"the operator (swallowed), even if the count matched")
+    # ADR-0006 R2d: the deterministic escalation LOG must be empty for a trivial
+    # SIM. `manifest["escalations"]` records every sentry gate-idle cap / channel
+    # escalation — durable OS/engine state the page/case surface can MISS (a cap
+    # the architect later resolved benignly leaves no page and no open case, yet a
+    # gate demonstrably stalled to a cap). Only asserted for a trivial SIM
+    # (`expect_pages==0`, where zero is the honest expectation); a moderate SIM's
+    # planted walls legitimately populate it. Sound now that R1a/R1e make pacing
+    # working-aware (a long-but-live turn no longer spuriously caps).
+    escalations = result.get("escalations") or []
+    if expect_pages == 0 and escalations:
+        kinds = sorted({(e.get("stage") or e.get("kind") or "?")
+                        for e in escalations if isinstance(e, dict)})
+        reasons.append(f"{len(escalations)} sentry/channel escalation(s) recorded "
+                       f"(kinds={kinds}) — a gate/worker stalled to a cap even if no page "
+                       f"survived on the case surface; a trivial SIM must have zero "
+                       f"(R2d honest escalation log)")
+    # ADR-0006 R2e: a clean session_end leaves NOTHING to hard-kill — every worker
+    # releases on its own (block workers on gate-close, the reviewer on attest, the
+    # architect idle). A non-empty `escalated_kills` at session_end means a worker
+    # ignored graceful release — a shutdown-cleanliness signal the orphan check
+    # (which runs AFTER the hard-kill, so `orphans` is then empty) discards. Scoped
+    # to session_end: a budget/wall outcome already fails on `outcome`, and its
+    # kills are expected, not an anomaly.
+    kills = result.get("escalated_kills") or []
+    if result.get("outcome") == "session_end" and kills:
+        reasons.append(f"worker(s) needed a hard-kill at teardown: {kills} — a clean "
+                       f"session_end releases every worker gracefully; a SIGKILL means one "
+                       f"ignored release (R2e shutdown cleanliness)")
     return (not reasons), reasons
 
 

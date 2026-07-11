@@ -231,6 +231,19 @@ def _pace_reviewers(eng, manifest, now):
             w.pop("nudged_at", None)
             continue
 
+        if _worker_working(eng, agent_id):
+            # ADR-0006 R1e: a reviewer's attest turn is a real `claude -p` turn
+            # that posts nothing until it finishes — mirror the block-gate arm
+            # (above): while provably mid-turn, re-anchor the episode so only
+            # genuine idle-at-attest time accrues toward the cap, never a
+            # long-but-live attest turn (which would else spuriously cap ->
+            # operator page -> a trivial SIM REJECT). Sound because R1a bounds
+            # `_worker_working` by the runner's own deadline (a hung reviewer
+            # reads not-working past its deadline and still caps).
+            w["holding_since"] = now
+            w.pop("nudged_at", None)
+            continue
+
         holding = now - w["holding_since"]
 
         if holding >= GATE_IDLE_CAP:

@@ -416,16 +416,18 @@ def architect_resolve(eng, manifest, case_id, verdict, note=None):
 
 
 def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
-    """Mint a case `owner="operator"` from BIRTH and page immediately — the
-    ONE legitimate direct-to-operator path left after wave 18/GAP-E: the
-    architect's OWN `operator` verdict for a triage job that never had an
-    existing casestate case behind it in the first place (`core/classify.py`
-    's unclassified path — raw free text with no block/gate to park; see
-    `core/architect.py::_advance_triage`, the ONE call site). This is not a
-    second bypass of architect-first routing — the architect has ALREADY
-    triaged it. A `worker.wall`/`sentry.cap`/liveness-stall escalation NEVER
-    reaches this function directly — those always go through `open_case` ->
-    `core/architect.py::enqueue_triage` -> `architect_resolve` (above)."""
+    """Mint a case `owner="operator"` from BIRTH and page immediately — a
+    legitimate direct-to-operator path for an escalation the architect itself
+    cannot be architect-first'd for. Two callers:
+    (1) the architect's OWN `operator` verdict for a triage job that never had an
+    existing casestate case behind it (`core/classify.py`'s unclassified path —
+    raw free text with no block/gate to park; `core/architect.py::_advance_triage`);
+    (2) ADR-0006 R1c, `core/architect.py::_architect_liveness_ladder` — a
+    cold-start/dead architect's OWN stall (the architect cannot triage its own
+    death, and it is pool-excluded from every worker liveness net). Neither is a
+    bypass of architect-first for WORKER escalations: a `worker.wall`/`sentry.cap`/
+    liveness-stall for a worker NEVER reaches here directly — those always go
+    through `open_case` -> `core/architect.py::enqueue_triage` -> `architect_resolve`."""
     cases = manifest.setdefault("cases", {})
     case_id = next_case_id(manifest, block, source)
     cases[case_id] = {

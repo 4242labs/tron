@@ -104,7 +104,7 @@ def _read_state(worker_dir):
 
 # ── the store: workers are the subdirs of <instance>/workers/ ──
 def index():
-    """worker_id -> {shortid, session_id, state, updated_at, dir}. Skips junk."""
+    """worker_id -> {shortid, session_id, state, updated_at, pid, turns, deadline, dir}. Skips junk."""
     out = {}
     if not _STORE or not os.path.isdir(_STORE):
         return out
@@ -120,6 +120,10 @@ def index():
             "updated_at": st.get("updated_at"),
             "pid": st.get("pid"),
             "turns": st.get("turns", 0),   # completed turns; >=1 => the spawn/identity turn is done
+            # A-4 (ADR-0006 R1a): the runner DECLARES its own turn deadline (epoch seconds,
+            # worker_runner._write_state) — projected here so `Engine._worker_working` can read it
+            # and refuse to count an actor "working" past its own deadline (the 30-min-per-turn wedge).
+            "deadline": st.get("deadline"),
             "dir": wdir,
         }
     return out

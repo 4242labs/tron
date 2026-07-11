@@ -992,6 +992,53 @@ def run_reconcile_backstop_scenario():
        and mE["architect"].get("current_job") is not None,
        f"reconciled={mE.get('reconciled')} architect={mE['architect']}")
 
+    # RB6 — ADR-0006 R1c (COLD-START ARCHITECT-LIVENESS KILLER): the same cold-start/
+    # dead architect that RB5 proves the backstop must HOLD is now PAGED exactly once
+    # (the pool-excluded architect finally has a liveness net) — the hold is loud, not
+    # silent-to-budget. Reuses RB5's engN/mE state after its 22-tick drive.
+    arch_pages = [p for p in getattr(engN, "operator_pages", [])
+                  if (p.get("worker_id") == architect.ARCHITECT_WID
+                      or p.get("block") == "01-03")]
+    ok("RB6 (R1c COLD-START ARCHITECT PAGE — must be GREEN): a never-started architect is "
+       "paged the operator EXACTLY ONCE (once-guard holds across the whole drive), while "
+       "the reconcile job is still held (RB5) — a dead architect no longer wedges silently",
+       len(arch_pages) == 1 and mE["architect"]["current_job"].get("stall_paged") is True
+       and mE["architect"]["current_job"].get("cold_ticks", 0)
+           >= architect._ARCHITECT_COLD_START_CAP_TICKS,
+       f"arch_pages={arch_pages} job={mE['architect']['current_job']}")
+
+    # RB7 — ADR-0006 R1d (STARTED-THEN-REFUSED FORWARD/LOG KILLER): the architect
+    # TOOK its ordered forward turn (observed working) then settled idle having
+    # authored NO branch (`land_via_grant` -> "fail-closed" for a never-created
+    # branch). The job must NOT poll to budget nor benign-clear (dropping work) —
+    # it routes LOUD to the operator once and frees the architect. Distinct from
+    # R1c (never-started): here `arch_started` is set, so R1c stays silent and
+    # R1d owns it — the clean partition.
+    engR = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobF = {"kind": "forward", "block": "09-09", "ordered": False}
+    mF = {"architect": {"status": "busy", "current_job": jobF, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    # Deterministically model the REFUSAL: the architect authors no branch, so
+    # land_via_grant reports "fail-closed" every poll (a real never-created branch
+    # can spuriously read "landed" off an empty tip in `_observe_landed` — a git
+    # artifact, not the R1d path under test). Stub the ONE grant seam.
+    _real_lvg = architect.landing.land_via_grant
+    architect.landing.land_via_grant = lambda *a, **k: "fail-closed"
+    try:
+        for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 4):
+            architect.advance(engR, mF)
+    finally:
+        architect.landing.land_via_grant = _real_lvg
+    r1d_pages = [p for p in getattr(engR, "operator_pages", [])
+                 if p.get("block") == "09-09"]
+    ok("RB7 (R1d STARTED-THEN-REFUSED FORWARD — must be GREEN): an architect that took its "
+       "forward turn but authored no branch (fail-closed + settled idle) is routed to the "
+       "operator ONCE and freed — never a silent wedge, never a benign drop; R1c stays quiet "
+       "(arch_started set, so not the cold-start window)",
+       len(r1d_pages) == 1 and mF["architect"].get("current_job") is None
+       and not jobF.get("landed"),
+       f"r1d_pages={r1d_pages} architect={mF['architect']} last_outcome={jobF.get('last_outcome')}")
+
 
 def main():
     run_reconcile_gate_scenario()

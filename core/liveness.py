@@ -257,10 +257,15 @@ def sweep(eng, snapshot):
         if w.get("status") == "released":
             continue
         block = w.get("block")
-        if isinstance(block, str) and block.startswith("review:"):
-            # A reviewer's own silence is ALREADY paced by core/sentry.py's
-            # `_pace_reviewers` arm, off the identical holding_since idiom —
-            # never a second, competing mechanism for the same worker.
+        if w.get("status") == "held":
+            # ADR-0006 R1b: the partition is by STATUS, not by block name. A
+            # reviewer in `held` (post-first-handback, at attest) is paced by
+            # core/sentry.py's `_pace_reviewers`; liveness owns every OTHER
+            # non-released record — INCLUDING a reviewer still `reviewing`
+            # (pre-first-handback), which the old blanket `review:` skip left
+            # watched by NEITHER ladder (the hung-reviewer wedge). `reviewing`
+            # and `held` are exhaustive+exclusive for a live reviewer, so this
+            # is a clean split: no double-pace, no gap.
             continue
 
         reported = w.pop("_reported", False)
@@ -300,6 +305,13 @@ def sweep(eng, snapshot):
                 # _pace_reviewers`'s identical gateless-release precedent:
                 # popping the worker record IS what frees the slot per
                 # `core/pipeline.py::in_flight_blocks`'s pre-gate branch).
+                # ADR-0006 R1b/H5: also SIGTERM the real runner — the pop frees
+                # the engine slot but a gateless stall (a hung reviewer, or a
+                # pre-online engineer) leaves a live `claude` that would else
+                # survive to teardown as an orphan/hard-kill. `_pace_reviewers`
+                # already releases (sentry.py:248); match it here.
+                if wid and not eng.dry:
+                    eng._release_worker(wid, reason=f"liveness-stall ({block})")
                 workers.pop(wid, None)
             stalled.append((block, wid, case_id))
             continue
