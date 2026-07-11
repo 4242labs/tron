@@ -466,6 +466,7 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         "escalations": final_manifest.get("escalations") or [],
         "scope": final_manifest.get("scope") or {},
         "proxy_settled": proxy_settled,   # ADR-0007: operator cases the LLM proxy settled
+        "abandoned_blocks": final_manifest.get("abandoned_blocks") or [],   # ADR-0007 §7: must be []
     }
     print("=" * 72)
     print(f"live: OUTCOME={outcome} reason={reason}")
@@ -485,6 +486,9 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     if operator_proxy:
         print(f"live: operator-proxy settled {proxy_settled} operator case(s) "
               f"(moderate-tier LLM stand-in)")
+    if result["abandoned_blocks"]:
+        print(f"live: ⚠ abandoned blocks: {result['abandoned_blocks']} — app NOT built to "
+              f"the fullest (ADR-0007 §7: any abandoned block is a REJECT)")
     print(f"live: copy root (forensics)={root}")
     print("=" * 72)
     return result
@@ -548,12 +552,23 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
       • if `expect_signature` is given (a moderate SIM's planted-wall marker), at least
         one page must carry it in its detail — so a swallowed planted wall masked by an
         unrelated escalation of the same count cannot pass.
+      • NO abandoned block (ADR-0007 §7) — the app must be built to the FULLEST. `session_end`
+        only proves every NON-abandoned in-scope block reached `done`; an operator/proxy
+        `abandon` drops a block from must-reach-done, so a valid `abandon` could otherwise
+        reach a clean `session_end` without the block ever being built. A SIM passes only
+        when EVERY block reaches done — `manifest["abandoned_blocks"]` must be empty.
     Returns (ok, reasons[])."""
     reasons = []
     if result.get("outcome") != "session_end":
         reasons.append(f"outcome={result.get('outcome')!r} (not a clean session_end)")
     if result.get("orphans"):
         reasons.append(f"orphan processes at exit: {result.get('orphans')}")
+    abandoned = result.get("abandoned_blocks") or []
+    if abandoned:
+        reasons.append(f"abandoned block(s): {abandoned} — the app was NOT built to the "
+                       f"fullest (ADR-0007 §7). A SIM passes only when EVERY block reaches "
+                       f"done; an operator/proxy `abandon` drops a block from must-reach-done, "
+                       f"so a valid abandon can reach session_end without building the block.")
     open_cases = [cid for cid, c in (result.get("cases") or {}).items()
                   if c.get("decision") is None]
     if open_cases:
