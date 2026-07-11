@@ -385,6 +385,21 @@ def _advance_record(eng, block, gate_state):
     truth_ref = eng._truth_ref()
 
     if not gate_state["record_ordered"]:
+        # Re-anchor the record baseline to the block doc's last-touching commit
+        # ALREADY ON TRUNK (truth_ref) at order time. The construction-time
+        # baseline (`new_state`) is captured BEFORE the ladder runs, but the
+        # worker's own merge/code commit may itself have touched the block doc
+        # (e.g. folding a completion note into it — observed live in T2-01-07)
+        # and then LANDED it at gate.merge. That already-on-trunk commit is
+        # `!= record_base_sha` and touches more than the Status field, so
+        # without this re-anchor `_advance_record` reads it as the record commit
+        # and escalates it out-of-gate before the worker has even made the real
+        # single-file flip. Anchoring to the on-TRUNK last-toucher (never the
+        # branch tip — a flip a worker committed eagerly, pre-order, is NOT yet
+        # on trunk and must still be detectable as the record commit) means only
+        # a block-doc commit BEYOND trunk counts as the flip.
+        gate_state["record_base_sha"] = gitobs.last_touching_sha(
+            eng.paths["root"], truth_ref, block_file)
         if wid and not eng.dry:
             eng.emit(
                 "gate.record",
