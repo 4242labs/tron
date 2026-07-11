@@ -44,9 +44,13 @@ Project-walls that the architect can absorb never page the operator, so they
 never pause the run — exactly the engine's own architect-first contract.
 
 Safety: real processes are ALWAYS torn down in `finally` (release, then
-hard-kill any survivor); the driver asserts + reports any orphan `worker_
-runner.py`/`claude` still alive whose command line references this run's copy
-root at exit.
+hard-kill any survivor); the driver then asserts NO orphan survived. The
+orphan check is SCOPED to this run's own fleet (`_owned_orphans`): a worker
+THIS driver spawned (its id is in `rs.spawn_calls`) still alive after teardown,
+or a real `worker_runner.py`/`claude` EXECUTABLE for this run's root. It is NOT
+a global command-line sweep — a bystander that merely references the copy root
+(a monitor shell, a `tail`, an editor whose path contains `.claude`) is
+structurally excluded, so it can never false-REJECT an otherwise-clean run.
 
 CLI: `python3 -m core.sim.live --workers 1 --budget-min 60 [--poll-sec 20]
 [--scaffold-src <dir>]`. Run SPARINGLY — this spends real tokens.
@@ -101,6 +105,68 @@ def _pgrep_scoped(root):
         out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True)
         lines += [ln for ln in out.stdout.splitlines() if ln.strip() and root in ln]
     return lines
+
+
+_SHELL_EXES = ("bash", "-bash", "sh", "dash", "zsh", "ksh", "env", "tail",
+               "grep", "cat", "less", "vi", "vim", "nano", "python3-monitor")
+
+
+def _is_worker_exec(cmdline):
+    """True iff `cmdline` is a REAL worker process — a `worker_runner.py` run or
+    a `claude` executable — NOT a shell/tool that merely references a path
+    containing `.claude` or the run root. Classifies by the EXECUTABLE (argv[0]
+    basename), so `/bin/bash -c '... /home/x/.claude/... /tmp/<root>/... '` (a
+    monitor/tail bystander) is excluded, while `.../claude.exe --session-id ...`
+    (a real re-parented worker child) is kept. This is the discriminator the old
+    substring sweep lacked — it matched `.claude` anywhere in any command line."""
+    if "worker_runner.py" in cmdline:
+        return True
+    toks = cmdline.split()
+    if not toks:
+        return False
+    exe = os.path.basename(toks[0])
+    if exe in _SHELL_EXES:
+        return False                       # a shell is never a worker, whatever it mentions
+    return exe.startswith("claude") or (exe.startswith("node") and "claude" in cmdline)
+
+
+def _owned_orphans(rs, root):
+    """Teardown-hygiene check SCOPED to this driver's OWN fleet — never a global
+    process sweep (that was `_pgrep_scoped`, which false-flagged any bystander
+    whose command line referenced the copy root or contained `.claude`). An
+    orphan is EITHER a worker THIS run spawned — its id is in `rs.spawn_calls`,
+    and its recorded pid is still alive after teardown (OS-truth via
+    `jobs.is_alive`) — OR a real `worker_runner.py`/`claude` EXECUTABLE for this
+    run's `root` that outlived its record (a re-parented child). A monitor shell,
+    a `tail`, or an editor that merely names the root is structurally excluded on
+    both arms: it is not in the spawn ledger, and it is not a worker executable
+    (`_is_worker_exec`). Returns a list of human-readable survivor lines (empty ==
+    a clean teardown)."""
+    survivors = []
+    idx = jobs.index()
+    for wid in sorted({c["worker_id"] for c in (rs.spawn_calls or [])}):
+        if jobs.is_alive(wid, idx):
+            rec = jobs.find(wid, idx) or {}
+            survivors.append(f"{wid} (pid={rec.get('pid')}) — spawned worker still alive after teardown")
+    self_pid = os.getpid()
+    for pat in ("worker_runner.py", "claude"):
+        out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True)
+        for ln in out.stdout.splitlines():
+            ln = ln.strip()
+            if not ln or root not in ln:
+                continue
+            parts = ln.split(None, 1)
+            if len(parts) < 2:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            if pid == self_pid or not _is_worker_exec(parts[1]):
+                continue
+            if ln not in survivors:
+                survivors.append(ln)
+    return survivors
 
 
 def _pulse(eng, root, manifest, loop_i, started_at):
@@ -293,7 +359,7 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     finally:
         escalated_kills = rs.teardown(timeout_s=10.0)
         rs.__exit__(None, None, None)
-        orphans = _pgrep_scoped(root)
+        orphans = _owned_orphans(rs, root)
         final_manifest = state.load(ctx)
         try:
             final_tip = gitobs.tip_sha(root, MAIN, False)[:12]
