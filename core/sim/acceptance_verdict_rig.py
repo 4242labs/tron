@@ -16,9 +16,10 @@ Proofs:
   V5  R2d: escalations recorded, trivial (expect 0)    -> REJECT
   V6  R2d: escalations recorded, MODERATE (expect 1,
       one matching page) -> ACCEPT (log allowed for N>0; no false-positive)
-  V7  R2e: session_end + a hard-kill                   -> REJECT
-  V8  R2e: budget outcome + a hard-kill -> REJECT on OUTCOME, but NOT on the kill
-      (kills expected on a non-clean end; no spurious kill-reason)
+  V7  R2e: session_end + a hard-kill -> ACCEPT (WARNING not REJECT — no clean-run
+      false-positive; the kill is surfaced by run_live's ⚠, never the verdict)
+  V8  R2e demotion scoped: a real defect (open case) + a kill -> still REJECT on
+      the defect, never a kill-reason
 
 `ok(name, cond, detail)`; `main()` prints `PASS (n/m)`, exits non-zero on fail.
 """
@@ -96,18 +97,24 @@ def main():
        "the planted-wall path legitimately populates the log; ACCEPTs",
        okv and not reasons, f"reasons={reasons}")
 
-    # V7 — R2e hard-kill at a clean session_end
+    # V7 — R2e is a WARNING, NOT a REJECT (ADR §7): a hard-kill at an otherwise-clean
+    # session_end must NOT fail the verdict (a >10s claude SIGTERM latency on a
+    # mid-turn actor is architecture, not an ignored release — a hard conjunct would
+    # false-REJECT a clean run). It is surfaced by run_live's ⚠ output, not here.
     okv, reasons = live._acceptance_verdict(
         _clean(escalated_kills=["engineer-01-02"]), expect_pages=0)
-    ok("V7 (R2e): a hard-kill at session_end REJECTs (a clean end releases gracefully)",
-       not okv and any("hard-kill" in r for r in reasons), f"reasons={reasons}")
+    ok("V7 (R2e WARNING not REJECT): a hard-kill at an otherwise-clean session_end does "
+       "NOT fail the verdict (no clean-run false-positive; surfaced as a run_live warning)",
+       okv and not reasons, f"reasons={reasons}")
 
-    # V8 — R2e must NOT add a kill reason on a non-session_end outcome
+    # V8 — a genuine defect (open case) STILL REJECTs even alongside a kill: R2e's
+    # demotion didn't weaken the real conjuncts.
     okv, reasons = live._acceptance_verdict(
-        _clean(outcome="budget", escalated_kills=["engineer-01-02"]), expect_pages=0)
-    ok("V8 (R2e no-FP): on a budget outcome the kill is EXPECTED — REJECT is on outcome, "
-       "never a spurious kill-reason",
-       not okv and any("outcome" in r for r in reasons)
+        _clean(escalated_kills=["engineer-01-02"],
+               cases={"c1": {"decision": None}}), expect_pages=0)
+    ok("V8 (R2e demotion is scoped): a real defect (dangling case) still REJECTs even "
+       "with a kill present — only the kill-alone conjunct was demoted",
+       not okv and any("OPEN" in r for r in reasons)
        and not any("hard-kill" in r for r in reasons), f"reasons={reasons}")
 
     passed = sum(1 for _, c, _ in _results if c)

@@ -450,6 +450,13 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     print(f"live: loops={loop_i} elapsed_min={result['elapsed_min']:.1f} "
           f"final_trunk_tip={final_tip}")
     print(f"live: orphans_at_exit={orphans} (hard-killed: {escalated_kills})")
+    if outcome == "session_end" and escalated_kills:
+        # ADR-0006 R2e (WARNING, not a verdict REJECT): a clean session_end should
+        # release every worker gracefully — a hard-kill here is a shutdown-cleanliness
+        # signal worth an eyeball (possibly a >10s claude SIGTERM latency, possibly an
+        # ignored release), surfaced but never auto-failing the run.
+        print(f"live: ⚠ R2e WARNING — clean session_end still needed a hard-kill: "
+              f"{escalated_kills} (verify: mid-turn SIGTERM latency vs ignored release)")
     print(f"live: cases={list(result['cases'].keys())} "
           f"pages={list(result['operator_pages'].keys())} "
           f"escalations={len(result['escalations'])}")
@@ -552,18 +559,15 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
                        f"(kinds={kinds}) — a gate/worker stalled to a cap even if no page "
                        f"survived on the case surface; a trivial SIM must have zero "
                        f"(R2d honest escalation log)")
-    # ADR-0006 R2e: a clean session_end leaves NOTHING to hard-kill — every worker
-    # releases on its own (block workers on gate-close, the reviewer on attest, the
-    # architect idle). A non-empty `escalated_kills` at session_end means a worker
-    # ignored graceful release — a shutdown-cleanliness signal the orphan check
-    # (which runs AFTER the hard-kill, so `orphans` is then empty) discards. Scoped
-    # to session_end: a budget/wall outcome already fails on `outcome`, and its
-    # kills are expected, not an anomaly.
-    kills = result.get("escalated_kills") or []
-    if result.get("outcome") == "session_end" and kills:
-        reasons.append(f"worker(s) needed a hard-kill at teardown: {kills} — a clean "
-                       f"session_end releases every worker gracefully; a SIGKILL means one "
-                       f"ignored release (R2e shutdown cleanliness)")
+    # ADR-0006 R2e is a WARNING, NOT a hard REJECT (ADR §7: a worker legitimately
+    # mid-turn at teardown can only exit once its `claude` child dies from the group
+    # SIGTERM; if that real CLI-shutdown latency exceeds the 10s graceful window it
+    # is SIGKILLed — being killed mid-turn is architecture, not "ignored release" —
+    # so a hard conjunct here would false-REJECT a clean run). `escalated_kills` is
+    # surfaced prominently by `run_live`'s own output (a clean session_end that
+    # needed a hard-kill is flagged ⚠ there); it never fails the verdict on its own.
+    # Upgrade path (deferred): exempt only a provably-`working`-at-teardown actor and
+    # REJECT a non-working one — needs `teardown` to record each kill's state.
     return (not reasons), reasons
 
 

@@ -385,13 +385,19 @@ def _order_triage(eng, job):
 _ARCHITECT_IDLE_DEBOUNCE_TICKS = 2
 _LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
 # ADR-0006 R1c: how many ticks an ORDERED architect may sit never-having-worked
-# before its stall is paged. Generous vs the settled-idle debounce (2) because a
-# legitimate cold start (spawn + model latency) has not begun its first turn yet;
-# a genuinely dead/hung-before-first-turn architect never becomes working and
-# trips this cap. Only the started-latch's `arch_started==False` window is
-# governed here (a started-then-hung architect is owned by the settled-idle/R1d
-# backstops, which CAN false-clear-safely because the turn provably ran).
-_ARCHITECT_COLD_START_CAP_TICKS = 6
+# before its stall is paged. Only the started-latch's `arch_started==False` window
+# is governed here (a started-then-hung architect is owned by the settled-idle/R1d
+# backstops, which CAN false-clear-safely because the turn provably ran). Sized
+# GENEROUSLY: the sole job is to beat the run's wall-clock budget (default 60 min)
+# so a genuinely dead/never-spawned architect is paged rather than silently wedging
+# to budget — it need NOT be tight. At the live poll cadence (~20s/tick) 15 ticks
+# ≈ 5 min, comfortably longer than any real cold start (the runner writes
+# `state="working"` at turn-START / mailbox-pickup, so this window is bounded by
+# process-spawn + poll latency, NOT LLM response latency) yet ~55 min before budget.
+# (Peer-review note: R1c pages straight to the operator with no ping step; a
+# graduated ping-then-page ladder like the worker silence net is a future refinement
+# — watch the real cold-start timing on the next live SIM.)
+_ARCHITECT_COLD_START_CAP_TICKS = 15
 
 
 def _architect_settled_idle(eng, job):

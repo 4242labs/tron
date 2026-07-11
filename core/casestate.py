@@ -418,16 +418,20 @@ def architect_resolve(eng, manifest, case_id, verdict, note=None):
 def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
     """Mint a case `owner="operator"` from BIRTH and page immediately — a
     legitimate direct-to-operator path for an escalation the architect itself
-    cannot be architect-first'd for. Two callers:
+    cannot be architect-first'd for. Three callers, all in `core/architect.py`:
     (1) the architect's OWN `operator` verdict for a triage job that never had an
     existing casestate case behind it (`core/classify.py`'s unclassified path —
-    raw free text with no block/gate to park; `core/architect.py::_advance_triage`);
-    (2) ADR-0006 R1c, `core/architect.py::_architect_liveness_ladder` — a
-    cold-start/dead architect's OWN stall (the architect cannot triage its own
-    death, and it is pool-excluded from every worker liveness net). Neither is a
-    bypass of architect-first for WORKER escalations: a `worker.wall`/`sentry.cap`/
-    liveness-stall for a worker NEVER reaches here directly — those always go
-    through `open_case` -> `core/architect.py::enqueue_triage` -> `architect_resolve`."""
+    raw free text with no block/gate to park; `_advance_triage`);
+    (2) ADR-0006 R1c, `_architect_liveness_ladder` — a cold-start/dead architect's
+    OWN stall (the architect cannot triage its own death, and it is pool-excluded
+    from every worker liveness net);
+    (3) ADR-0006 R1d, `_backstop_refused_authoring` — the architect took its
+    ordered forward/log turn but authored NO branch (land grant fail-closed) and
+    settled idle; its own refusal routes here so the work is never a silent wedge
+    or a dropped log-review finding. None is a bypass of architect-first for WORKER
+    escalations: a `worker.wall`/`sentry.cap`/liveness-stall for a worker NEVER
+    reaches here directly — those always go through `open_case` ->
+    `core/architect.py::enqueue_triage` -> `architect_resolve`."""
     cases = manifest.setdefault("cases", {})
     case_id = next_case_id(manifest, block, source)
     cases[case_id] = {
