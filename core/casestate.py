@@ -275,7 +275,24 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
         # a bare one, never re-mutate the stage/escalation fields it just set.
         gate_state["parked_case"] = case_id
 
-    if worker_id and not eng.dry:
+    # Evict the worker ONLY when THIS case actually parks the worker's OWN
+    # gate (BLOCKED/CLOSED). A worker whose own gate is still IN-FLIGHT is
+    # mid-ladder — a recoverable wall (e.g. a land-grant patch-id re-mint the
+    # worker itself resolves, or a wall whose case block id doesn't resolve to
+    # the worker's live gate) must NOT free its slot: gate.record/close still
+    # need that same worker to make the ✅ status-flip and close-out commits.
+    # Freeing it here strands those stages with no worker and the gate silently
+    # wedges at `record` (the s1 first-honest-SIM stall root). The worker's own
+    # gate is looked up by the worker, never by the (possibly mismatched) case
+    # block — so the guard holds regardless of block-id correlation.
+    worker_gate = None
+    if worker_id:
+        wrec = (manifest.get("workers") or {}).get(worker_id) or {}
+        wblock = wrec.get("block")
+        worker_gate = (manifest.get("gates") or {}).get(wblock) if wblock else None
+    worker_parked = worker_gate is not None and worker_gate.get("stage") in (
+        gate.STAGE_ESCALATED, gate.STAGE_CLOSED)
+    if worker_id and not eng.dry and worker_parked:
         eng._release_worker(worker_id, reason=f"case {case_id} ({source})")
 
     # Wave 18 (GAP-E): architect-first, always — NEVER an immediate operator
