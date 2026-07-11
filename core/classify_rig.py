@@ -638,10 +638,12 @@ def run_scenario_self_triage_guard():
     classify._triage_unclassified(
         eng, mA, "Sorted: it's a branch declaration, no architect action.",
         {"kind": "worker", "id": arch_id}, ["unclassified"])
-    ok("SG1 (SELF-TRIAGE-GUARD LOCK — must be GREEN): architect narration of "
-       "its own in-flight triage records a benign 'answer' verdict and spawns "
-       "NO new triage (no phantom self-loop, no session-end wedge)",
-       (mA.get("triage_verdicts") or {}).get("triage-1", {}).get("verdict") == "answer"
+    ok("SG1 (SELF-SOURCE CREATION GUARD, R1a — must be GREEN): architect narration "
+       "of its own in-flight triage creates NOTHING — no new triage AND no verdict "
+       "write. The old source-AGNOSTIC benign 'answer' write is deleted: it swallowed "
+       "a GENUINE worker.wall the instant the architect narrated (M1). Resolution of "
+       "the in-flight triage is now the R1b architect-idle backstop, never narration",
+       not (mA.get("triage_verdicts") or {})
        and len(mA.get("architect_queue") or []) == 0,
        f"verdicts={mA.get('triage_verdicts')} queue={mA.get('architect_queue')}")
     mB = {"architect": {"status": "idle", "current_job": None}, "architect_queue": []}

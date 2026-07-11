@@ -237,28 +237,23 @@ def _route_wall(eng, manifest, rep):
     slots = rep.get("slots") or {}
     detail = slots.get("detail") or (rep.get("text") or "").strip() \
         or f"worker {worker_id!r} raised a wall (no detail text)"
+    # R1a (ADR-0005) — the architect can never be the SOURCE of a triage/case.
     # A "wall" whose sender is the architect is the architect NARRATING (its
-    # status/reasoning while working a triage — "sorted it", "operator's call,
-    # re-mint"), never a real worker wall: the architect cannot wall or triage
-    # ITSELF. Routing it as a wall spawned phantom worker.wall-sourced triages
-    # that neither the classify self-triage-guard nor the phantom-grace (both
-    # classify.unclassified-only) cover — they could loop/wedge session-end
-    # (s6 first-honest-SIM). Resolve the architect's in-flight triage benignly
-    # instead (its clean escalation path is a structured architect.triage_verdict,
-    # unaffected); never a new case/triage from the architect's own prose.
+    # reasoning while working a triage — "operator's call, re-mint"), never a real
+    # worker wall. Short-circuit CREATION here and create nothing — critically,
+    # ahead of `casestate.open_case` below, which would otherwise mint a spurious
+    # architect-OWNED case (and park a gate) from the mis-tagged narration; a guard
+    # only inside `enqueue_triage` runs too late, leaving that case with no triage
+    # to resolve it — an orphan case that R3's terminal gate would then deadlock on
+    # (A4). Deliberately NO benign 'answer' write for its in-flight triage (the old
+    # self-wall guard): that write was source-AGNOSTIC and swallowed a GENUINE
+    # worker.wall the moment the architect narrated (M1). The architect's in-flight
+    # triage resolves via the single idle-gated, source-directional backstop in
+    # `architect._advance_triage` (R1b) — LOUD to the operator for a genuine wall.
     if worker_id == architect.ARCHITECT_WID:
-        arch = manifest.get("architect") or {}
-        cur = arch.get("current_job") or {}
-        if cur.get("kind") == "triage" and cur.get("triage_id"):
-            verdicts = manifest.setdefault("triage_verdicts", {})
-            verdicts.setdefault(cur["triage_id"], {"verdict": "answer",
-                "note": "architect narration (mis-tagged worker.wall) while triaging"})
-            eng.log("flow", f"router: worker.wall FROM the architect (narration) -> "
-                            f"benign 'answer' verdict for its in-flight triage "
-                            f"{cur['triage_id']!r}, no new triage (self-wall guard)")
-        else:
-            eng.log("flow", "router: worker.wall FROM the architect (narration), no "
-                            "in-flight triage -> logged, no case/triage (self-wall guard)")
+        eng.log("flow", "router: worker.wall FROM the architect (narration) -> "
+                        "created nothing (R1a self-source guard, ahead of open_case); "
+                        "any in-flight triage resolves via the architect-idle backstop")
         return
     if not block:
         eng.log("flow", f"router: block-less worker.wall from {worker_id!r} "

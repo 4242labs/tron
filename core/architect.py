@@ -313,6 +313,15 @@ def enqueue_triage(eng, manifest, case_id, source, block, detail, worker_id=None
     for a case-bearing job only — see `_has_triage_job`'s own docstring."""
     manifest.setdefault("architect", new_state())
     queue = manifest.setdefault("architect_queue", [])
+    # R1a (ADR-0005) final backstop: the architect can never be the SOURCE of a
+    # triage — its own narration creates nothing. The call-site guards (classify /
+    # router, ahead of open_case) are primary; this is defense-in-depth so no
+    # future creation path can queue an architect-sourced triage. Its OWN in-flight
+    # triage resolves via the R1b idle backstop, never by self-enqueue.
+    if worker_id == ARCHITECT_WID:
+        eng.log("flow", "architect: enqueue_triage refused — sender is the architect "
+                        "itself (R1a self-source backstop); created nothing")
+        return
     if _has_triage_job(manifest, case_id):
         return
     triage_id = _next_triage_id(manifest)
@@ -344,17 +353,37 @@ def _order_triage(eng, job):
                     f"(source={job.get('source')!r})")
 
 
-# A `classify.unclassified` triage is a LOW-CONFIDENCE phantom: classify could
-# not even tag the worker message (routinely a benign status narration — "landed
-# cleanly, standing by", a branch declaration). The architect is ordered a turn
-# to look; a real blocker gets a structured architect.triage_verdict
-# (verdict='operator'). If instead the architect responds with a loosely-tagged
-# / prose message (which never routes to a verdict) or nothing, the phantom must
-# NOT wedge the architect busy forever — that blocks every later job (log-review)
-# and session-end (the s3/s4 first-honest-SIM tail). After this many ordered
-# ticks with no verdict, a phantom auto-resolves benignly. ~4 min at the live
-# runner's ~20s tick — comfortably past the architect's own ordered turn.
-_PHANTOM_TRIAGE_GRACE_TICKS = 12
+# R1b (ADR-0005) — the architect-idle, source-directional triage backstop.
+#
+# A triage the architect has been ordered but has NOT resolved with a structured
+# `architect.triage_verdict` must neither WEDGE the fleet nor SWALLOW a real
+# escalation:
+#   • wedge — blocker B: the architect stuck ~13 min on a block-less worker.wall
+#     it could not verdict, blocking every later job + session-end;
+#   • swallow — M1/F2: the old self-guards benign-'answer'-ed a GENUINE escalation
+#     the instant the architect narrated a turn (the courier harvests every turn),
+#     so the planted operator wall never paged — the false-green disease.
+#
+# The backstop resolves the triage once the architect has genuinely TAKEN ITS TURN
+# and settled idle with no verdict — keyed on the REAL runner signal
+# `eng._worker_working(ARCHITECT_WID)` (the same seam liveness/sentry gate on),
+# NOT a wall-clock tick count. A `claude -p` turn posts nothing until it finishes,
+# so while the architect is provably mid-turn the backstop HOLDS (idle_ticks reset);
+# it only arms across genuinely settled-idle ticks. `_ARCHITECT_IDLE_DEBOUNCE_TICKS`
+# is a small debounce so a brief between-turns idle blip of a multi-turn architect
+# is not mistaken for "finished" — it is NOT a timeout (the counter freezes the
+# instant the architect is working again), it debounces the idle signal.
+#
+# Resolution is DIRECTIONAL by the TRUSTED source label (set by the router/engine
+# at enqueue — `casestate.open_case` / `router` / `classify` — never by classify's
+# tag of the architect's own prose): a low-confidence source resolves benign
+# ('answer', never wedges session-end); a genuine escalation resolves LOUD
+# ('operator', its real page — never swallowed). This replaces BOTH the
+# classify.unclassified-only phantom grace (which left a real worker.wall wedged)
+# and the two source-agnostic self-guards' benign write (which swallowed genuine
+# walls); the self-source CREATION guards move to R1a (classify.py / router.py).
+_ARCHITECT_IDLE_DEBOUNCE_TICKS = 2
+_LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
 
 
 def _advance_triage(eng, manifest, job):
@@ -369,6 +398,12 @@ def _advance_triage(eng, manifest, job):
                        # module (see its own module docstring); both are
                        # always fully loaded by the time either is CALLED
 
+    if job.get("resolved"):
+        # Idempotent: `advance` clears current_job the tick after resolved is set,
+        # so the live engine never re-enters — but never re-apply a verdict (e.g.
+        # re-page an operator case) if a caller ticks a resolved job again.
+        return
+
     if not job.get("ordered"):
         _order_triage(eng, job)
         return
@@ -377,24 +412,36 @@ def _advance_triage(eng, manifest, job):
         verdicts = manifest.get("triage_verdicts") or {}
         v = verdicts.get(job["triage_id"])
         if v is None:
-            # A real (worker.wall, block/case-bearing) triage still waits on the
-            # architect's routed verdict — unchanged. A `classify.unclassified`
-            # PHANTOM instead auto-resolves benignly once the architect has had
-            # its ordered turn (grace window) with no structured verdict — it
-            # must never wedge the architect + session-end (see the constant).
-            if job.get("source") != "classify.unclassified":
+            # No structured verdict yet (R1b — see the constant block above).
+            # HOLD while the architect is provably mid-turn: a real `claude -p`
+            # turn posts nothing observable until it finishes, so only genuine
+            # settled-idle time may arm the backstop. Duck-typed + crash-safe,
+            # exactly as core/sentry.py + core/liveness.py read the SAME hook;
+            # absent/erroring hook (dry rigs) reads not-working, so the backstop
+            # arms across ordinary ticks there.
+            fn = getattr(eng, "_worker_working", None)
+            working = False
+            if callable(fn):
+                try:
+                    working = bool(fn(ARCHITECT_WID))
+                except Exception:   # noqa: BLE001 — a broken hook never wedges triage
+                    working = False
+            if working:
+                job["idle_ticks"] = 0
                 return
-            job["await_ticks"] = job.get("await_ticks", 0) + 1
-            if job["await_ticks"] < _PHANTOM_TRIAGE_GRACE_TICKS:
+            job["idle_ticks"] = job.get("idle_ticks", 0) + 1
+            if job["idle_ticks"] < _ARCHITECT_IDLE_DEBOUNCE_TICKS:
                 return
-            job["verdict"] = "answer"
-            job["note"] = ("phantom classify.unclassified triage — no structured "
-                           "architect verdict within grace; benign auto-resolve "
-                           "(never wedges session-end)")
-            eng.log("flow", f"architect[triage:{job['triage_id']}]: phantom "
-                            f"(classify.unclassified) unresolved after "
-                            f"{job['await_ticks']} ordered ticks -> benign 'answer' "
-                            f"auto-resolve (never wedges session-end)")
+            genuine = job.get("source") not in _LOW_CONFIDENCE_TRIAGE_SOURCES
+            job["verdict"] = "operator" if genuine else "answer"
+            job["note"] = (
+                f"architect settled idle after its ordered turn with no structured "
+                f"triage_verdict (source={job.get('source')!r}) -> "
+                + ("LOUD 'operator' backstop — a genuine escalation is never "
+                   "swallowed (R1b)" if genuine else
+                   "benign 'answer' backstop — a low-confidence phantom never "
+                   "wedges session-end (R1b)"))
+            eng.log("flow", f"architect[triage:{job['triage_id']}]: {job['note']}")
         else:
             verdict = v.get("verdict")
             if verdict not in ("scope_forward", "answer", "operator"):

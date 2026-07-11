@@ -886,18 +886,24 @@ def main():
        and "01-02" not in (m_c.get("reconciled") or []),
        f"reconciled={m_c.get('reconciled')}")
 
-    # ══ Z4 (SELF-WALL GUARD, s6): a worker.wall FROM the architect is narration
-    #    (it can't wall/triage itself) — resolve its in-flight triage benignly,
-    #    open NO new case/triage. ══
+    # ══ Z4 (SELF-SOURCE CREATION GUARD, R1a/ADR-0005): a worker.wall FROM the
+    #    architect is narration (it can never be the SOURCE of a triage/case) —
+    #    the router short-circuits CREATION ahead of open_case and creates NOTHING:
+    #    no case, no triage, AND no verdict write. The old source-agnostic benign
+    #    'answer' write is deleted (it swallowed a genuine escalation — M1); the
+    #    architect's in-flight triage resolves via the R1b idle backstop, never
+    #    from its own prose here. Critically, a mis-tagged narration that carried a
+    #    block must NOT mint a spurious architect-owned case (A4 orphan-case hole). ══
     m_d = {"architect": {"status": "busy",
                         "current_job": {"kind": "triage", "triage_id": "triage-9"}},
            "cases": {}, "architect_queue": [], "workers": {}, "gates": {}}
     router._route_wall(lock_eng, m_d,
         {"tag": "worker.wall", "agent_id": architect.ARCHITECT_WID,
          "text": "Operator's call — grant re-mint, a clean one; worker proceeds."})
-    ok("Z4 (SELF-WALL GUARD — must be GREEN): a worker.wall from the architect "
-       "resolves its in-flight triage benignly and opens NO new case/triage",
-       (m_d.get("triage_verdicts") or {}).get("triage-9", {}).get("verdict") == "answer"
+    ok("Z4 (SELF-SOURCE CREATION GUARD — must be GREEN): a worker.wall from the "
+       "architect creates NOTHING — no case, no triage, no verdict write (R1a); its "
+       "in-flight triage resolves via the R1b idle backstop, never its own prose",
+       not (m_d.get("triage_verdicts") or {})
        and not m_d.get("cases") and len(m_d.get("architect_queue") or []) == 0,
        f"verdicts={m_d.get('triage_verdicts')} cases={list((m_d.get('cases') or {}).keys())} "
        f"queue={len(m_d.get('architect_queue') or [])}")

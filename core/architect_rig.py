@@ -287,6 +287,15 @@ class MiniEng:
     def _spawn_architect(self):
         self.architect_spawns.append(True)
 
+    def _page_operator(self, case_id, block, detail, worker_id=None, manifest=None):
+        # Rig stub for the R1b LOUD backstop path (a genuine triage the architect
+        # could not verdict resolves to 'operator' -> casestate pages). Records the
+        # page and returns a delivered receipt, exactly the shape casestate reads.
+        self.operator_pages = getattr(self, "operator_pages", [])
+        self.operator_pages.append({"case_id": case_id, "block": block,
+                                    "detail": detail, "worker_id": worker_id})
+        return "delivered"
+
 
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
@@ -788,41 +797,93 @@ def run_forward_scenario():
 
 
 def run_phantom_triage_grace_scenario():
-    """s4 first-honest-SIM lock: a `classify.unclassified` PHANTOM triage that
-    never gets a structured verdict auto-resolves benignly after the grace
-    window — it can NEVER wedge the architect + session-end. A real
-    `worker.wall` triage never auto-resolves here (still requires a verdict)."""
+    """R1b (ADR-0005) idle-gated, source-DIRECTIONAL backstop lock. A triage the
+    architect took its ordered turn on but never verdicted must neither wedge the
+    fleet (blocker B) nor swallow a real escalation (M1). Directional by TRUSTED
+    source: a low-confidence `classify.unclassified` phantom resolves BENIGN
+    ('answer', never wedges session-end); a GENUINE `worker.wall` resolves LOUD
+    ('operator', a real page — never swallowed). The backstop is keyed on the
+    architect being settled-idle (`eng._worker_working` absent on MiniEng -> reads
+    not-working under the dry rig, so it arms across the idle debounce), NOT a
+    wall-clock tick count. It also HOLDS while the architect is provably mid-turn
+    (PT3 below)."""
     root = build_root()
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
     tron_ctx = Ctx(inst)
     eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
 
+    # PT1 — low-confidence phantom -> BENIGN 'answer' backstop.
     mA = {"architect": {"status": "busy"}, "triage_verdicts": {}}
     jobA = {"kind": "triage", "triage_id": "triage-1", "source": "classify.unclassified",
             "block": None, "worker_id": "engineer-01-03", "ordered": True,
             "verdict": None, "resolved": False}
     mA["architect"]["current_job"] = jobA
-    for _ in range(architect._PHANTOM_TRIAGE_GRACE_TICKS + 1):
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
         architect._advance_triage(eng, mA, jobA)
-    ok("PT1 (PHANTOM-TRIAGE GRACE LOCK — must be GREEN): a classify.unclassified "
-       "phantom triage with no verdict auto-resolves benignly after the grace "
-       "window — never wedges the architect/session-end",
+    ok("PT1 (LOW-CONFIDENCE BENIGN BACKSTOP, R1b — must be GREEN): a "
+       "classify.unclassified phantom with no verdict auto-resolves BENIGN "
+       "('answer') once the architect settles idle — never wedges session-end",
        jobA.get("resolved") is True and jobA.get("verdict") == "answer",
        f"resolved={jobA.get('resolved')} verdict={jobA.get('verdict')} "
-       f"ticks={jobA.get('await_ticks')}")
+       f"idle_ticks={jobA.get('idle_ticks')}")
 
-    mB = {"architect": {"status": "busy"}, "triage_verdicts": {}}
+    # PT2 — GENUINE worker.wall the architect could not verdict -> LOUD 'operator'
+    # (blocker B fixed: it no longer wedges; M1 fixed: it is never swallowed benign).
+    mB = {"architect": {"status": "busy"}, "triage_verdicts": {},
+          "cases": {"case-01-02-1": {"case_id": "case-01-02-1", "block": "01-02",
+                                     "source": "worker.wall", "worker_id": "engineer-01-02",
+                                     "owner": "architect", "decision": None}}}
     jobB = {"kind": "triage", "triage_id": "triage-2", "source": "worker.wall",
             "block": "01-02", "case_id": "case-01-02-1", "worker_id": "engineer-01-02",
             "ordered": True, "verdict": None, "resolved": False}
     mB["architect"]["current_job"] = jobB
-    for _ in range(architect._PHANTOM_TRIAGE_GRACE_TICKS + 5):
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
         architect._advance_triage(eng, mB, jobB)
-    ok("PT2 (REAL-TRIAGE PARITY — must be GREEN): a real worker.wall triage never "
-       "auto-resolves without a real verdict (still requires architect input)",
-       jobB.get("resolved") is not True and jobB.get("verdict") is None,
-       f"resolved={jobB.get('resolved')} verdict={jobB.get('verdict')}")
+    paged = getattr(eng, "operator_pages", [])
+    ok("PT2 (GENUINE LOUD BACKSTOP, R1b — must be GREEN): a real worker.wall the "
+       "architect never verdicts resolves LOUD to 'operator' (paged), never wedged "
+       "(blocker B) and never swallowed benign (M1)",
+       jobB.get("resolved") is True and jobB.get("verdict") == "operator"
+       and mB["cases"]["case-01-02-1"].get("owner") == "operator"
+       and any(p["case_id"] == "case-01-02-1" for p in paged),
+       f"resolved={jobB.get('resolved')} verdict={jobB.get('verdict')} "
+       f"owner={mB['cases']['case-01-02-1'].get('owner')} paged={paged}")
+
+    # PT3 — the backstop HOLDS while the architect is provably mid-turn: a real
+    # `claude -p` turn posts nothing until it finishes, so a working architect must
+    # NEVER trip the backstop however long the turn (the A3 multi-turn-race fix).
+    class _WorkingEng(MiniEng):
+        def _worker_working(self, wid):
+            return wid == architect.ARCHITECT_WID   # architect always mid-turn
+    engW = _WorkingEng(root, tron_ctx, test_command="true", worker_count=1)
+    mC = {"architect": {"status": "busy"}, "triage_verdicts": {}}
+    jobC = {"kind": "triage", "triage_id": "triage-3", "source": "worker.wall",
+            "block": "01-02", "case_id": "case-01-02-9", "worker_id": "engineer-01-02",
+            "ordered": True, "verdict": None, "resolved": False}
+    mC["architect"]["current_job"] = jobC
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+        architect._advance_triage(engW, mC, jobC)
+    ok("PT3 (WORKING-ARCHITECT HOLD, R1b/A3 — must be GREEN): while the architect is "
+       "provably mid-turn (_worker_working True) the backstop NEVER fires, however "
+       "many ticks — no premature page, no multi-turn race",
+       jobC.get("resolved") is not True and jobC.get("verdict") is None
+       and jobC.get("idle_ticks", 0) == 0,
+       f"resolved={jobC.get('resolved')} verdict={jobC.get('verdict')} "
+       f"idle_ticks={jobC.get('idle_ticks')}")
+
+    # PT4 — R1a enqueue backstop: enqueue_triage from the architect itself creates
+    # nothing (defense-in-depth; the call-site guards in classify/router are primary).
+    engE = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    mD = {"architect_queue": []}
+    architect.enqueue_triage(engE, mD, None, "worker.wall", None,
+                             "architect narration that somehow reached enqueue",
+                             worker_id=architect.ARCHITECT_WID)
+    ok("PT4 (SELF-SOURCE ENQUEUE BACKSTOP, R1a — must be GREEN): enqueue_triage whose "
+       "sender is the architect itself queues NOTHING (defense-in-depth over the "
+       "classify/router call-site guards)",
+       len(mD.get("architect_queue") or []) == 0,
+       f"queue={mD.get('architect_queue')}")
 
 
 def main():
