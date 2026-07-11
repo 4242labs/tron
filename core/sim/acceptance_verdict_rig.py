@@ -20,6 +20,9 @@ Proofs:
       false-positive; the kill is surfaced by run_live's ⚠, never the verdict)
   V8  R2e demotion scoped: a real defect (open case) + a kill -> still REJECT on
       the defect, never a kill-reason
+  V9  ADR-0007 §7: an abandoned block -> REJECT (the app was not built to the fullest)
+  V10 ADR-0007 §7 THE HOLE: a moderate abandon-close with FULL escalation fidelity
+      (paged, settled, signature carried) -> STILL REJECT — a valid abandon never greens
 
 `ok(name, cond, detail)`; `main()` prints `PASS (n/m)`, exits non-zero on fail.
 """
@@ -52,6 +55,7 @@ def _clean(**over):
         "operator_pages": {},
         "escalations": [],
         "escalated_kills": [],
+        "abandoned_blocks": [],
     }
     r.update(over)
     return r
@@ -116,6 +120,25 @@ def main():
        "with a kill present — only the kill-alone conjunct was demoted",
        not okv and any("OPEN" in r for r in reasons)
        and not any("hard-kill" in r for r in reasons), f"reasons={reasons}")
+
+    # V9 — ADR-0007 §7: an abandoned block REJECTs a trivial SIM (app not built to the fullest)
+    okv, reasons = live._acceptance_verdict(_clean(abandoned_blocks=["01-03"]), expect_pages=0)
+    ok("V9 (ADR-0007 §7): an abandoned block REJECTs even at a clean session_end "
+       "(the app was NOT built to the fullest)",
+       not okv and any("abandoned" in r for r in reasons), f"reasons={reasons}")
+
+    # V10 — THE HOLE, closed: a MODERATE abandon-close that satisfies escalation fidelity
+    # (planted wall paged, case settled, signature carried) STILL REJECTs because the block
+    # was abandoned rather than built. This is the exact false-green ADR-0007 §7 names.
+    okv, reasons = live._acceptance_verdict(
+        _clean(operator_pages={"p1": {"case_id": "c1", "detail": "PLANTED-XYZ"}},
+               cases={"c1": {"decision": "abandon"}},
+               abandoned_blocks=["01-05"],
+               escalations=[{"block": "01-05", "stage": "local", "kind": "wall"}]),
+        expect_pages=1, expect_signature="PLANTED-XYZ")
+    ok("V10 (ADR-0007 §7, THE HOLE): a moderate abandon-close with FULL escalation fidelity "
+       "(paged, settled, signature) STILL REJECTs — a valid abandon never greens an unbuilt block",
+       not okv and any("abandoned" in r for r in reasons), f"reasons={reasons}")
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.sim.acceptance_verdict_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
