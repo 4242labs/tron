@@ -175,6 +175,24 @@ def _route_online(eng, manifest, workers, gates, rep):
 
     block = worker.get("block")
     block_file = worker.get("block_file")
+    # A REVIEWER is spawned AND ordered by core.reviewers.dispatch (a PMT-SPAWN
+    # review order) and carries a `review:<type>` PSEUDO-block — the ONLY worker
+    # block containing a literal ':' (reviewers.review_block; real pipeline ids
+    # are living-doc ID cells that never contain a ':'). It is NOT a buildable
+    # block, so the engineer build-ASSIGN below ("you own block review:code, read
+    # its spec at None and build it end to end, declare a branch") is a MALFORMED
+    # order: a read-only reviewer correctly refuses to branch/build and walls the
+    # run (the T2-10 reviewer wall → operator page). Never ASSIGN a reviewer as a
+    # builder; its review order already went out at spawn. Mark it assigned so a
+    # repeat worker.online is inert (same idempotency the `assigned` guard gives
+    # an engineer), and let the DONE-REVIEW flow (core.reviewers) drive it.
+    if isinstance(block, str) and ":" in block:
+        worker["assigned"] = True
+        eng.log("flow", f"router: {agent_id!r} is a reviewer (pseudo-block "
+                        f"{block!r}) — already ordered at spawn (PMT-SPAWN), "
+                        f"no build ASSIGN")
+        return
+
     if not eng.dry:
         assignment = (f"[TRON]  {agent_id} — you own block {block}. Read its "
                       f"spec at {block_file} and build it end to end. Declare "
