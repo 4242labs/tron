@@ -14,9 +14,10 @@ Covers:
   AC-4  record step: trunk-stage evidence report -> gate orders RECORD (gate.record);
         ✅ on trunk at stage record -> content-check -> CLOSE; a record-PR window never
         parks on the operator (no merge case)
-  AC-5  content check inspects the record commit's OWN diff (real git): pure Status flip
-        passes; extra file / extra line fails; a concurrent unrelated merge in between
-        does not false-positive
+  AC-5  content check inspects the record commit's OWN diff (real git): the block-doc
+        completion paperwork (Status flip + the skill-prescribed Completed date) passes;
+        extra file / a non-metadata (code/prose) line fails; a concurrent unrelated merge
+        in between does not false-positive
   AC-6  CLOSE cleanliness (real git): clean replica releases; leftover branch /
         uncommitted state is rejected and escalates at the cap — never trust-released
   AC-7  the `recorded` tag sweep is atomic: routing.yaml + tron.md + lint CANON_TAGS +
@@ -260,15 +261,23 @@ def t_record_commit_real_git():
     _git(d, "commit", "-aqm", "unrelated merge")
     okc, detail = trunk.record_commit_ok(d, bf)
     ok("AC-5 concurrent unrelated merge does not false-positive", okc, detail)
-    # flip + extra line in the block doc -> non-conforming
+    # flip + the skill-prescribed Completed date -> CONFORMING (both are block-doc
+    # completion paperwork; session-end skill §6 prescribes adding the Completed date,
+    # so escalating it out-of-gate walled a legitimate record — s5 first-honest-SIM)
     with open(os.path.join(d, bf), "a") as fh:
         fh.write("**Completed:** 2026-07-01\n")
-    _git(d, "commit", "-aqm", "record with extras")
+    _git(d, "commit", "-aqm", "record status + completed")
     okc, detail = trunk.record_commit_ok(d, bf)
-    ok("AC-5 extra changed line fails the check", not okc, detail)
-    # flip + a second file in the same commit -> non-conforming
-    with open(os.path.join(d, bf), "w") as fh:
-        fh.write("# Block A-01\n**Status:** ✅ Done\n**Merge approval:** auto\n\nbody\n**Completed:** 2026-07-01\n")
+    ok("AC-5 Status flip + Completed date conforms", okc, detail)
+    # a genuine non-metadata line (code/prose) in the block doc -> still non-conforming
+    with open(os.path.join(d, bf), "a") as fh:
+        fh.write("some sneaky prose line\n")
+    _git(d, "commit", "-aqm", "record with prose")
+    okc, detail = trunk.record_commit_ok(d, bf)
+    ok("AC-5 a non-metadata changed line still fails the check", not okc, detail)
+    # flip + a second file in the SAME commit -> non-conforming (multi-file)
+    with open(os.path.join(d, bf), "a") as fh:
+        fh.write("**Completed:** 2026-07-02\n")
     with open(os.path.join(d, "src.txt"), "a") as fh:
         fh.write("sneak\n")
     _git(d, "add", "-A")
