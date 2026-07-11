@@ -398,18 +398,38 @@ def _architect_settled_idle(eng, job):
     (dry rigs) reads not-working, so the backstop arms across ordinary ticks there.
     Used by BOTH `_advance_triage` and the reconcile arm of `advance` — one
     invariant ('the architect took its turn and settled with no structured
-    result'), never two copies that could drift."""
+    result'), never two copies that could drift.
+
+    STARTED-LATCH (peer-review hardening): the debounce distinguishes 'settled
+    after a genuine turn' from 'NEVER STARTED a turn' only when a real liveness
+    hook is present. When `_worker_working` is callable (a live run), the backstop
+    arms ONLY after the architect has been observed working at least once for this
+    job (`job["arch_started"]`) — else a slow cold-start or a silently-dead
+    architect (which NO liveness net watches, since it is pool-excluded from
+    `manifest["workers"]`) would arm the backstop having never reconciled: a silent
+    false-clear. A never-started architect instead HOLDS (the run fails honestly on
+    budget, never false-greens). When the hook is ABSENT (dry rigs), turn-start is
+    unobservable, so the documented dry behavior is preserved: arm across the idle
+    debounce."""
     if not job.get("ordered"):
         return False
     fn = getattr(eng, "_worker_working", None)
-    working = False
-    if callable(fn):
-        try:
-            working = bool(fn(ARCHITECT_WID))
-        except Exception:   # noqa: BLE001 — a broken hook never wedges the job
-            working = False
+    if not callable(fn):
+        # No liveness hook (dry rigs): turn-start is unobservable — preserve the
+        # documented 'arm across the idle debounce' behavior the R1b rigs rely on.
+        job["idle_ticks"] = job.get("idle_ticks", 0) + 1
+        return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
+    try:
+        working = bool(fn(ARCHITECT_WID))
+    except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+        working = False
     if working:
+        job["arch_started"] = True   # latch: the architect provably took its turn
         job["idle_ticks"] = 0
+        return False
+    if not job.get("arch_started"):
+        # Not working AND never observed working: a cold-start/dead architect, not
+        # a settled one. HOLD — never arm the backstop on a turn that never ran.
         return False
     job["idle_ticks"] = job.get("idle_ticks", 0) + 1
     return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
