@@ -254,10 +254,23 @@ def _route_architect_reconciled(eng, manifest, rep):
     adversarial input, same forgiving discipline `worker.online` already
     gets for an unrecordable sender. Idempotent: a block already in
     `manifest["reconciled"]` is a no-op, never appended twice."""
-    block = rep.get("block")
+    # The block a reconcile clears is the architect's OWN in-flight reconcile
+    # job's block — NEVER a block id parsed from the architect's free-text
+    # report. The architect works exactly one reconcile job at a time, and
+    # classify routinely resolves `block` to the just-LANDED block named in the
+    # prose ("Forward review of 01-02 done — no impact on 01-03") rather than
+    # the GATED block ('01-03') the job actually holds; trusting the report's
+    # block recorded reconciled['01-02'] while `advance` waited on reconciled
+    # ['01-03'], so `current_job` never cleared and the dependent block stayed
+    # permanently gated (the s2 first-honest-SIM 01-03 stall). The report's own
+    # block is only a fallback when no reconcile job is in flight.
+    arch = manifest.get("architect") or {}
+    cur = arch.get("current_job") or {}
+    job_block = cur.get("block") if cur.get("kind") == "reconcile" else None
+    block = job_block or rep.get("block")
     if not block:
         eng.log("flow", f"router: dropped a malformed architect.reconciled "
-                        f"report (no block): {rep!r}")
+                        f"report (no in-flight reconcile job, no block): {rep!r}")
         return
     reconciled = manifest.setdefault("reconciled", [])
     if block in reconciled:
