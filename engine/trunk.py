@@ -736,8 +736,20 @@ def record_commit_ok(repo_root, block_file, dry=False, truth_ref="main"):
     for ln in out.splitlines():
         if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
             continue
-        if ln.startswith(("+", "-")) and not ln[1:].strip().lower().startswith("**status:**"):
-            return False, f"record commit {sha[:8]} changes more than the Status field"
+        if ln.startswith(("+", "-")):
+            stripped = ln[1:].strip().lower()
+            # The record commit is block-doc COMPLETION paperwork: the `**Status:**`
+            # flip AND the `**Completed:**` date the session-end skill (§6) itself
+            # prescribes are BOTH conforming — a real worker records both in one
+            # commit (worker variance: some flip Status alone, some add Completed;
+            # rejecting the latter escalated an otherwise-clean record and wedged
+            # the gate — the s5 first-honest-SIM stall). Blank lines are harmless
+            # formatting. Anything else (code, prose, other fields) is still an
+            # out-of-gate change; other FILES are already caught by the
+            # exactly-one-file check above.
+            if stripped and not stripped.startswith(("**status:**", "**completed:**")):
+                return False, (f"record commit {sha[:8]} changes more than the "
+                               f"Status/Completed fields")
     return True, sha[:8]
 
 

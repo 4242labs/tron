@@ -612,6 +612,35 @@ def main():
     ok("D3: the block doc on trunk shows ✅ — the clean flip genuinely landed",
        "**Status:** ✅ Done" in doc_on_main_d, f"doc head={doc_on_main_d.splitlines()[:4]}")
 
+    # ══ RM (s5 first-honest-SIM lock): the record gate accepts the `**Status:**`
+    #    flip AND the `**Completed:**` date the session-end skill (§6) prescribes
+    #    — block-doc completion paperwork. Only genuine out-of-gate changes
+    #    (code/other files/prose) still escalate. ══
+    import tempfile
+    rmd = tempfile.mkdtemp(prefix="gate-full-rig-record-meta-")
+    rmbf = "meta/blocks/09-01.md"
+    os.makedirs(os.path.join(rmd, "meta", "blocks"), exist_ok=True)
+    def _rmw(text):
+        with open(os.path.join(rmd, rmbf), "w") as f:
+            f.write(text)
+    _git(["init", "-b", MAIN], rmd)
+    _git(["config", "user.email", "r@t.local"], rmd)
+    _git(["config", "user.name", "record-meta-rig"], rmd)
+    _rmw("# Block 09-01\n\n**Status:** 🔄 In progress\n")
+    _git(["add", "-A"], rmd); _git(["commit", "-m", "seed"], rmd)
+    _rmw("# Block 09-01\n\n**Status:** ✅ Done\n**Completed:** 2026-07-11\n")
+    _git(["add", "-A"], rmd); _git(["commit", "-m", "record: done"], rmd)
+    okA, detA = trunk.record_commit_ok(rmd, rmbf, dry=False, truth_ref=MAIN)
+    ok("RM1 (RECORD-METADATA LOCK — must be GREEN): a record commit with the "
+       "Status flip AND the skill-prescribed Completed date is conforming",
+       okA is True, f"ok={okA} detail={detA}")
+    _rmw("# Block 09-01\n\n**Status:** ✅ Done\n**Completed:** 2026-07-11\n\nsneaky extra prose\n")
+    _git(["add", "-A"], rmd); _git(["commit", "-m", "record: sneaky"], rmd)
+    okB, detB = trunk.record_commit_ok(rmd, rmbf, dry=False, truth_ref=MAIN)
+    ok("RM2 (OUT-OF-GATE PARITY — must be GREEN): a record commit that also "
+       "changes a non-metadata line is still escalated (out-of-gate)",
+       okB is False, f"ok={okB} detail={detB}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.gate_full_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")
