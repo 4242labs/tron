@@ -835,6 +835,38 @@ def main():
        "STAGE_* constants/read-only helpers, never edits their source",
        True, "verified by diff review, not a runtime check — see hand-back git status")
 
+    # ══ LOCK (s1 first-honest-SIM record-stall root): open_case must NOT evict
+    #    a worker whose OWN gate is still in-flight. A recoverable wall (a land-
+    #    grant re-mint, or one whose case block id doesn't resolve to the live
+    #    gate) left the worker mid-ladder; freeing its slot stranded gate.record/
+    #    close with no worker and the gate silently wedged at `record`. ══
+    lock_eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    m_a = {"workers": {"eng-X": {"block": "10-01", "status": "busy"}},
+           "gates": {"10-01": {"stage": gate.STAGE_RECORD, "wid": "eng-X"}},
+           "cases": {}}
+    casestate.open_case(lock_eng, m_a, "10-01-branch", "worker.wall",
+                        "recoverable land re-mint — worker still mid-ladder",
+                        worker_id="eng-X", kind="wall")
+    ok("Z1 (RECORD-STALL LOCK — must be GREEN): open_case did NOT release a "
+       "worker whose own gate is still in-flight (the case block didn't park "
+       "it) — gate.record/close keep their worker",
+       lock_eng.workers.get("eng-X", {}).get("status") != "released"
+       and m_a["gates"]["10-01"]["stage"] == gate.STAGE_RECORD,
+       f"worker={lock_eng.workers.get('eng-X')} gate={m_a['gates']['10-01']['stage']}")
+    lock_eng2 = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    m_b = {"workers": {"eng-Y": {"block": "10-02", "status": "busy"}},
+           "gates": {"10-02": {"stage": gate.STAGE_LOCAL, "wid": "eng-Y"}},
+           "cases": {}}
+    casestate.open_case(lock_eng2, m_b, "10-02", "worker.wall",
+                        "genuine blocker — only the operator can settle scope",
+                        worker_id="eng-Y", kind="wall")
+    ok("Z2 (GENUINE-BLOCKER PARITY — must be GREEN): open_case DID park the "
+       "worker's own gate (BLOCKED) and free its slot when the case IS its "
+       "real block — unchanged behaviour",
+       m_b["gates"]["10-02"]["stage"] == gate.STAGE_ESCALATED
+       and lock_eng2.workers.get("eng-Y", {}).get("status") == "released",
+       f"worker={lock_eng2.workers.get('eng-Y')} gate={m_b['gates']['10-02']['stage']}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.casestate_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")
