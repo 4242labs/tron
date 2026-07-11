@@ -179,6 +179,45 @@ def make_record_commit(root, branch, block_file_rel):
     return tip
 
 
+def make_closeout_commit(root, branch, block):
+    """Rig-as-worker, session-end (third act on the SAME branch, now already
+    ✅-on-trunk via gate.record): a REAL multi-file close-out commit — a
+    session log plus a pipeline-sync line — the paperwork PMT-CLOSE lands via
+    its OWN `close`-scoped grant, deliberately SEPARATE from the single-file
+    record flip. Deliberately does NOT touch the block doc (record already
+    flipped it) so this exercises the close LAND path without disturbing the
+    record assertions. This is the commit whose missing land wedged every
+    live close before T2-01-05's fix (the worker committed it, reported
+    `clean`, and blocked forever on a grant `_advance_close` never minted)."""
+    _git(["checkout", branch], root)
+    log_rel = os.path.join("meta", "agents", "tron", "logs", f"close-{block}.md")
+    log_path = os.path.join(root, log_rel)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, "w") as f:
+        f.write(f"# close-out {block}\nsession-end paperwork (rig-as-worker)\n")
+    pipe_path = os.path.join(root, "meta", "pipeline.md")
+    with open(pipe_path, "a") as f:
+        f.write(f"- {block}: done\n")
+    _git(["add", "-A"], root)
+    _git(["commit", "-m", f"close: {block} session-end paperwork"], root)
+    tip = _git_out(["rev-parse", "HEAD"], root)
+    _git(["checkout", "--detach", MAIN], root)
+    return tip
+
+
+def carve_worktree(root, branch, rel_path):
+    """Rig-as-worker: carve a REAL linked worktree checked out on `branch` —
+    the shape a real worker runs from (`meta/agents/tron/scratch/<wid>/...`).
+    Its presence is exactly what `replica_clean` must observe gone before the
+    slot releases; a rig that closes with NO worktree (as this one did before
+    T2-01-05) can never exercise the teardown the real close hinges on.
+    Returns the absolute worktree path."""
+    wt = os.path.join(root, rel_path)
+    os.makedirs(os.path.dirname(wt), exist_ok=True)
+    _git(["worktree", "add", wt, branch], root)
+    return wt
+
+
 def run_land(root, grants_dir, case_id):
     """Run the REAL `meta/scripts/land.sh` via subprocess — the rig playing
     the worker ordered to land its own grant, per ADR-0002 D2."""
@@ -262,27 +301,35 @@ LOCAL_PASS_REPORT = {"verdict": "pass",
 
 
 def drive_full(eng, block, gstate, root, grants_dir, local_report=None,
-               teardown_branch=None, stop_outcomes=frozenset(), max_iters=40):
+               teardown_branch=None, teardown_worktree=None,
+               stop_outcomes=frozenset(), max_iters=40):
     """The rig's tick-loop stand-in for the FULL ladder: repeatedly call
     `gate.advance`, playing the worker's real-OS-process actions on the
-    outcomes that require one — `merge_pending`/`record_pending` -> run the
-    REAL land.sh for the outcome's own case-id; `close_ordered` -> tear
-    down the branch for real. `local_report` is forwarded to every call
-    (harmless once the stage has moved past `gate.local` — `advance` only
-    consults it while stage == STAGE_LOCAL)."""
+    outcomes that require one — `merge_pending`/`record_pending`/
+    `close_pending` -> run the REAL land.sh for that stage's own case-id;
+    `close_holding` (paperwork already on trunk, replica not yet clean) ->
+    the worker's post-land teardown: remove any linked worktree on the
+    branch, then delete the branch, for real. `local_report` is forwarded to
+    every call (harmless once the stage has moved past `gate.local` —
+    `advance` only consults it while stage == STAGE_LOCAL)."""
+    case_key = {"merge_pending": "merge_case_id",
+                "record_pending": "record_case_id",
+                "close_pending": "close_case_id"}
     history = []
     torn_down = False
     for _ in range(max_iters):
         outcome, detail = gate.advance(eng, block, gstate, local_report=local_report)
         history.append((outcome, detail))
-        if outcome in ("merge_pending", "record_pending"):
-            case_id = gstate["merge_case_id"] if outcome == "merge_pending" else gstate["record_case_id"]
+        if outcome in case_key:
+            case_id = gstate[case_key[outcome]]
             rc, out, err = run_land(root, grants_dir, case_id)
             history.append(("land.sh", f"rc={rc} out={out!r} err={err!r}"))
             continue
-        if outcome == "close_ordered" and teardown_branch and not torn_down:
+        if outcome == "close_holding" and teardown_branch and not torn_down:
+            if teardown_worktree:
+                _git(["worktree", "remove", "--force", teardown_worktree], root)
             _git(["branch", "-D", teardown_branch], root)
-            history.append(("teardown", f"deleted branch {teardown_branch}"))
+            history.append(("teardown", f"removed worktree + deleted branch {teardown_branch}"))
             torn_down = True
             continue
         if outcome in stop_outcomes:
@@ -376,13 +423,36 @@ def main():
     ok("A12: gate_state advanced to the close stage", gstate_a["stage"] == gate.STAGE_CLOSE,
        f"stage={gstate_a['stage']}")
 
+    # Realistic close: the worker commits a SECOND, multi-file close-out on the
+    # branch (session log + pipeline sync — separate from the record flip) and
+    # is working from a REAL linked worktree. This is the exact shape that
+    # exposed the 'close never lands, worker blocks forever, sentry escalates a
+    # block whose work is actually done' root live in T2-01-05 — the old rig
+    # closed with no close-out commit and no worktree, so it never touched the
+    # close LAND path and the wall stayed invisible.
+    closeout_tip_a = make_closeout_commit(root, BRANCH_A, BLOCK_A)
+    wt_a = carve_worktree(root, BRANCH_A, os.path.join("meta", "agents", "tron",
+                                                       "scratch", "engineer-01-02", "logic"))
+    ok("A12b: rig-as-worker made a real multi-file close-out commit off trunk AND "
+       "is on a real linked worktree on the branch (the shape a real close has)",
+       bool(closeout_tip_a) and not is_ancestor(root, closeout_tip_a, MAIN)
+       and any(b == BRANCH_A for _, b in trunk.list_worktrees(root)),
+       f"closeout_tip={closeout_tip_a} worktrees={trunk.list_worktrees(root)}")
+
     history_a3 = drive_full(eng_a, BLOCK_A, gstate_a, root, grants_dir,
-                            teardown_branch=BRANCH_A, stop_outcomes={"closed", "escalate"},
-                            max_iters=10)
+                            teardown_branch=BRANCH_A, teardown_worktree=wt_a,
+                            stop_outcomes={"closed", "escalate"}, max_iters=12)
     outcomes_a3 = [o for o, _ in history_a3]
-    ok("A13: close drove to a genuine terminal (no escalate, real teardown happened)",
-       "closed" in outcomes_a3 and "teardown" in outcomes_a3 and "escalate" not in outcomes_a3,
-       f"outcomes={outcomes_a3}")
+    ok("A13 (THE CLOSE KILLER — must be GREEN): close LANDED the close-out paperwork "
+       "via its OWN content-bound grant (close_pending -> real land.sh -> replica "
+       "teardown -> closed), no escalate; close_case_id distinct from merge & record",
+       "close_pending" in outcomes_a3 and "land.sh" in outcomes_a3
+       and "closed" in outcomes_a3 and "teardown" in outcomes_a3
+       and "escalate" not in outcomes_a3
+       and is_ancestor(root, closeout_tip_a, MAIN)
+       and gstate_a.get("close_case_id") not in (None, gstate_a["record_case_id"],
+                                                 gstate_a["merge_case_id"]),
+       f"outcomes={outcomes_a3} close_case={gstate_a.get('close_case_id')}")
 
     branch_gone_a = not trunk.branch_exists(root, BRANCH_A, False)
     clean_now_a, clean_detail_a = trunk.replica_clean(root, BRANCH_A, MAIN, False)
@@ -395,14 +465,15 @@ def main():
        f"worker_state={eng_a.workers.get(WID_A)}")
 
     final_sha_a = _git_out(["rev-parse", MAIN], root)
-    ok("A16 (TERMINAL — must be GREEN): block 01-02 shows ✅ ON TRUNK (real sha), "
-       "worker slot freed, gate_state == closed — a FULL-ladder clean close on real git",
+    ok("A16 (TERMINAL — must be GREEN): block 01-02 shows ✅ ON TRUNK (real sha), the "
+       "close-out paperwork is the trunk tip, worker slot freed, gate_state == closed "
+       "— a FULL-ladder clean close on real git, close-out landed and all",
        gstate_a["stage"] == gate.STAGE_CLOSED
        and eng_a.workers.get(WID_A, {}).get("status") == "released"
        and "**Status:** ✅ Done" in _git_out(["show", f"{MAIN}:{block_file_a}"], root)
-       and final_sha_a == record_tip_a,
+       and final_sha_a == closeout_tip_a,
        f"gate_stage={gstate_a['stage']} worker={eng_a.workers.get(WID_A)} "
-       f"final_main={final_sha_a} record_tip_a={record_tip_a}")
+       f"final_main={final_sha_a} closeout_tip_a={closeout_tip_a}")
 
     # ══ Phase B — adversarial: gate.local with a bare/absent report never advances ══
     BLOCK_B, BRANCH_B, WID_B = "01-05", "feat/01-05", "engineer-01-05"

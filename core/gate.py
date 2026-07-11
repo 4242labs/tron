@@ -202,6 +202,7 @@ def new_state(eng, block, block_file, branch, wid):
         "record_case_id": None,
         "record_landed_sha": None,
         "close_ordered": False,
+        "close_case_id": None,
         "escalation": None,
     }
 
@@ -425,37 +426,71 @@ def _advance_record(eng, block, gate_state):
 
 
 def _advance_close(eng, block, gate_state):
-    """One close-stage step: order once (side effect, idempotent), then
-    every call re-checks the REAL replica. Releasing the slot is gated on
-    `gitobs.replica_clean` alone, never on a worker's confirmation message —
-    belt-and-suspenders: even an unsolicited/early confirm can't force a
-    release the git state doesn't back. An unclean replica HOLDS
-    (`close_holding`) — this function never counts attempts and never
-    escalates itself; `core/sentry.py` is the ONE place that caps ANY
-    stage's idle time, close included (wave 7 consolidation — this stage
-    used to self-cap via `CLOSE_ATTEMPT_CAP`, removed)."""
+    """One close-stage step. The close-out is a REAL landing, not a bare
+    teardown: a worker's session-end skill commits close-out paperwork —
+    block archival, the session log, pipeline sync — as its OWN commit on
+    the branch (deliberately split from the single-file `gate.record` Status
+    flip so record stays minimally verifiable). That commit must reach trunk
+    exactly like the record commit did, through the ONE landing primitive
+    under a content-bound `close`-scoped case-id — this is the grant
+    `PMT-CLOSE` promises the worker ('I mint your land grant and order the
+    land the moment I read your clean'). WITHOUT it the worker (correctly,
+    per its contract) commits paperwork, reports `clean`, and blocks forever
+    waiting on a grant that never comes — the confirmed 'no clean terminal
+    close' root, reproduced live in T2-01-05.
+
+    Sequence, all idempotent, none self-escalating (`core/sentry.py` is the
+    ONE idle cap): order close once; land the close-out paperwork while the
+    branch tip is still off trunk (`land_via_grant`, the SAME primitive
+    record uses — stage-agnostic); once it's on trunk (or the worker made no
+    close-out commit at all), release the slot only when the REAL replica is
+    clean (`gitobs.replica_clean` — branch gone, no worktree), never on a
+    worker's say-so."""
     branch = gate_state["branch"]
     wid = gate_state.get("wid")
+    truth_ref = eng._truth_ref()
 
     if not gate_state["close_ordered"]:
         if wid and not eng.dry:
             eng.emit(
                 "close.worker",
-                f"[TRON]  {wid} — ✅ is on trunk. Wrap up: delete {branch}, "
-                f"remove any worktree on it, sync local, then confirm clean.",
-                slots={},
+                f"[TRON]  {wid} — ✅ on trunk. Session-end: commit your close-out "
+                f"paperwork on {branch} and reply `clean {block}:`. I mint your land "
+                f"grant and order the land the moment I read it; then run land.sh, "
+                f"remove your worktree + {branch}, and sync local.",
+                slots={"block": block},
                 worker_id=wid,
                 kind="close.worker")
         gate_state["close_ordered"] = True
         eng.log("flow", f"gate[{block}] -> close (slot held)")
         return "close_ordered", f"ordered {wid or '(no worker)'} to close out"
 
+    # Land the close-out paperwork whenever the branch still carries unlanded
+    # commits (its tip is not yet an ancestor of trunk). land_via_grant is
+    # stage-agnostic — the SAME content-bound primitive record uses, under a
+    # `close`-scoped case-id. If the worker made no close-out commit (tip
+    # already == trunk) or the branch is already gone, this arm is skipped and
+    # we fall straight through to the teardown check.
+    tip = gitobs.tip_sha(eng.paths["root"], branch, eng.dry)
+    if tip and not gitobs.is_ancestor(eng.paths["root"], tip, truth_ref, eng.dry):
+        pid = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
+        case_id = gate_state.get("close_case_id") or landing.paperwork_case_id(
+            "close", branch, pid)
+        gate_state["close_case_id"] = case_id
+        outcome = landing.land_via_grant(eng, case_id, block, branch, wid,
+                                         "close.worker", "gate-close")
+        if outcome == "pending":
+            return "close_pending", f"grant live for {case_id}; awaiting land.sh"
+        if outcome == "fail-closed":
+            return "close_holding", f"close-out patch-id unresolvable for {branch}"
+        eng.log("flow", f"gate[{block}] close: paperwork landed on trunk ({case_id})")
+
     main_branch = eng.paths.get("main_branch", "main")
     clean, detail = gitobs.replica_clean(eng.paths["root"], branch, main_branch, eng.dry)
     if not clean:
-        # HOLDS, unconditionally, forever — no attempt count, no self-cap.
-        # `core/sentry.py` is the ONE place an idle close (like an idle ANY
-        # other stage) gets nudged then escalated.
+        # HOLDS until the worker's teardown is git-observable — no attempt
+        # count, no self-cap. `core/sentry.py` is the ONE place an idle close
+        # (like an idle ANY other stage) gets nudged then escalated.
         return "close_holding", detail or "replica not yet clean"
 
     if wid:

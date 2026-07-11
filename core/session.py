@@ -105,8 +105,13 @@ def check(manifest, view):
     docstring for the full contract. Never touches git/state IO itself."""
     inflight = pipeline.in_flight_blocks(manifest)
     abandoned = set(manifest.get("abandoned_blocks") or [])
+    # Dep resolution must see a block whose file was ARCHIVED at close (done by
+    # definition, `has_block_file` False, `archived` True) — else a dependent
+    # reads its dep as None, never resolves it `done`, and is wrongly flagged a
+    # stuck gap the instant its dependency closes (the T2-01-05 root). Mirrors
+    # `core/pipeline.dispatchable`'s own unfiltered status index.
     status_idx = {row["id"]: row.get("status")
-                 for row in view if row.get("has_block_file")}
+                 for row in view if row.get("has_block_file") or row.get("archived")}
 
     pending_ids = []
     stuck = []

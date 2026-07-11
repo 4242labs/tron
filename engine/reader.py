@@ -188,15 +188,44 @@ def load_blocks(blocks_dir):
     return out, by_file
 
 
+def load_archived_blocks(blocks_dir):
+    """Parse block files under `blocks_dir/archive/` — the blocks a worker's
+    session-end close-out git-mv'd out of the live dir. Returns {id: block}.
+
+    These are deliberately OUT of `load_blocks` (they must never re-enter the
+    dispatch view), but their STATUS must still resolve: a block is archived
+    only AFTER it lands ✅ done, and any block that `Depends on` it reads that
+    dep's status through `load` below. An unreadable archived dep resolves to
+    None, which is neither `done` (so the dependent never becomes
+    dispatchable) nor an in-scope wait (so `core/session.py` flags it a stuck
+    gap) — the confirmed T2-01-05 root: block 01-03 wedged 'to-do, depends_on
+    01-02, dep_statuses {01-02: None}' the instant 01-02 was archived."""
+    out = {}
+    archive_dir = os.path.join(blocks_dir, "archive")
+    if not os.path.isdir(archive_dir):
+        return out
+    for name in sorted(os.listdir(archive_dir)):
+        if not name.endswith(".md") or name == "block-template.md":
+            continue
+        b = parse_block(os.path.join(archive_dir, name))
+        if b.get("id"):
+            out[b["id"]] = b
+    return out
+
+
 def load(pipeline_path, blocks_dir):
     """The merged dispatch view: living-doc order + block-file truth.
 
     Returns a list of rows (living-doc order) each enriched with its block file's
     headers when present. Block file is authoritative for status/deps/gates (§3);
-    the living-doc row supplies order, section, and task text.
+    the living-doc row supplies order, section, and task text. A block whose file
+    has been archived at close is resolved from the archive for STATUS/deps only
+    (`archived=True`, `has_block_file=False`) so dependents still read it as done
+    while it stays permanently out of the dispatch view.
     """
     rows = parse_pipeline(pipeline_path)
     by_id, by_file = load_blocks(blocks_dir)
+    archived = load_archived_blocks(blocks_dir)
     view = []
     for r in rows:
         b = None
@@ -214,6 +243,22 @@ def load(pipeline_path, blocks_dir):
             row["role_hdr"] = b.get("role_hdr")
             row["tags"] = b.get("tags") or []
             row["has_block_file"] = True
+            row["archived"] = False
+        elif r["id"] in archived:
+            a = archived[r["id"]]
+            # Archived: status/deps resolve from the archived file (so a
+            # dependent reads this dep as done), but has_block_file stays
+            # False — `dispatchable()` never re-picks it and `session.py`
+            # skips it, exactly as for any row with no live block file.
+            row["status"] = a.get("status", row["status"])
+            row["depends_on"] = a.get("depends_on", [])
+            row["reviewer_class"] = a.get("reviewer_class")
+            row["merge_approval"] = a.get("merge_approval", "auto")
+            row["deploy"] = a.get("deploy")
+            row["role_hdr"] = a.get("role_hdr")
+            row["tags"] = a.get("tags") or []
+            row["has_block_file"] = False
+            row["archived"] = True
         else:
             row["depends_on"] = []
             row["reviewer_class"] = None
@@ -222,6 +267,7 @@ def load(pipeline_path, blocks_dir):
             row["role_hdr"] = None
             row["tags"] = []
             row["has_block_file"] = False
+            row["archived"] = False
         view.append(row)
     return view
 
