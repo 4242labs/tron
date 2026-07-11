@@ -886,10 +886,75 @@ def run_phantom_triage_grace_scenario():
        f"queue={mD.get('architect_queue')}")
 
 
+def run_reconcile_backstop_scenario():
+    """T2-12 regression: a NO-OP reconcile must not silently WEDGE the fleet. The
+    architect takes its ordered reconcile turn, finds no forward impact, and its
+    free-text ('no forward impact / work complete') is never routed as a structured
+    `architect.reconciled` — so the block never enters `manifest['reconciled']` and,
+    before the fix, `advance` held `current_job` busy FOREVER while the runner sat
+    idle: 01-03's dispatch hung with no wall/page/retry. The shared R1b idle backstop
+    (`_architect_settled_idle`) clears the gate once the architect settles idle after
+    its ordered turn — completion tied to ENGINE STATE, never to parsed prose."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    # RB1 — settled idle, no architect.reconciled -> backstop marks reconciled + clears.
+    eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobA = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mA = {"architect": {"status": "busy", "current_job": jobA, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect.advance(eng, mA)
+    ok("RB1 (RECONCILE NO-OP BACKSTOP KILLER — must be GREEN): a reconcile the "
+       "architect took its turn on but never reported architect.reconciled clears on "
+       "settled-idle (block marked reconciled, current_job freed, architect idle) — "
+       "never a silent WEDGE of 01-03's dispatch (the T2-12 hang)",
+       "01-03" in (mA.get("reconciled") or [])
+       and mA["architect"].get("current_job") is None
+       and mA["architect"].get("status") == "idle",
+       f"reconciled={mA.get('reconciled')} architect={mA['architect']}")
+
+    # RB2 — the backstop HOLDS while the architect is provably mid-turn (a real
+    # `claude -p` reconcile turn posts nothing until it finishes).
+    class _WorkingEng(MiniEng):
+        def _worker_working(self, wid):
+            return wid == architect.ARCHITECT_WID
+    engW = _WorkingEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobB = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mB = {"architect": {"status": "busy", "current_job": jobB, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+        architect.advance(engW, mB)
+    ok("RB2 (WORKING-ARCHITECT HOLD — must be GREEN): while the architect is provably "
+       "mid-reconcile-turn (_worker_working True) the backstop NEVER fires — current_job "
+       "held, block never prematurely marked reconciled, however many ticks",
+       "01-03" not in (mB.get("reconciled") or [])
+       and mB["architect"].get("current_job") is not None,
+       f"reconciled={mB.get('reconciled')} architect={mB['architect']}")
+
+    # RB3 — normal path intact: a real architect.reconciled clears via the observed
+    # arm, and the backstop never DOUBLE-adds the block.
+    eng2 = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobC = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True,
+            "idle_ticks": 0}
+    mC = {"architect": {"status": "busy", "current_job": jobC, "spawned": True},
+          "architect_queue": [], "reconciled": ["01-03"]}
+    architect.advance(eng2, mC)
+    ok("RB3 (NORMAL RECONCILE PATH INTACT — must be GREEN): when architect.reconciled "
+       "IS observed (block already in manifest['reconciled']) the gate clears via the "
+       "normal arm and '01-03' appears exactly once (backstop never double-adds)",
+       mC["architect"].get("current_job") is None
+       and (mC.get("reconciled") or []).count("01-03") == 1,
+       f"reconciled={mC.get('reconciled')} architect={mC['architect']}")
+
+
 def main():
     run_reconcile_gate_scenario()
     run_forward_scenario()
     run_phantom_triage_grace_scenario()
+    run_reconcile_backstop_scenario()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.architect_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

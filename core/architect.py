@@ -386,6 +386,35 @@ _ARCHITECT_IDLE_DEBOUNCE_TICKS = 2
 _LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
 
 
+def _architect_settled_idle(eng, job):
+    """The shared R1b ENGINE-STATE signal: True once the architect has genuinely
+    TAKEN its ordered turn for `job` and settled idle. HELD while the architect is
+    provably mid-turn (`eng._worker_working(ARCHITECT_WID)` — a real `claude -p`
+    turn posts nothing until it finishes, so only genuine settled-idle time arms
+    the backstop; `idle_ticks` resets the instant it works again), then armed after
+    `_ARCHITECT_IDLE_DEBOUNCE_TICKS` settled-idle ticks (a debounce for a between-
+    turns blip, NOT a wall-clock timeout). Duck-typed + crash-safe, exactly as
+    core/sentry.py + core/liveness.py read the SAME hook; an absent/erroring hook
+    (dry rigs) reads not-working, so the backstop arms across ordinary ticks there.
+    Used by BOTH `_advance_triage` and the reconcile arm of `advance` — one
+    invariant ('the architect took its turn and settled with no structured
+    result'), never two copies that could drift."""
+    if not job.get("ordered"):
+        return False
+    fn = getattr(eng, "_worker_working", None)
+    working = False
+    if callable(fn):
+        try:
+            working = bool(fn(ARCHITECT_WID))
+        except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+            working = False
+    if working:
+        job["idle_ticks"] = 0
+        return False
+    job["idle_ticks"] = job.get("idle_ticks", 0) + 1
+    return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
+
+
 def _advance_triage(eng, manifest, job):
     """One triage-job step (GAP-E, wave 18) — see module docstring for the
     full order-then-observe-then-apply shape. Sets `job["resolved"] = True`
@@ -413,24 +442,9 @@ def _advance_triage(eng, manifest, job):
         v = verdicts.get(job["triage_id"])
         if v is None:
             # No structured verdict yet (R1b — see the constant block above).
-            # HOLD while the architect is provably mid-turn: a real `claude -p`
-            # turn posts nothing observable until it finishes, so only genuine
-            # settled-idle time may arm the backstop. Duck-typed + crash-safe,
-            # exactly as core/sentry.py + core/liveness.py read the SAME hook;
-            # absent/erroring hook (dry rigs) reads not-working, so the backstop
-            # arms across ordinary ticks there.
-            fn = getattr(eng, "_worker_working", None)
-            working = False
-            if callable(fn):
-                try:
-                    working = bool(fn(ARCHITECT_WID))
-                except Exception:   # noqa: BLE001 — a broken hook never wedges triage
-                    working = False
-            if working:
-                job["idle_ticks"] = 0
-                return
-            job["idle_ticks"] = job.get("idle_ticks", 0) + 1
-            if job["idle_ticks"] < _ARCHITECT_IDLE_DEBOUNCE_TICKS:
+            # Arm only once the architect has genuinely taken its turn and settled
+            # idle (shared engine-state signal, HELD while it is mid-turn).
+            if not _architect_settled_idle(eng, job):
                 return
             genuine = job.get("source") not in _LOW_CONFIDENCE_TRIAGE_SOURCES
             job["verdict"] = "operator" if genuine else "answer"
@@ -710,6 +724,22 @@ def advance(eng, manifest):
                 eng.log("flow", f"architect[reconcile:{cur['block']}]: "
                                 f"architect.reconciled observed -> gate "
                                 f"cleared, architect idle")
+                arch["status"], arch["current_job"] = "idle", None
+            elif _architect_settled_idle(eng, cur):
+                # R1b-style backstop for reconcile (mirrors _advance_triage): the
+                # architect took its ordered reconcile turn and settled idle with
+                # NO `architect.reconciled` routed — a real-LLM NO-OP reconcile
+                # ("no forward impact") whose free-text classify couldn't tag as a
+                # structured reconciled report. Tie completion to ENGINE STATE
+                # (turn taken + settled idle), never to parsed prose: mark the
+                # block reconciled so 01-xx's dispatch is freed. A no-op is benign,
+                # and any REAL drift the architect missed surfaces as an ordinary
+                # build wall on that block (architect-first) — never a silent WEDGE
+                # of the whole fleet (the T2-12 reconcile-gate hang).
+                manifest.setdefault("reconciled", []).append(cur["block"])
+                eng.log("flow", f"architect[reconcile:{cur['block']}]: settled idle "
+                                f"after its ordered turn with no architect.reconciled "
+                                f"-> no-op reconcile backstop, gate cleared (R1b-style)")
                 arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "forward":
             _advance_forward(eng, manifest, cur)
