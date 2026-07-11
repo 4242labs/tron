@@ -179,6 +179,29 @@ def make_record_commit(root, branch, block_file_rel):
     return tip
 
 
+def make_code_commit_touching_doc(root, branch, code_file_rel, block_file_rel, marker):
+    """Rig-as-worker, the T2-01-07 shape: the CODE commit gate.merge lands
+    touches BOTH a real source file AND the block doc — a worker folding a
+    completion note into the block doc during the code phase (NOT the Status
+    field). Once merged, this already-landed commit is the LAST commit touching
+    the block doc, so a `_advance_record` that anchored its baseline before the
+    ladder ran would read THIS merge commit as the record commit and escalate it
+    out-of-gate (it touches >1 file, and its block-doc lines aren't the Status
+    field). Returns the branch tip."""
+    _git(["checkout", "-B", branch, MAIN], root)
+    cpath = os.path.join(root, code_file_rel)
+    with open(cpath, "a") as f:
+        f.write(f"\n// {marker} — core.gate_full_rig real code change\n")
+    bpath = os.path.join(root, block_file_rel)
+    with open(bpath, "a") as f:
+        f.write(f"\n<!-- completion note ({marker}): domain logic implemented, suite green -->\n")
+    _git(["add", "-A"], root)
+    _git(["commit", "-m", f"feat({branch}): {marker} + completion note in block doc"], root)
+    tip = _git_out(["rev-parse", "HEAD"], root)
+    _git(["checkout", "--detach", MAIN], root)
+    return tip
+
+
 def make_closeout_commit(root, branch, block):
     """Rig-as-worker, session-end (third act on the SAME branch, now already
     ✅-on-trunk via gate.record): a REAL multi-file close-out commit — a
@@ -545,6 +568,49 @@ def main():
     ok("C5: the block doc on trunk still shows 🔄 — never flipped to ✅",
        "**Status:** 🔄 In progress" in doc_on_main_c,
        f"doc head={doc_on_main_c.splitlines()[:4]}")
+
+    # ══ Phase D — the T2-01-07 record-baseline wall: the merge commit ALSO
+    #    touched the block doc; gate.record must WAIT for the clean flip, never
+    #    escalate the already-landed merge commit as an out-of-gate record ══
+    BLOCK_D, BRANCH_D, WID_D = "01-11", "feat/01-11", "engineer-01-11"
+    eng_d = MiniEng(root, grants_dir, test_command="true")
+    eng_d.workers[WID_D] = {"block": BLOCK_D, "status": "assigned"}
+    block_file_d = seed_block_doc(root, BLOCK_D, "meta/blocks/01-11.md")
+    code_tip_d = make_code_commit_touching_doc(root, BRANCH_D, CODE_FILE_REL,
+                                               block_file_d, "01-11-logic")
+
+    gstate_d = gate.new_state_full(eng_d, BLOCK_D, block_file_d, BRANCH_D, WID_D)
+    # Drive local -> merge -> trunk -> record ORDER. The merge commit (which
+    # touched the block doc) is now on trunk; gate.record must anchor its
+    # baseline HERE and wait, never escalate that merge commit.
+    hist_d1 = drive_full(eng_d, BLOCK_D, gstate_d, root, grants_dir,
+                         local_report=LOCAL_PASS_REPORT,
+                         stop_outcomes={"record_waiting"}, max_iters=20)
+    outcomes_d1 = [o for o, _ in hist_d1]
+    ok("D1 (THE RECORD-BASELINE KILLER — must be GREEN): with the merge commit "
+       "itself touching the block doc, gate.record ORDERED the flip and is "
+       "WAITING for it — it did NOT escalate the already-landed merge commit "
+       "out-of-gate",
+       "record_waiting" in outcomes_d1 and "escalate" not in outcomes_d1
+       and gstate_d["stage"] == gate.STAGE_RECORD and gstate_d.get("record_ordered"),
+       f"outcomes={outcomes_d1} stage={gstate_d['stage']} escalation={gstate_d.get('escalation')}")
+
+    # Now the worker makes the REAL single-file Status flip; gate.record must
+    # validate THAT commit, land it, and close cleanly.
+    record_tip_d = make_record_commit(root, BRANCH_D, block_file_d)
+    hist_d2 = drive_full(eng_d, BLOCK_D, gstate_d, root, grants_dir,
+                         stop_outcomes={"record_landed", "escalate"}, max_iters=20)
+    outcomes_d2 = [o for o, _ in hist_d2]
+    ok("D2 (must be GREEN): gate.record validated the CLEAN single-file flip "
+       "commit (not the merge commit), landed it via its own grant, never "
+       "escalated",
+       "record_landed" in outcomes_d2 and "escalate" not in outcomes_d2
+       and is_ancestor(root, record_tip_d, MAIN)
+       and gstate_d["stage"] == gate.STAGE_CLOSE,
+       f"outcomes={outcomes_d2} stage={gstate_d['stage']} escalation={gstate_d.get('escalation')}")
+    doc_on_main_d = _git_out(["show", f"{MAIN}:{block_file_d}"], root)
+    ok("D3: the block doc on trunk shows ✅ — the clean flip genuinely landed",
+       "**Status:** ✅ Done" in doc_on_main_d, f"doc head={doc_on_main_d.splitlines()[:4]}")
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.gate_full_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
