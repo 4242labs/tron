@@ -949,6 +949,49 @@ def run_reconcile_backstop_scenario():
        and (mC.get("reconciled") or []).count("01-03") == 1,
        f"reconciled={mC.get('reconciled')} architect={mC['architect']}")
 
+    # RB4 — live-like STARTED-then-SETTLED (peer-review #2 hardening): the architect
+    # is observed working (turn genuinely taken), THEN settles idle -> the started-latch
+    # permits the backstop to arm and clear the reconcile.
+    class _StartsThenIdleEng(MiniEng):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._wk = [True, True]      # working for two ticks, then idle
+        def _worker_working(self, wid):
+            if wid != architect.ARCHITECT_WID:
+                return False
+            return self._wk.pop(0) if self._wk else False
+    engS = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobD = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mD = {"architect": {"status": "busy", "current_job": jobD, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 3):
+        architect.advance(engS, mD)
+    ok("RB4 (STARTED-THEN-SETTLED ARMS — must be GREEN): once the architect is observed "
+       "working (turn taken) and THEN settles idle, the backstop arms and clears the "
+       "reconcile — the started-latch permits arming after a genuine turn",
+       "01-03" in (mD.get("reconciled") or []) and mD["architect"].get("current_job") is None,
+       f"reconciled={mD.get('reconciled')} architect={mD['architect']}")
+
+    # RB5 — live-like COLD-START / SILENTLY-DEAD (peer-review #2 KILLER): the architect
+    # is NEVER observed working. The backstop must NEVER arm (no silent false-clear of a
+    # reconcile that never ran); the reconcile HOLDS so the run fails honestly on budget.
+    class _NeverStartsEng(MiniEng):
+        def _worker_working(self, wid):
+            return False                 # architect never comes up
+    engN = _NeverStartsEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobE = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mE = {"architect": {"status": "busy", "current_job": jobE, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 20):
+        architect.advance(engN, mE)
+    ok("RB5 (COLD-START/DEAD HOLD KILLER — must be GREEN): an architect NEVER observed "
+       "working (slow cold-start or silently dead) NEVER arms the reconcile backstop, "
+       "however many ticks — no silent false-clear; the reconcile holds (run fails "
+       "honestly on budget) rather than falsely marking reconciled (peer-review #2)",
+       "01-03" not in (mE.get("reconciled") or [])
+       and mE["architect"].get("current_job") is not None,
+       f"reconciled={mE.get('reconciled')} architect={mE['architect']}")
+
 
 def main():
     run_reconcile_gate_scenario()
