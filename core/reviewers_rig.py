@@ -876,17 +876,37 @@ def run_scenario_c():
        f"workers={list((final_manifest.get('workers') or {}).keys())} "
        f"eng.workers[{rid}]={eng.workers.get(rid)}")
 
-    # ── the capped review must never wedge the whole drive: keep ticking
-    #     (never re-dispatches — counter already consumed at the ORIGINAL
-    #     dispatch and no new block has landed since) until a clean
-    #     session-end, off just the two ordinary blocks ──
+    # ── R3 (ADR-0005): the sentry.cap escalation opened a GENUINE operator case
+    #     (C-K4/C-K5). Two properties now hold together:
+    #     (a) the run must NOT false-green to session-end while that case is open
+    #         — ending past an unresolved operator escalation was the exact
+    #         false-green R3 closes; and
+    #     (b) the cap must not WEDGE the drive either — once the operator answers,
+    #         the run reaches a clean session-end off the two ordinary blocks.
+    #     (Before R3, session.check ignored open cases, so this drive "ended
+    #     clean" WITH the cap escalation still dangling — the false-green.) ──
+    i2a, held = drive(
+        eng, tron_ctx, hist, max_ticks=10,
+        attest=False, findings_first=finding, findings_second=finding)
+    ok("C-K7a (R3 ESCALATION-HELD KILLER — must be GREEN): the run does NOT reach "
+       "session-end while the sentry.cap operator case is unresolved (no false-green "
+       "past an open escalation)",
+       held is None, f"held={held} ticks={i2a + 1}")
+
+    import casestate   # settle the cap case exactly as the operator's own reply would
+    m = state.load(tron_ctx)
+    cap_case = next(c for c in (m.get("cases") or {}).values()
+                    if c.get("source") == "sentry.cap")
+    casestate.settle(eng, m, cap_case["case_id"], "abandon")
+    state.save(tron_ctx, m)
+
     i2, session_ended_tick2 = drive(
         eng, tron_ctx, hist, max_ticks=60,
         attest=False, findings_first=finding, findings_second=finding)
-    ok("C-K7 (NEVER-WEDGED KILLER — must be GREEN): the run still reaches "
-       "a clean session-end after the sentry cap — a paced/escalated "
-       "review never wedges the whole drive forever",
-       session_ended_tick2 is not None, f"ticks_used_after_cap={i2 + 1}")
+    ok("C-K7 (NEVER-WEDGED KILLER — must be GREEN): once the operator answers the "
+       "cap escalation the run reaches a clean session-end — the cap awaited a "
+       "decision, never wedged the drive (and never false-greened past it, C-K7a)",
+       session_ended_tick2 is not None, f"ticks_used_after_settle={i2 + 1}")
     ok("C-K8: no SECOND 'code' reviewer was ever dispatched after the cap "
        "(the counter stays consumed; no new block landed since)",
        len(hist.reviewer_seen) == 1, f"reviewer_seen={hist.reviewer_seen}")

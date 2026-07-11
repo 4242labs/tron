@@ -285,6 +285,80 @@ def t_record_commit_real_git():
     okc, detail = trunk.record_commit_ok(d, bf)
     ok("AC-5 multi-file record commit fails the check", not okc, detail)
     shutil.rmtree(d, ignore_errors=True)
+
+
+# ── R5 (ADR-0005): the record gate CONFORMS to the frozen skill §6 bundled
+#    close-out — the block-doc Status/Completed flip + its archival rename +
+#    this block's OWN pipeline row, as ONE commit, is accepted; out-of-lane is not ──
+def t_record_closeout_bundle_r5():
+    d = _mkrepo()
+    bf = "blocks/A-01.md"
+    arch = "blocks/archive/A-01.md"
+    pf = "pipeline.md"
+    with open(os.path.join(d, pf), "w") as fh:
+        fh.write("| A-01 | 🔄 | Block `blocks/A-01.md` |\n"
+                 "| B-02 | ✅ | Block `blocks/archive/B-02.md` |\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-qm", "seed pipeline")
+
+    def _bundle_commit(extra=None, pipeline_line=None, mv=True):
+        # flip Status + Completed on the block doc
+        with open(os.path.join(d, bf), "w") as fh:
+            fh.write("# Block A-01\n**Status:** ✅ Done\n**Completed:** 2026-07-11\n"
+                     "**Merge approval:** auto\n\nbody\n")
+        if mv:
+            os.makedirs(os.path.join(d, "blocks", "archive"), exist_ok=True)
+            _git(d, "mv", bf, arch)
+        if pipeline_line is not None:
+            with open(os.path.join(d, pf), "w") as fh:
+                fh.write(pipeline_line)
+        if extra is not None:
+            os.makedirs(os.path.dirname(os.path.join(d, extra)), exist_ok=True)
+            with open(os.path.join(d, extra), "w") as fh:
+                fh.write("sneak\n")
+        _git(d, "add", "-A")
+        _git(d, "commit", "-qm", "§6 close-out bundle")
+
+    # (1) the canonical §6 bundle: Status/Completed + archival rename + own pipeline row -> CONFORMS
+    _bundle_commit(pipeline_line="| A-01 | ✅ | Block `blocks/archive/A-01.md` |\n"
+                                 "| B-02 | ✅ | Block `blocks/archive/B-02.md` |\n")
+    okc, detail = trunk.record_commit_ok(d, bf, pipeline_file=pf, block_id="A-01")
+    ok("R5-RECORD-CLOSEOUT (must be GREEN): the frozen skill §6 bundle "
+       "(Status/Completed + archival rename + own-row pipeline) is ACCEPTED as ONE "
+       "record commit — engine conforms to the skill, no forced split", okc, detail)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (2) same bundle but the pipeline edit touches ANOTHER block's row -> REFUSED (out-of-lane)
+    d = _mkrepo()
+    with open(os.path.join(d, pf), "w") as fh:
+        fh.write("| A-01 | 🔄 | Block `blocks/A-01.md` |\n| B-02 | 🔄 | Block `blocks/B-02.md` |\n")
+    _git(d, "add", "-A"); _git(d, "commit", "-qm", "seed pipeline")
+    _bundle_commit(pipeline_line="| A-01 | ✅ | Block `blocks/archive/A-01.md` |\n"
+                                 "| B-02 | ✅ | Block `blocks/archive/B-02.md` |\n")   # flipped B-02 too
+    okc, detail = trunk.record_commit_ok(d, bf, pipeline_file=pf, block_id="A-01")
+    ok("R5 out-of-lane pipeline row (another block) is REFUSED", not okc, detail)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (3) same bundle but a stray code file rides along -> REFUSED
+    d = _mkrepo()
+    with open(os.path.join(d, pf), "w") as fh:
+        fh.write("| A-01 | 🔄 | Block `blocks/A-01.md` |\n")
+    _git(d, "add", "-A"); _git(d, "commit", "-qm", "seed pipeline")
+    _bundle_commit(pipeline_line="| A-01 | ✅ | Block `blocks/archive/A-01.md` |\n",
+                   extra="src/sneak.ts")
+    okc, detail = trunk.record_commit_ok(d, bf, pipeline_file=pf, block_id="A-01")
+    ok("R5 a stray code file bundled into the close-out is REFUSED", not okc, detail)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (4) a rename that is NOT the block-doc archival -> REFUSED
+    d = _mkrepo()
+    _git(d, "mv", "src.txt", "src2.txt")
+    with open(os.path.join(d, bf), "w") as fh:
+        fh.write("# Block A-01\n**Status:** ✅ Done\n**Merge approval:** auto\n\nbody\n")
+    _git(d, "add", "-A"); _git(d, "commit", "-qm", "status + unrelated rename")
+    okc, detail = trunk.record_commit_ok(d, bf, pipeline_file=pf, block_id="A-01")
+    ok("R5 a non-archival rename in the record commit is REFUSED", not okc, detail)
+    shutil.rmtree(d, ignore_errors=True)
     # full-path match (R4-3): a same-named file in another directory is a DIFFERENT path —
     # a pure flip of the decoy conforms for the decoy's path, and the check for the real
     # block doc still judges the real doc's own last commit (here: multi-file base -> fail).
@@ -387,6 +461,7 @@ def main():
     t_dedupe_seq()
     t_record_step()
     t_record_commit_real_git()
+    t_record_closeout_bundle_r5()
     t_replica_clean_real_git()
     t_confirm_close_gate()
     t_tag_sweep()
