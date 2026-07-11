@@ -376,6 +376,39 @@ def t_record_closeout_bundle_r5():
     shutil.rmtree(d2, ignore_errors=True)
 
 
+# ── R4 (ADR-0005): a CAS-loser is a non-ff the worker REBASES, never a wall ──
+def t_r4_nonff_rebase():
+    """A branch trunk moved past (a concurrent lander won the land.sh CAS) is a
+    `non-ff`, NOT a wall — the engine never walls it (no non-ff handler in core/fsm;
+    grep-clean) and the worker rebases onto fresh main and re-lands. This locks the
+    primitive that ritual relies on: `would_ff` reports non-ff on a diverged branch;
+    after a PURE rebase the branch is ff-able again AND its patch-id is unchanged (so
+    its land grant survives — no re-gate). Sustained churn is bounded elsewhere by the
+    ONE sentry idle cap -> operator (loud), never an infinite loop."""
+    d = _mkrepo()
+    _git(d, "checkout", "-qb", "feat/A-01x")
+    with open(os.path.join(d, "mine.txt"), "w") as fh:
+        fh.write("my work\n")
+    _git(d, "add", "-A"); _git(d, "commit", "-qm", "my work")
+    pid_before = trunk.patch_id(d, "feat/A-01x")
+    # a concurrent lander advances trunk past this branch's base
+    _git(d, "checkout", "-q", "main")
+    with open(os.path.join(d, "theirs.txt"), "w") as fh:
+        fh.write("concurrent land\n")
+    _git(d, "add", "-A"); _git(d, "commit", "-qm", "concurrent land")
+    okff, err = trunk.would_ff(d, "feat/A-01x")
+    ok("R4 a branch trunk moved past is a non-ff (never a wall)", not okff, err)
+    # the worker's ritual: rebase onto fresh main, then it is landable again
+    _git(d, "checkout", "-q", "feat/A-01x")
+    _git(d, "rebase", "-q", "main")
+    okff2, err2 = trunk.would_ff(d, "feat/A-01x")
+    ok("R4 after rebase onto fresh main the branch is ff-able again", okff2, err2)
+    pid_after = trunk.patch_id(d, "feat/A-01x")
+    ok("R4 a PURE rebase preserves the patch-id (the land grant survives, no re-gate)",
+       bool(pid_before) and pid_before == pid_after, f"before={pid_before} after={pid_after}")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 # ── AC-6: CLOSE cleanliness against REAL git + the confirm path — scoped to the block ──
 def t_replica_clean_real_git():
     d = _mkrepo()
@@ -462,6 +495,7 @@ def main():
     t_record_step()
     t_record_commit_real_git()
     t_record_closeout_bundle_r5()
+    t_r4_nonff_rebase()
     t_replica_clean_real_git()
     t_confirm_close_gate()
     t_tag_sweep()
