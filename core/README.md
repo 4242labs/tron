@@ -13,7 +13,7 @@ Design record: `tron-meta` `logs/architecture/adr-0004-engine-rewrite.md` + `log
 |---|---|
 | `landing.py` | The ONE landing primitive — mint→order→observe→consume, **content-bound case identity** (case-id embeds the patch-id, so a stale receipt can never mask unlanded content — the confirmed root). Reuses `engine/grants.py` + `land.sh`. |
 | `gitobs.py` | The single git-observation seam. All `core/` git/test reads go through here; the one documented bridge to `engine/trunk.py` + `engine/reader.py`. No other control module does raw git. |
-| `gate.py` | The DONE ladder as a PURE predicate-driven state machine: `gate.local → gate.merge → gate.trunk → gate.record → close`. Honest distinct outcome per tick; never self-caps, never a silent hang. Merge = land the feature branch; trunk = declared test on the merged sha; record = ✅ status commit (one file, Status only) — its baseline is re-anchored at order time to the block doc's on-trunk last-toucher so an earlier block-doc-touching merge commit is never mistaken for the record (C4); close = **land the worker's session-end close-out paperwork via its own content-bound grant** (C1), then release only on `replica_clean`. |
+| `gate.py` | The DONE ladder as a PURE predicate-driven state machine: `gate.local → gate.merge → gate.trunk → gate.record → close`. Honest distinct outcome per tick; never self-caps, never a silent hang. Merge = land the feature branch; trunk = declared test on the merged sha; record = block-doc completion commit (one file — the `**Status:**` flip plus the skill-prescribed `**Completed:**` date; code/other files still escalate) — its baseline is re-anchored at order time to the block doc's on-trunk last-toucher so an earlier block-doc-touching merge commit is never mistaken for the record (C4); close = **land the worker's session-end close-out paperwork via its own content-bound grant** (C1), then release only on `replica_clean`. |
 | `state.py` | The MANIFEST store — atomic (`*.tmp`→`os.replace`) durable run-state. The only writer of `manifest.yaml`. |
 | `snapshot.py` | The immutable per-tick view — fresh manifest load + persist-gated inbox drain + trunk read. `decide` reads only the snapshot. |
 | `tick.py` | The bounded crash-safe loop: `observe → route → drive gates → switchboard.fill → sentry.pace → persist (atomic, after the whole pass)`. A crash before persist re-runs safely (every mutation re-derivable from real git/grants). |
@@ -29,7 +29,7 @@ Design record: `tron-meta` `logs/architecture/adr-0004-engine-rewrite.md` + `log
 | `engine.py` | The `Engine` entrypoint — assembles every module; `start(scope, worker_count, models)` (bootup: write manifest, spawn persistent architect, first dispatch) + `tick()`/`run()`. The whole engine runs bootup→done through here. |
 | `classify.py` | The ONE LLM judgment, pinned to the **observe** phase so `decide` stays pure. Structured `tag`+`slots` reports bypass it (no model call); free-text → `judge.call` → tag → route; invalid → bounded retry → `unclassified` → architect triage. The only module that calls the model. |
 | `knobs.py` | The fail-loud config seam — schema-nested reads (fields under the top-level `knobs:` map, per `contracts/schema/knobs.schema.yaml`); a missing knob raises `KnobsError`, never silently resolves to `None`. |
-| `sim/` | SIM apparatus. **L2 (scripted, ~0 tokens):** `scaffold.py` (fresh mockup builder), `worker.py` (scripted worker+architect+reviewer driver), `run.py` (`run_sim`), `sim_l2_rig.py`, `boot_real_scaffold_rig.py`, `report_channel_rig.py` (report.sh→inbox→classify integration lock). **L3 (real-LLM):** `live.py` — the live runner that drove the first clean E2E (real wall-clock pacing, proactive PULSE + pid probes, the COURIER harvesting turn-output→inbox, SIGTERM→graceful-teardown 0-orphans); `seed_canon.py` (installs messages/routing/prompts/report.sh into the instance); `real_tier.py` (real `jobs.spawn_runner`). Run: `python3 -m core.sim.live --adapter host-cli --workers 1 --budget-min 60 --poll-sec 20`. |
+| `sim/` | SIM apparatus. **L2 (scripted, ~0 tokens):** `scaffold.py` (fresh mockup builder), `worker.py` (scripted worker+architect+reviewer driver), `run.py` (`run_sim`), `sim_l2_rig.py`, `boot_real_scaffold_rig.py`, `report_channel_rig.py` (report.sh→inbox→classify integration lock). **L3 (real-LLM):** `live.py` — the live runner (real wall-clock pacing, proactive PULSE + pid probes, the COURIER harvesting turn-output→inbox, SIGTERM→graceful-teardown 0-orphans); `boot_real_scaffold_rig.copy_real_scaffold` now materialises an **honest seed** (`scaffold_ref` app + HEAD `meta` via `git archive`; SEED-HONEST/SEED-PLAN gates) — never the answer-key working tree; `seed_canon.py` (installs messages/routing/prompts/report.sh into the instance); `real_tier.py` (real `jobs.spawn_runner`). Run: `python3 -m core.sim.live --adapter host-cli --workers 1 --budget-min 60 --poll-sec 20`. |
 
 ## Running the rigs (deterministic, ~0 tokens)
 
@@ -56,9 +56,19 @@ L1-proven before the tick/gate that drives it; classify stays stubbed until L3; 
 L1 greens; the L2/L3 worker surface is calibrated against real-agent transcripts so it can't
 false-green.
 
-**L3 acceptance MET (2026-07-10, T2-01-08):** the first fully-clean real-LLM E2E reached a genuine clean
-session-end over the real `trivial-tip-converter` scaffold (`OUTCOME=session_end`, 0 escalations/cases/
-pages/orphans; built app verified `npm test` 9/9 + build green). The campaign surfaced + fixed four
-deterministic close/record-cluster walls — C1 close-out land, C2 archived-dep resolution, C3 released-slot
-marking, C4 record-baseline anchoring (commits `6123ae5`/`4c9f48a`/`e5b7177`). Write-up:
-`tron-meta/logs/architecture/log-260710-t2-01-first-clean-e2e-sim.md`.
+**L3 acceptance NOT YET MET (corrected 2026-07-11).** The 2026-07-10 "L3 met" claim (T2-01-08) was
+**hollow**: `boot_real_scaffold_rig.copy_real_scaffold` seeded the instance from the scaffold source
+*working tree* (= HEAD answer key), so the worker validated pre-existing code rather than building it. The
+engine loop ran for real; the worker-build half did not. The four close/record fixes from that campaign
+(C1 close-out land, C2 archived-dep, C3 released-slot, C4 record-baseline; commits `6123ae5`/`4c9f48a`/
+`e5b7177`) remain valid.
+
+**Honest-seed campaign (2026-07-11, PR #128, branch `feat/sim-honest-seed`):** the seed is now
+`scaffold_ref` app (unbuilt) + HEAD `meta` via `git archive`, gated by **SEED-HONEST/SEED-PLAN**. Eight
+further root fixes — each tying a deterministic completion to *engine state*, not classify-parsed prose,
+and making the architect unable to wall/triage/wedge itself — drove the engine to *all three blocks built +
+closed + reviewed clean, 0 pages* from run `s3` on, but **0 fully-clean honest E2E in 7 launches**. Two
+blockers remain: (A) a worker can carve its branch off the stale detached-HEAD seed instead of current
+`main`, missing landed deps; (B) the phantom-grace backstop is `classify.unclassified`-only, so a real
+block-less `worker.wall` the architect can't verdict wedges it. Write-up + full ledger:
+`tron-meta/logs/architecture/log-260711-overnight-simple-sim-campaign.md`.
