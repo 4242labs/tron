@@ -342,7 +342,47 @@ def build_parser():
     ap.add_argument("--adapter", choices=("host-cli", "echo"), default="host-cli",
                     help="host-cli = real claude (spends tokens); echo = token-free "
                         "integration smoke (real worker_runner processes, no LLM)")
+    ap.add_argument("--expect-pages", type=int, default=0, dest="expect_pages",
+                    help="R3-ACCEPT escalation fidelity: how many operator pages a "
+                        "CLEAN run of this SIM should have produced — 0 for a trivial "
+                        "SIM (any page is a spurious escalation = FAIL), or the count "
+                        "of planted walls for a moderate SIM (each must reach the "
+                        "operator AND be settled). The acceptance gate FAILS on a "
+                        "dangling open case or a page-count mismatch, so a hollow "
+                        "'session_end' that swallowed or dropped a planted wall can "
+                        "never be reported clean.")
     return ap
+
+
+def _acceptance_verdict(result, expect_pages=0):
+    """R3-ACCEPT (ADR-0005) — escalation-fidelity acceptance gate. A clean pass is
+    NOT merely `session_end and not orphans` (which proves nothing about whether a
+    planted wall reached the operator — the false-green vehicle). It additionally
+    requires:
+      • outcome == session_end and no orphan processes;
+      • NO dangling open case (every `manifest["cases"]` entry settled, decision set)
+        — R3's terminal fidelity, re-asserted here defensively;
+      • the operator-page count matches `expect_pages` exactly — 0 for a trivial SIM
+        (a spurious page is a defect), or the planted-wall count for a moderate SIM
+        (a swallowed/dropped planted wall shows up as a shortfall).
+    Returns (ok, reasons[])."""
+    reasons = []
+    if result.get("outcome") != "session_end":
+        reasons.append(f"outcome={result.get('outcome')!r} (not a clean session_end)")
+    if result.get("orphans"):
+        reasons.append(f"orphan processes at exit: {result.get('orphans')}")
+    open_cases = [cid for cid, c in (result.get("cases") or {}).items()
+                  if c.get("decision") is None]
+    if open_cases:
+        reasons.append(f"dangling OPEN operator case(s) at end: {open_cases} "
+                       f"(an escalation was never settled — R3 terminal fidelity)")
+    n_pages = len(result.get("operator_pages") or {})
+    if n_pages != expect_pages:
+        reasons.append(f"operator-page count {n_pages} != expected {expect_pages} "
+                       f"(escalation-fidelity mismatch — a planted wall was swallowed/"
+                       f"dropped, or a spurious page fired): "
+                       f"pages={list((result.get('operator_pages') or {}).keys())}")
+    return (not reasons), reasons
 
 
 def _install_sigterm():
@@ -369,8 +409,17 @@ def main(argv=None):
     except LiveRunError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
-    # exit 0 only on a clean session-end with no orphan left behind
-    ok = result["outcome"] == "session_end" and not result["orphans"]
+    # exit 0 only on a clean session-end with no orphan AND full escalation fidelity
+    # (R3-ACCEPT): no dangling open case + the expected operator-page count. A bare
+    # `session_end and not orphans` gate could report a hollow run — one that swallowed
+    # or dropped a planted wall — as clean; this cannot.
+    ok, reasons = _acceptance_verdict(result, expect_pages=args.expect_pages)
+    if ok:
+        print(f"live: ACCEPT — clean session-end, no orphans, escalation fidelity OK "
+              f"(pages={len(result.get('operator_pages') or {})}=={args.expect_pages}, "
+              f"no dangling case)")
+    else:
+        print(f"live: REJECT — " + " ; ".join(reasons))
     return 0 if ok else 1
 
 

@@ -452,6 +452,34 @@ def main():
        "it ran, tore its OWN process down)",
        orphans == [], f"orphans={orphans}")
 
+    # ── R3-ACCEPT (ADR-0005): the live driver's escalation-fidelity acceptance
+    #     gate. A bare `session_end and not orphans` verdict proves nothing about
+    #     whether a planted wall reached the operator — the false-green vehicle.
+    #     `_acceptance_verdict` additionally rejects a dangling open case and a
+    #     page-count mismatch, so a hollow run that swallowed/dropped a planted
+    #     wall (or fired a spurious page) can never be reported clean. ──
+    from live import _acceptance_verdict   # noqa: E402 — core/sim/live.py, pure fn
+    clean = {"outcome": "session_end", "orphans": [], "cases": {}, "operator_pages": {}}
+    swallowed = {"outcome": "session_end", "orphans": [],
+                 "cases": {}, "operator_pages": {}}   # planted wall never paged
+    dangling = {"outcome": "session_end", "orphans": [],
+                "cases": {"case-op-9": {"decision": None}}, "operator_pages": {"p1": {}}}
+    settled_planted = {"outcome": "session_end", "orphans": [],
+                       "cases": {"case-op-9": {"decision": "resume"}},
+                       "operator_pages": {"p1": {}}}
+    v_clean, _ = _acceptance_verdict(clean, expect_pages=0)
+    v_swallowed, r_sw = _acceptance_verdict(swallowed, expect_pages=1)
+    v_dangling, _ = _acceptance_verdict(dangling, expect_pages=1)
+    v_planted, _ = _acceptance_verdict(settled_planted, expect_pages=1)
+    ok("R3-ACCEPT (ESCALATION-FIDELITY GATE — must be GREEN): a clean trivial run "
+       "(0 pages, no case) PASSES; a run that SWALLOWED a planted wall (expected 1 "
+       "page, got 0) FAILS; a run with a DANGLING open case FAILS; a moderate run "
+       "whose planted wall paged AND settled PASSES — a hollow session_end can never "
+       "be reported clean",
+       v_clean and (not v_swallowed) and (not v_dangling) and v_planted,
+       f"clean={v_clean} swallowed={v_swallowed}({r_sw}) dangling={v_dangling} "
+       f"planted={v_planted}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.sim.boot_real_scaffold_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
          f"({passed}/{len(_results)})")

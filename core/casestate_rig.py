@@ -908,6 +908,30 @@ def main():
        f"verdicts={m_d.get('triage_verdicts')} cases={list((m_d.get('cases') or {}).keys())} "
        f"queue={len(m_d.get('architect_queue') or [])}")
 
+    # ══ R3 (SESSION-END ESCALATION FIDELITY, ADR-0005): session-end is unreachable
+    #    while any operator escalation is open. A BLOCK-LESS operator case (no
+    #    pipeline row — open_operator_case(block=None), R1b's LOUD backstop path)
+    #    used to be INVISIBLE to session.check, so a run could end with a live page
+    #    dangling (the M2/M3 false-green). Now any case with decision=None holds the
+    #    terminal open; a settled case never deadlocks a genuinely-finished run. ══
+    done_view = [{"id": "01-01", "has_block_file": True, "status": "done",
+                  "archived": False, "depends_on": []}]
+    m_open = {"cases": {"case-op-1": {"case_id": "case-op-1", "block": None,
+                                      "owner": "operator", "decision": None}}}
+    m_settled = {"cases": {"case-op-1": {"case_id": "case-op-1", "block": None,
+                                         "owner": "operator", "decision": "resume"}}}
+    m_none = {}
+    ok("R3-CASE-BLOCKS-END (must be GREEN): all blocks done + nothing in-flight, but "
+       "a BLOCK-LESS OPEN operator case holds session-end OPEN (not settled); once "
+       "the case is settled (or there is none) the run ends — no dangling escalation, "
+       "no deadlock of a finished run",
+       session.check(m_open, done_view) is None
+       and session.check(m_settled, done_view) is not None
+       and session.check(m_none, done_view) is not None,
+       f"open={session.check(m_open, done_view)} "
+       f"settled={session.check(m_settled, done_view)!r} "
+       f"none={session.check(m_none, done_view)!r}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.casestate_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")
