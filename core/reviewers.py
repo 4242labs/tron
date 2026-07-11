@@ -269,10 +269,18 @@ def on_review_done(eng, manifest, rep):
     whatever the FIRST hand-back stashed, never silently dropped either
     way)."""
     slots = rep.get("slots") or {}
-    typ = rep.get("type") or slots.get("type")
     agent_id = rep.get("agent_id")
     workers = manifest.get("workers") or {}
     w = workers.get(agent_id) if agent_id else None
+    # The reviewer's TYPE is authoritative on its own worker record (set at
+    # dispatch, `workers[agent_id]["type"]`) — derive it from there when the
+    # report itself omits it, NEVER depend on classify having parsed a `type`
+    # out of the reviewer's free-text hand-back. A real reviewer (agent_id on
+    # file) that reported review_done without a parsed type was being dropped
+    # as `type=None`, silently losing the attestation (the recurring malformed-
+    # review_done defect, live in s1/s2); the report's own type is only a
+    # fallback when the sender isn't a reviewer on file.
+    typ = rep.get("type") or slots.get("type") or (w.get("type") if w else None)
     if not typ or not agent_id or not w or w.get("block") != review_block(typ):
         eng.log("flow", f"reviewers: dropped a malformed/stale worker.review_done "
                         f"report (type={typ!r} agent_id={agent_id!r})")
