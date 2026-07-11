@@ -130,6 +130,31 @@ def _is_worker_exec(cmdline):
     return exe.startswith("claude") or (exe.startswith("node") and "claude" in cmdline)
 
 
+def _proc_cwd(pid):
+    """Best-effort `readlink /proc/<pid>/cwd` — '' when unavailable (non-Linux,
+    a race, permissions). Factored out so the orphan rig can stub it."""
+    try:
+        return os.readlink(f"/proc/{int(pid)}/cwd")
+    except (OSError, ValueError):
+        return ""
+
+
+def _worker_owned_by_root(pid, root, cmdline):
+    """True iff a worker-exec process belongs to THIS run's `root`. A
+    `worker_runner.py` is spawned as `python3 <root>/.../worker_runner.py` so its
+    root is in argv; but a real `claude` CHILD gets `root` only via `Popen(cwd=…)`
+    (engine/worker_runner.py) — NEVER in argv — so an argv-substring test alone
+    MISSES a re-parented `claude` that outlived its crashed `worker_runner` (the
+    exact false-NEGATIVE peer review caught: the old `root in ln` filter silently
+    passed a live orphaned token-burning child as clean). So also resolve the
+    process's CWD: a real worker's cwd is its worker dir UNDER `root`."""
+    if root in cmdline:
+        return True
+    r = root.rstrip("/")
+    cwd = _proc_cwd(pid)
+    return cwd == r or cwd.startswith(r + "/")
+
+
 def _owned_orphans(rs, root):
     """Teardown-hygiene check SCOPED to this driver's OWN fleet — never a global
     process sweep (that was `_pgrep_scoped`, which false-flagged any bystander
@@ -137,10 +162,11 @@ def _owned_orphans(rs, root):
     orphan is EITHER a worker THIS run spawned — its id is in `rs.spawn_calls`,
     and its recorded pid is still alive after teardown (OS-truth via
     `jobs.is_alive`) — OR a real `worker_runner.py`/`claude` EXECUTABLE for this
-    run's `root` that outlived its record (a re-parented child). A monitor shell,
-    a `tail`, or an editor that merely names the root is structurally excluded on
-    both arms: it is not in the spawn ledger, and it is not a worker executable
-    (`_is_worker_exec`). Returns a list of human-readable survivor lines (empty ==
+    run's `root` that outlived its record (a re-parented child, matched by CWD —
+    see `_worker_owned_by_root` — since its argv never carries root). A monitor
+    shell, a `tail`, or an editor that merely names the root is structurally
+    excluded on every arm: it is not in the spawn ledger, and it is not a worker
+    executable (`_is_worker_exec`). Returns human-readable survivor lines (empty ==
     a clean teardown)."""
     survivors = []
     idx = jobs.index()
@@ -153,7 +179,7 @@ def _owned_orphans(rs, root):
         out = subprocess.run(["pgrep", "-fa", pat], capture_output=True, text=True)
         for ln in out.stdout.splitlines():
             ln = ln.strip()
-            if not ln or root not in ln:
+            if not ln:
                 continue
             parts = ln.split(None, 1)
             if len(parts) < 2:
@@ -162,8 +188,14 @@ def _owned_orphans(rs, root):
                 pid = int(parts[0])
             except ValueError:
                 continue
+            # Order matters: exclude bystanders (shells/monitors) FIRST via the
+            # executable class, THEN test ownership by root — so a monitor whose
+            # argv happens to contain root never triggers a readlink, and a real
+            # worker child whose argv LACKS root is still caught by its cwd.
             if pid == self_pid or not _is_worker_exec(parts[1]):
                 continue
+            if not _worker_owned_by_root(pid, root, parts[1]):
+                continue          # a worker exec for some OTHER run's root — not ours
             if ln not in survivors:
                 survivors.append(ln)
     return survivors

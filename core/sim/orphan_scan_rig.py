@@ -48,14 +48,28 @@ ROOT = "/tmp/tron-boot-real-scaffold-XYZ/trivial-tip-converter"
 BYSTANDER = (f"1709737 /bin/bash -c source /home/anderson/.claude/shell-snapshots/"
              f"snapshot.sh && eval 'sleep 270; tail {ROOT}/meta/agents/tron/"
              f"home-events.jsonl; pgrep -f core.sim.live'")
-# A real worker_runner.py process for THIS root (a genuine leaked runner).
+# A real worker_runner.py process for THIS root (a genuine leaked runner) —
+# spawned as `python3 <root>/…/worker_runner.py`, so ROOT IS in its argv.
 RUNNER = (f"424242 python3 {ROOT}/meta/agents/tron/workers/engineer-01-99/"
           f"worker_runner.py engineer-01-99")
-# A real re-parented `claude` child whose runner already died.
-CLAUDE = (f"424243 /home/anderson/.nvm/versions/node/v24/bin/claude.exe "
-          f"--session-id abc --add-dir {ROOT}/meta/agents/tron/workers/engineer-01-99")
-# A `tail` bystander that also references ROOT.
+RUNNER_PID = 424242
+# A real re-parented `claude` child whose runner already died. CRITICAL: the
+# real HostCliAdapter invocation (engine/worker_runner.py) carries ROOT only via
+# `Popen(cwd=…)`, NEVER in argv — so this fixture has NO root anywhere in its
+# command line. The OLD `root in ln` filter MISSED exactly this shape (the
+# false-NEGATIVE peer review found); ownership must come from its cwd instead.
+CLAUDE = ("424243 /home/anderson/.nvm/versions/node/v24/bin/claude.exe -p "
+          "--input-format stream-json --output-format stream-json --verbose "
+          "--session-id abc --model claude-opus-4-8 --dangerously-skip-permissions")
+CLAUDE_PID = 424243
+CLAUDE_CWD = f"{ROOT}/meta/agents/tron/workers/engineer-01-99"   # Popen cwd=, under ROOT
+# A `tail` bystander that also references ROOT (in argv).
 TAIL = f"999001 tail -f {ROOT}/meta/agents/tron/home-events.jsonl"
+# A claude worker belonging to a DIFFERENT run's root (not ours).
+OTHER_ROOT = "/tmp/tron-boot-real-scaffold-OTHER/trivial-tip-converter"
+CLAUDE_OTHER = ("770001 /home/anderson/.nvm/versions/node/v24/bin/claude.exe -p "
+                "--session-id zzz --model claude-opus-4-8")
+CLAUDE_OTHER_PID = 770001
 
 
 class _FakeRun:
@@ -79,6 +93,12 @@ def _install_jobs(alive_ids):
     live.jobs.find = lambda wid, idx=None: (idx or live.jobs.index()).get(wid)
 
 
+def _install_cwd(mapping):
+    """Stub live._proc_cwd so a pid resolves to `mapping[pid]` (else ''), letting
+    the rig exercise CWD-based ownership without real /proc processes."""
+    live._proc_cwd = lambda pid: mapping.get(int(pid), "")
+
+
 class _RS:
     def __init__(self, wids):
         self.spawn_calls = [{"worker_id": w} for w in wids]
@@ -97,6 +117,7 @@ def main():
 
     # ── _owned_orphans: the T2-08 CLEAN case — only a monitor shell survives ──
     _install_jobs(alive_ids=[])                        # no spawned worker alive
+    _install_cwd({})
     _install_pgrep({"worker_runner.py": "", "claude": BYSTANDER + "\n"})
     orphans = live._owned_orphans(_RS(["engineer-01-02", "engineer-01-03"]), ROOT)
     ok("O5: a clean run whose only root-referencing process is the monitor shell "
@@ -105,25 +126,51 @@ def main():
 
     # ── a genuinely leaked SPAWNED worker (its pid still alive) IS flagged ──
     _install_jobs(alive_ids=["engineer-01-02"])
+    _install_cwd({})
     _install_pgrep({"worker_runner.py": "", "claude": BYSTANDER + "\n"})
     orphans = live._owned_orphans(_RS(["engineer-01-02", "engineer-01-03"]), ROOT)
     ok("O6: a spawned worker still alive after teardown IS flagged (owned-scope arm)",
        len(orphans) == 1 and "engineer-01-02" in orphans[0], f"orphans={orphans}")
 
-    # ── a real re-parented worker_runner/claude for this root IS flagged ──
+    # ── a real re-parented worker_runner (argv-root) + claude (CWD-root, NO root
+    #    in argv) for this root ARE flagged; the bash monitor and the tail are NOT ──
     _install_jobs(alive_ids=[])
+    _install_cwd({CLAUDE_PID: CLAUDE_CWD})             # the claude child's real cwd, under ROOT
     _install_pgrep({"worker_runner.py": RUNNER + "\n",
                     "claude": BYSTANDER + "\n" + CLAUDE + "\n" + TAIL + "\n"})
     orphans = live._owned_orphans(_RS(["engineer-01-02"]), ROOT)
     flagged = " ".join(orphans)
-    ok("O7: a real re-parented worker_runner.py + claude.exe for this root ARE flagged, "
-       "but the bash monitor and the tail are NOT",
+    ok("O7: a real re-parented worker_runner.py (argv-root) + claude.exe (cwd-root, "
+       "no root in argv) for this root ARE flagged, but the bash monitor and the tail are NOT",
        "worker_runner.py" in flagged and "claude.exe" in flagged
        and "/bin/bash" not in flagged and "tail -f" not in flagged,
        f"orphans={orphans}")
 
+    # ── THE PEER-REVIEW FALSE-NEGATIVE (must be GREEN): a re-parented claude child
+    #    whose worker_runner already DIED (gone from pgrep AND from jobs) and whose
+    #    argv carries NO root — caught ONLY by its cwd. The OLD `root in ln` filter
+    #    silently passed this live token-burning leak as a clean teardown. ──
+    _install_jobs(alive_ids=[])                        # parent runner dead: is_alive False
+    _install_cwd({CLAUDE_PID: CLAUDE_CWD})
+    _install_pgrep({"worker_runner.py": "", "claude": CLAUDE + "\n"})
+    orphans = live._owned_orphans(_RS(["engineer-01-99"]), ROOT)
+    ok("O9 (FALSE-NEGATIVE KILLER — must be GREEN): a re-parented claude child "
+       "with NO root in argv, cwd under root, whose runner already died, IS flagged "
+       "(the old argv-substring filter missed it → silent leak passed as clean)",
+       len(orphans) == 1 and "claude.exe" in orphans[0], f"orphans={orphans}")
+
+    # ── a worker for a DIFFERENT run's root is NOT ours (no false-positive across runs) ──
+    _install_jobs(alive_ids=[])
+    _install_cwd({CLAUDE_OTHER_PID: f"{OTHER_ROOT}/meta/agents/tron/workers/x"})
+    _install_pgrep({"worker_runner.py": "", "claude": CLAUDE_OTHER + "\n"})
+    orphans = live._owned_orphans(_RS(["engineer-01-99"]), ROOT)
+    ok("O10: a claude worker whose cwd is under a DIFFERENT run's root is NOT flagged "
+       "(ownership is scoped to THIS root, no cross-run false-positive)",
+       orphans == [], f"orphans={orphans}")
+
     # ── the driver's own pid is never flagged, even as a worker-shaped line ──
     _install_jobs(alive_ids=[])
+    _install_cwd({})
     self_line = f"{os.getpid()} python3 {ROOT}/meta/agents/tron/workers/x/worker_runner.py x"
     _install_pgrep({"worker_runner.py": self_line + "\n", "claude": ""})
     orphans = live._owned_orphans(_RS([]), ROOT)
