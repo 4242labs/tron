@@ -95,6 +95,7 @@ if _HERE not in sys.path:
 import judge       # noqa: E402 — engine/judge.py, the ONE LLM seam, reused as-is (never forked)
 import architect    # noqa: E402 — core/architect.py, wave 9/10's log-review job, reused for triage
 import casestate     # noqa: E402 — core/casestate.py, VERBS (the settle-regex verb vocabulary)
+import pipeline       # noqa: E402 — core/pipeline.py, _is_landing_wall (ADR-0009 §4 structural path)
 
 # "approve" is accepted as a settle synonym for "resume" (mirrors engine/
 # fsm.py's own SETTLE_VERB_RE, which the operator-facing copy still teaches:
@@ -177,6 +178,20 @@ def _structured(msg):
     slots = dict(msg.get("slots") or {})
     if slots.get("branch") or msg.get("branch"):
         return "worker.branch", slots
+    # ADR-0009 §4 (rig 6, PHANTOM-WALL part B) — the land.sh-signature
+    # structural path: a tag-less, branch-less report whose free text
+    # carries the SAME land.sh-refusal signature `core/pipeline.py::
+    # _is_landing_wall` already recognizes (reused, single-source — never a
+    # second detector) classifies DETERMINISTICALLY to `worker.wall`, the
+    # judge never consulted. This is what keeps a GENUINE landing wall
+    # reachable even after §4's OTHER half (`engine/judge.py::
+    # FREE_TEXT_BLOCKED`) makes the free-text judge structurally unable to
+    # mint `worker.wall` from prose: after both halves land, the ONLY path
+    # `worker.wall` can reach `open_case` through is this structural one —
+    # genuine by construction.
+    text = msg.get("text") or ""
+    if pipeline._is_landing_wall(text):
+        return "worker.wall", slots
     return None, None
 
 

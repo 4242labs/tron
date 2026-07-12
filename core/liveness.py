@@ -186,6 +186,42 @@ def _escalate_min(eng):
     return k.silence_escalate_min if k.declared("silence_escalate_min") else None
 
 
+def working_excluded_integrate(now, last_sample, accumulated, active, reset_on_active=True):
+    """ONE sampling step of the working/active-EXCLUDED integration idiom
+    (ADR-0009 R-G) — the shared primitive `sweep`'s own silence ladder
+    (below) and `core/architect.py`'s no-progress budget both call, so
+    neither ever reads 'was this tick active' or the clock through a
+    second, independently-drifting code path (ADR-0009: "FACTOR the
+    working-excluded integration step ... into a shared helper both call,
+    do not copy it").
+
+    While `active`, the interval just observed does NOT count toward
+    `accumulated` (excluded) — and, when `reset_on_active` (this module's
+    own "a worker that reports/works resets its whole liveness episode"
+    semantics), `accumulated` also collapses to 0. `reset_on_active=False`
+    (`core/architect.py`'s R-G semantics: PAUSE, never reset — an
+    outstanding order's no-progress budget must not be erased merely
+    because the architect is busy on some unrelated turn) leaves
+    `accumulated` untouched across an active interval instead — genuinely
+    PAUSED, not zeroed.
+
+    While NOT active, `accumulated` gains the raw elapsed delta since
+    `last_sample` — sampled fresh THIS call, never a bare `now - anchor`
+    diff computed after the fact (which would silently re-include any
+    active interval that happened to fall inside the gap between two
+    far-apart samples). Always returns `last_sample` advanced to `now`
+    (the caller decides whether to persist that advance — `sweep`, below,
+    intentionally does NOT on its own inactive branch, to keep its
+    existing "silent = now - frozen last_seen" persisted-field shape
+    byte-for-byte unchanged; `core/architect.py` DOES persist it every
+    call, since its own accumulator has no other anchor).
+
+    Returns `(new_last_sample, new_accumulated)`."""
+    if active:
+        return now, (0 if reset_on_active else accumulated)
+    return now, accumulated + max(0, now - last_sample)
+
+
 def _clock(eng, manifest):
     """The ONE clock this ladder reads — see module docstring. `eng._now()`
     when present (a plain callable, no required signature beyond zero-arg),
@@ -269,12 +305,7 @@ def sweep(eng, snapshot):
             continue
 
         reported = w.pop("_reported", False)
-        if _worker_active(eng, wid, reported):
-            # Reported this tick OR provably mid-turn (a real working runner)
-            # — either way genuinely active: reset the liveness episode.
-            w["last_seen"] = now
-            w.pop("pinged_at", None)
-            continue
+        active = _worker_active(eng, wid, reported)
 
         if w.get("last_seen") is None:
             # First-ever sighting of this worker record (the spawn->online
@@ -283,9 +314,27 @@ def sweep(eng, snapshot):
             # marked it) — progress clears the clock; no silence counted on
             # the call that first notices a worker exists.
             w["last_seen"] = now
+            if active:
+                w.pop("pinged_at", None)
             continue
 
-        silent = now - w["last_seen"]
+        # The shared working-excluded integration step (see module
+        # docstring + `working_excluded_integrate`'s own docstring): active
+        # resets the whole episode (`reset_on_active=True`, this module's
+        # own semantic — unlike `core/architect.py`'s R-G, which PAUSES
+        # instead). The inactive branch's `new_last_seen` is deliberately
+        # NOT persisted here — `last_seen` stays frozen at its last genuine
+        # activity, and `silent` is freshly re-derived from it every call,
+        # exactly as before this refactor (byte-for-byte unchanged
+        # persisted-field shape; only the COMPUTATION is now shared).
+        new_last_seen, silent = working_excluded_integrate(
+            now, w["last_seen"], 0, active, reset_on_active=True)
+        if active:
+            # Reported this tick OR provably mid-turn (a real working
+            # runner) — either way genuinely active: reset the episode.
+            w["last_seen"] = new_last_seen   # == now
+            w.pop("pinged_at", None)
+            continue
 
         if silent >= escalate_min:
             detail = (f"worker {wid!r} (block={block!r}) silent for "

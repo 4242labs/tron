@@ -58,6 +58,18 @@ _tags_cache = None
 # sweep produces them). Enforced at the validator, not just in the prompt.
 ENGINE_ONLY = {"worker.stalled", "worker.dead"}
 
+# ADR-0009 §4 — consequential, escalation-opening tags the FREE-TEXT judge must
+# NEVER mint (mirrors ENGINE_ONLY's own enforcement shape, a DIFFERENT reason:
+# these are legitimately reachable via a STRUCTURAL report — `report.sh --tag
+# wall`/land.sh-signature detection in `core/classify.py::_structured` — but a
+# prose GRADE of one from the free-text judge is the phantom-wall root (T2-16):
+# a block-less "placeholder" narration graded `worker.wall` by the judge opens a
+# case the architect can't verdict and escalates loud. Downgrading to
+# `unclassified` here makes the judge structurally unable to mint an escalating
+# tag from prose — illegal-states-unrepresentable at the origin (§4's own
+# "the free-text judge structurally cannot mint a consequential tag" invariant).
+FREE_TEXT_BLOCKED = {"worker.wall"}
+
 
 def _allowed_tags(ctx):
     """The closed tag enum, read from routing.yaml (single source — no duplication)."""
@@ -86,7 +98,7 @@ def _stub_response(tool):
 # ── output validators: enforce tag+structured-slots, never prose ──
 def _v_classify(o, ctx):
     tag = o.get("tag")
-    if tag not in _allowed_tags(ctx) or tag in ENGINE_ONLY:
+    if tag not in _allowed_tags(ctx) or tag in ENGINE_ONLY or tag in FREE_TEXT_BLOCKED:
         return f"tag '{tag}' is not a valid classifier output"
     if not isinstance(o.get("slots", {}), dict):
         return "slots must be an object"
