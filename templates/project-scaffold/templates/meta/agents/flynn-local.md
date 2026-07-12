@@ -2,9 +2,9 @@
 
 Persistent state for TRON-FLYNN sessions on `<PROJECT_NAME>`. Updated after every run.
 
-This is the **canonical project-local template** for `flynn-local.md`. The kit ships it; `{shared_knowledge_path}/agents/flynn/flynn.md §Project-Local Context Template` and `{shared_knowledge_path}/agents/flynn/skills/skill-bootstrap.md` step 4 both defer to this file — it is the single source of the structure.
+This is the **canonical project-local template** for `flynn-local.md`. The kit ships it; `<tron-app>/modes/flynn/flynn.md §Project-Local Context Template` and `<tron-app>/modes/flynn/skills/skill-bootstrap.md` step 4 both defer to this file — it is the single source of the structure.
 
-**Project-local wrapper.** TRON-FLYNN's full procedure lives in the canonical agent at `{shared_knowledge_path}/agents/flynn/flynn.md` — load that first, then apply the context below. Do not run from this file alone; it only supplies project-specific state.
+**Project-local wrapper.** TRON-FLYNN's full procedure lives in the canonical agent at `<tron-app>/modes/flynn/flynn.md` — load that first, then apply the context below. Do not run from this file alone; it only supplies project-specific state.
 
 ---
 
