@@ -228,6 +228,24 @@ def make_closeout_commit(root, branch, block):
     return tip
 
 
+def make_second_closeout_commit(root, branch, block):
+    """Rig-as-worker: a SECOND close-out commit on the SAME branch AFTER the
+    first close-out already landed — the exact T2-17 shape (a follow-up
+    Completed-date fix the worker commits after its first close land). Distinct
+    content -> a genuinely NEW patch-id, so a content-bound close case-id MUST
+    differ from the first close's; a cached case-id would reuse the first's
+    already-consumed receipt and land.sh would no-op this commit. Returns tip."""
+    _git(["checkout", branch], root)
+    pipe_path = os.path.join(root, "meta", "pipeline.md")
+    with open(pipe_path, "a") as f:
+        f.write(f"- {block}: completed 2026-07-12 (follow-up fix)\n")
+    _git(["add", "-A"], root)
+    _git(["commit", "-m", f"close: {block} follow-up completed-date fix"], root)
+    tip = _git_out(["rev-parse", "HEAD"], root)
+    _git(["checkout", "--detach", MAIN], root)
+    return tip
+
+
 def carve_worktree(root, branch, rel_path):
     """Rig-as-worker: carve a REAL linked worktree checked out on `branch` —
     the shape a real worker runs from (`meta/agents/tron/scratch/<wid>/...`).
@@ -497,6 +515,61 @@ def main():
        and final_sha_a == closeout_tip_a,
        f"gate_stage={gstate_a['stage']} worker={eng_a.workers.get(WID_A)} "
        f"final_main={final_sha_a} closeout_tip_a={closeout_tip_a}")
+
+    # ══ Phase A' — T2-17 REGRESSION: a branch re-authored at the close stage
+    #    gets a FRESH content-bound case-id and lands its new commit. Before the
+    #    fix, gate.py CACHED the per-stage case-id (`gate_state.get(...) or ...`),
+    #    so a follow-up commit reused the first close's already-consumed receipt
+    #    and the worker's REAL land.sh short-circuited ("already consumed —
+    #    nothing to do, exit 0") WITHOUT landing it: trunk stuck, worker wall,
+    #    stall, operator escalation (the T2-17 REJECT). This drives the close
+    #    stage TWICE on one branch through the REAL land.sh and asserts the
+    #    second commit reaches trunk under a distinct case-id. ══
+    BLOCK_R, BRANCH_R, WID_R = "01-07", "feat/01-07", "engineer-01-07"
+    eng_r = MiniEng(root, grants_dir, test_command="true")
+    eng_r.workers[WID_R] = {"block": BLOCK_R, "status": "assigned"}
+    block_file_r = seed_block_doc(root, BLOCK_R, "meta/blocks/01-07.md")
+    make_code_commit(root, BRANCH_R, CODE_FILE_REL, "01-07-real-change")
+    gstate_r = gate.new_state_full(eng_r, BLOCK_R, block_file_r, BRANCH_R, WID_R)
+    drive_full(eng_r, BLOCK_R, gstate_r, root, grants_dir,
+               local_report=LOCAL_PASS_REPORT, stop_outcomes={"trunk_passed"}, max_iters=20)
+    make_record_commit(root, BRANCH_R, block_file_r)
+    drive_full(eng_r, BLOCK_R, gstate_r, root, grants_dir,
+               stop_outcomes={"record_landed"}, max_iters=20)
+
+    # first close-out lands, then HOLD (no teardown args) so the branch survives
+    closeout1_r = make_closeout_commit(root, BRANCH_R, BLOCK_R)
+    drive_full(eng_r, BLOCK_R, gstate_r, root, grants_dir,
+               stop_outcomes={"close_holding"}, max_iters=12)
+    close_case_1 = gstate_r.get("close_case_id")
+    ok("A'1: first close-out commit landed on trunk under a content-bound close "
+       "case-id (branch still alive, not yet torn down)",
+       is_ancestor(root, closeout1_r, MAIN) and bool(close_case_1),
+       f"close_case_1={close_case_1} landed1={is_ancestor(root, closeout1_r, MAIN)}")
+
+    # the T2-17 follow-up: a SECOND close-out commit re-authors the branch
+    closeout2_r = make_second_closeout_commit(root, BRANCH_R, BLOCK_R)
+    ok("A'2: rig-as-worker re-authored the branch with a SECOND close-out commit "
+       "off the current trunk (the follow-up-fix shape)",
+       bool(closeout2_r) and not is_ancestor(root, closeout2_r, MAIN),
+       f"closeout2_r={closeout2_r}")
+
+    history_r = drive_full(eng_r, BLOCK_R, gstate_r, root, grants_dir,
+                           teardown_branch=BRANCH_R, teardown_worktree=None,
+                           stop_outcomes={"closed", "escalate"}, max_iters=14)
+    close_case_2 = gstate_r.get("close_case_id")
+    main_final_r = _git_out(["rev-parse", MAIN], root)
+    ok("A'3 (T2-17 KILLER — must be GREEN): the re-authored branch got a FRESH "
+       "content-bound close case-id (NOT the cached one), so the REAL land.sh landed "
+       "the SECOND close-out commit — trunk reached it, no escalate. A cached case-id "
+       "reuses the first's consumed receipt and land.sh no-ops the second commit.",
+       close_case_2 != close_case_1
+       and is_ancestor(root, closeout2_r, MAIN)
+       and main_final_r == closeout2_r
+       and "escalate" not in [o for o, _ in history_r],
+       f"close_case_1={close_case_1} close_case_2={close_case_2} "
+       f"main_final={main_final_r} closeout2={closeout2_r} "
+       f"history={[o for o, _ in history_r]}")
 
     # ══ Phase B — adversarial: gate.local with a bare/absent report never advances ══
     BLOCK_B, BRANCH_B, WID_B = "01-05", "feat/01-05", "engineer-01-05"
