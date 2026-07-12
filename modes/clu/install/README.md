@@ -1,14 +1,25 @@
-# TRON-CLU install kit
+# TRON-CLU install
 
-One-time, per machine + per project. CLU ships as a mode inside `tron-app/modes/clu` — clone `tron-app` anywhere; nothing assumes a fixed location.
+1. **Slash command**:
 
-1. **Machine install**: clone `tron-app`, then
-   - `echo "<tron-app>/modes/clu" > ~/.claude/tron-clu.path` — the pointer every boot resolves the CLU root from (missing → Boot asks once and writes it);
-   - copy `tron-clu-command.md` to `~/.claude/commands/tron-clu.md` → `/tron-clu` becomes available in every project.
-2. **PULSE guard + worktree config** (per project, one-time): on first `/tron-clu` boot in a project, TRON proposes the install — `pulse-guard.sh` copied to the project's `.claude/tron-clu-pulse-guard.sh` (project-local, so `settings.json` never references a machine-specific path) plus a minimal `settings.json` merge: the Stop hook via `"$CLAUDE_PROJECT_DIR"/.claude/tron-clu-pulse-guard.sh` (a no-op unless a CLU run is active, so other agents in the project are untouched) and `"worktree": {"bgIsolation": "none"}` (mandatory for fleet runs — without it, background worker sessions auto-isolate into duplicate worktrees and break the parallel-engineer contract). It shows the diff and waits for a one-time go-ahead before writing anything. You can also apply `settings-snippet.json` + the script copy yourself ahead of time. Anthropic's config trust boundary sits at the folder-trust prompt, not per-hook, so committing both files to version control (rather than leaving them untracked) is the recommended safety net — and makes the project install portable across machines for free.
+   ```zsh
+   modes/install.sh              # /tron-clu in every project
+   modes/install.sh ~/path/proj  # /tron-clu in one project only
+   ```
+
+   `install.sh` writes the command file with CLU's absolute path baked in. **No pointer files, no
+   environment variables, no machine-level state of ours** — the command file, in Claude's own
+   `commands/` directory, is the only thing written.
+
+   Terminal shortcut (optional), one line in your shell rc:
+   `export PATH="<tron-app>/modes/bin:$PATH"` → gives you `tron-clu` and `tron-flynn`.
+
+2. **PULSE guard + worktree config** (per project, one-time): on first `/tron-clu` boot in a project, CLU proposes the install — `pulse-guard.sh` copied to the project's `.claude/tron-clu-pulse-guard.sh` (project-local, so `settings.json` never references a machine-specific path) plus a minimal `settings.json` merge: the Stop hook via `"$CLAUDE_PROJECT_DIR"/.claude/tron-clu-pulse-guard.sh` (a no-op unless a CLU run is active, so other agents in the project are untouched) and `"worktree": {"bgIsolation": "none"}` (mandatory for fleet runs — without it, background worker sessions auto-isolate into duplicate worktrees and break the parallel-engineer contract). It shows the diff and waits for a one-time go-ahead before writing anything. You can also apply `settings-snippet.json` + the script copy yourself ahead of time. Anthropic's config trust boundary sits at the folder-trust prompt, not per-hook, so committing both files to version control (rather than leaving them untracked) is the recommended safety net — and makes the project install portable across machines for free.
 
    **Do the settings merge BEFORE the first `/tron-clu` boot happens inside a background job — it removes a hard catch-22.** In a background-job session the harness rejects Edit/Write to the shared checkout until `"worktree": {"bgIsolation": "none"}` is already set — which is the very value the install writes, so `Edit` cannot write the file that would unblock `Edit`. Applying `settings-snippet.json` + the `pulse-guard.sh` copy ahead of time (committed to the repo) means the setting is already present and the boot never hits the wall. Fallback if a boot is already stuck inside a background job with settings absent: have the operator run the `settings.json` merge and script copy via `!`-prefixed shell commands (shell isn't gated by the worktree-isolation rule), then continue.
-3. **Telegram** (optional, outbound-only for now): one bot, one channel per project. TG is send-only in this system today — `tg-send.sh` pushes notifications out; nothing reads replies back (no poller / `getUpdates`), and a group/channel doesn't change that. Two-way TG would need a new component and may land soon; until then, operator answers still come through the conversation, not TG. `tg-send.sh` reads `TELEGRAM_BOT_TOKEN` (+ optional default `TELEGRAM_CHAT_ID`) from `~/.claude/tron-clu.env` (a machine file — never inside the repo, since tron-app is public), and lets `TELEGRAM_CHAT_ID` in `<project>/.tron-clu.env` override per project — both gitignored. Anything missing → Boot asks and writes the right file. Message formats live in `skills/skill-operator-comms.md`.
+
+3. **Telegram** (optional, outbound-only for now): one bot, one channel per project. TG is send-only in this system today — `tg-send.sh` pushes notifications out; nothing reads replies back (no poller / `getUpdates`), and a group/channel doesn't change that. Two-way TG would need a new component and may land soon; until then, operator answers still come through the conversation, not TG. `tg-send.sh` reads `TELEGRAM_BOT_TOKEN` (+ optional default `TELEGRAM_CHAT_ID`) from the **tron-app repo root `.env`** (gitignored), and lets `TELEGRAM_CHAT_ID` in `<project>/.tron-clu.env` override per project — also gitignored. Anything missing → Boot asks and writes the right file. Message formats live in `skills/skill-operator-comms.md`.
+
 4. Run `/tron-clu` in the target project. Boot handles the rest; run end removes the flags and the guard goes dormant.
 
 Optional, scroll-proof pending-items display: `.tron-clu-attention` in the project root always holds the live operator queue — `tail -f` it in a side pane, or point a statusline script at it.

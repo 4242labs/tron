@@ -1,25 +1,22 @@
-# TRON-FLYNN install kit
+# TRON-FLYNN install
 
-One-time, per machine. FLYNN ships as a mode inside `tron-app/modes/flynn` — clone `tron-app`
-anywhere; nothing assumes a fixed location.
+```zsh
+modes/install.sh              # /tron-flynn in every project
+modes/install.sh ~/path/proj  # /tron-flynn in one project only
+```
 
-1. **Pointer** — the file every boot resolves the FLYNN root from:
+That is the whole install. `install.sh` writes the slash command with FLYNN's absolute path baked
+in — there are **no pointer files, no environment variables, and no machine-level state of ours**.
+The command file itself is the only thing written, into Claude's own `commands/` directory.
 
-   ```zsh
-   echo "<tron-app>/modes/flynn" > ~/.claude/tron-flynn.path
-   ```
+Terminal shortcut (optional) — one line in your shell rc:
 
-2. **Slash command** — copy `tron-flynn-command.md` to `~/.claude/commands/tron-flynn.md`, and
-   `/tron-flynn` becomes available in every project.
+```zsh
+export PATH="<tron-app>/modes/bin:$PATH"   # gives you: tron-flynn / tron-clu
+```
 
-3. **Terminal shortcut** (optional) — in `~/.zshrc`:
+`tron-flynn` opens the REPL already booted as FLYNN; `tron-flynn "audit tron"` passes the task
+straight through.
 
-   ```zsh
-   tron-flynn() { claude "/tron-flynn $*"; }
-   ```
-
-   `tron-flynn` opens the REPL already booted as FLYNN; `tron-flynn "audit tron"` passes the task
-   straight through. The sibling shortcut for the supervisor mode is `tron-clu() { claude "/tron-clu $*"; }`.
-
-FLYNN needs no hooks, no run flags, and no project-side install — it reads and advises, and only
-writes when the operator directs it to.
+FLYNN needs no hooks, no run flags, and no project-side install — it reads and advises, and writes
+only when the operator directs it to.

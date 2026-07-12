@@ -75,7 +75,7 @@ Deleted at run end with the flags (skill-session-end owns it).
 Send via `$CLU_ROOT/install/tg-send.sh "<message>"` (from the project root, where
 TRON already runs; `$CLU_ROOT` is resolved at boot). Layered config — one bot, one
 channel per project:
-- `$CLU_ROOT/.env` (gitignored): `TELEGRAM_BOT_TOKEN` + optional default
+- `<tron-app>/.env` — the repo root, gitignored: `TELEGRAM_BOT_TOKEN` + optional default
   `TELEGRAM_CHAT_ID` fallback.
 - `<project>/.tron-clu.env` (gitignored in the project): `TELEGRAM_CHAT_ID=<that
   project's channel>` — overrides the default.

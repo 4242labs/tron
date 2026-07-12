@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Open Claude Code already booted as TRON-CLU (supervisor mode).
+exec claude "/tron-clu $*"
