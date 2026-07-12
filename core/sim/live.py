@@ -574,9 +574,21 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     if open_cases:
         reasons.append(f"dangling OPEN operator case(s) at end: {open_cases} "
                        f"(an escalation was never settled — R3 terminal fidelity)")
+    # ADR-0008 — a case the engine PROVABLY self-resolved on trunk (a landing
+    # worker.wall whose block closed out; `decision=="stale-resolved-on-trunk"`,
+    # set only by casestate.reping's trunk-truth guard) is a transient the engine
+    # retracted, not a standing escalation. Its historical page/escalation-log
+    # entries stay on the durable append-only ledger (auditable), but they are
+    # discounted from the GRADED counts below. Tightly scoped: an unbuilt block
+    # is never `closed`, a genuine standing escalation is never so-decided, a
+    # sentry/gate cap carries no matching `case`, an architect self-escalation is
+    # not an `engineer-` worker — so this can mask no other page class.
+    stale_resolved = {cid for cid, c in (result.get("cases") or {}).items()
+                      if isinstance(c, dict) and c.get("decision") == "stale-resolved-on-trunk"}
     pages = result.get("operator_pages") or {}
     escalated_cases = {p.get("case_id") for p in pages.values()
-                       if isinstance(p, dict) and p.get("case_id")}
+                       if isinstance(p, dict) and p.get("case_id")
+                       and p.get("case_id") not in stale_resolved}
     n_escalations = len(escalated_cases)
     if n_escalations != expect_pages:
         reasons.append(f"distinct operator escalations {n_escalations} != expected "
@@ -597,7 +609,12 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     # (`expect_pages==0`, where zero is the honest expectation); a moderate SIM's
     # planted walls legitimately populate it. Sound now that R1a/R1e make pacing
     # working-aware (a long-but-live turn no longer spuriously caps).
-    escalations = result.get("escalations") or []
+    # ADR-0008 — discount the channel-escalation record of a stale-resolved case
+    # (a paging-retry cap on a landing wall the engine self-resolved on trunk;
+    # keyed by `case`). A sentry/gate cap carries no matching `case`, so every
+    # genuine gate/worker stall still counts.
+    escalations = [e for e in (result.get("escalations") or [])
+                   if not (isinstance(e, dict) and e.get("case") in stale_resolved)]
     if expect_pages == 0 and escalations:
         kinds = sorted({(e.get("stage") or e.get("kind") or "?")
                         for e in escalations if isinstance(e, dict)})

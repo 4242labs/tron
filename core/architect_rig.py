@@ -850,6 +850,128 @@ def run_phantom_triage_grace_scenario():
        f"resolved={jobB.get('resolved')} verdict={jobB.get('verdict')} "
        f"owner={mB['cases']['case-01-02-1'].get('owner')} paged={paged}")
 
+    # ── ADR-0008 — STALE-WALL REVALIDATION (T2-18 REJECT root fix) ──────────
+    # A genuine landing worker.wall whose block has already CLOSED out on trunk
+    # is moot; the R1b operator verdict (from EITHER the idle backstop OR a
+    # structured triage_verdict) must be downgraded to a benign resolve — never
+    # a page. Durable signal = gate stage 'closed' (survives branch teardown, so
+    # the branch being deleted by close-out is irrelevant here — no branch read).
+    _WALL_LAND = ("land.sh refused: grant minted for commit 98a1347, but worker "
+                  "committed 8f04a86 before landing, causing content mismatch")
+
+    # STALE-A0 — THE LITERAL T2-18 PATH: a BLOCK-LESS worker.wall (case_id=None,
+    # the classify-unclassified variant that minted case-worker-wall-1 in the real
+    # REJECT). Its block gate is CLOSED on trunk. Guard A must downgrade the R1b
+    # backstop operator->answer AND — because case_id is None — the answer arm must
+    # relay to the worker and resolve WITHOUT ever calling open_operator_case: no
+    # page AND no new case minted. This is the production shape on which guard A
+    # actually fires (a case-BEARING wall escalates its own gate to ESCALATED, never
+    # 'closed'), so it is the one that must be locked to the fullest.
+    mS0 = {"architect": {"status": "busy"}, "triage_verdicts": {}, "cases": {},
+           "gates": {"01-03": {"stage": "closed"}}}
+    jobS0 = {"kind": "triage", "triage_id": "triage-stale-0", "source": "worker.wall",
+             "block": None, "case_id": None, "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS0["architect"]["current_job"] = jobS0
+    _pages_before = len(getattr(eng, "operator_pages", []))
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mS0, jobS0)
+    _pages_after = getattr(eng, "operator_pages", [])
+    ok("STALE-A0 (BLOCK-LESS T2-18 PATH, ADR-0008 — must be GREEN): the literal defect "
+       "shape — a case_id=None worker.wall whose block gate is CLOSED — downgrades "
+       "operator->answer, pages NObody, AND mints NO new operator case (open_operator_case "
+       "never called)",
+       jobS0.get("resolved") is True and jobS0.get("verdict") == "answer"
+       and len(_pages_after) == _pages_before and not mS0["cases"],
+       f"resolved={jobS0.get('resolved')} verdict={jobS0.get('verdict')} "
+       f"new_pages={len(_pages_after) - _pages_before} cases={mS0['cases']}")
+
+    # STALE-A1 — the IDLE-BACKSTOP operator verdict, block closed -> answer, NO page.
+    mS1 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-03": {"stage": "closed"}},
+           "cases": {"case-stale-1": {"case_id": "case-stale-1", "block": None,
+                                      "source": "worker.wall", "worker_id": "engineer-01-03",
+                                      "owner": "architect", "decision": None}}}
+    jobS1 = {"kind": "triage", "triage_id": "triage-stale-1", "source": "worker.wall",
+             "block": None, "case_id": "case-stale-1", "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS1["architect"]["current_job"] = jobS1
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mS1, jobS1)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-A1 (IDLE-BACKSTOP STALE-WALL, ADR-0008 — must be GREEN): a genuine "
+       "landing worker.wall whose block gate is CLOSED on trunk downgrades the R1b "
+       "backstop operator->answer and pages NObody",
+       jobS1.get("resolved") is True and jobS1.get("verdict") == "answer"
+       and not any(p["case_id"] == "case-stale-1" for p in paged),
+       f"resolved={jobS1.get('resolved')} verdict={jobS1.get('verdict')} "
+       f"paged_stale1={[p for p in paged if p['case_id']=='case-stale-1']}")
+
+    # STALE-A2 — the STRUCTURED 'operator' verdict path (finding 3): even an
+    # explicit triage_verdict='operator' on a since-closed block is downgraded.
+    mS2 = {"architect": {"status": "busy"},
+           "triage_verdicts": {"triage-stale-2": {"verdict": "operator", "note": "page it"}},
+           "gates": {"01-03": {"stage": "closed"}},
+           "cases": {"case-stale-2": {"case_id": "case-stale-2", "block": None,
+                                      "source": "worker.wall", "worker_id": "engineer-01-03",
+                                      "owner": "architect", "decision": None}}}
+    jobS2 = {"kind": "triage", "triage_id": "triage-stale-2", "source": "worker.wall",
+             "block": None, "case_id": "case-stale-2", "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS2["architect"]["current_job"] = jobS2
+    architect._advance_triage(eng, mS2, jobS2)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-A2 (STRUCTURED-VERDICT STALE-WALL, ADR-0008 — must be GREEN): a "
+       "structured triage_verdict='operator' on a landing wall whose block is CLOSED "
+       "is ALSO downgraded operator->answer, no page (guard covers both operator paths)",
+       jobS2.get("resolved") is True and jobS2.get("verdict") == "answer"
+       and not any(p["case_id"] == "case-stale-2" for p in paged),
+       f"resolved={jobS2.get('resolved')} verdict={jobS2.get('verdict')} "
+       f"paged_stale2={[p for p in paged if p['case_id']=='case-stale-2']}")
+
+    # STALE-NV1 (NON-VACUITY) — SAME wall but block gate NOT closed (merge) -> the
+    # genuine wall STILL pages operator, exactly as PT2. Proves the guard suppresses
+    # ONLY a provably-closed block, never an in-flight one.
+    mN1 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-04": {"stage": "merge"}},
+           "cases": {"case-nv-1": {"case_id": "case-nv-1", "block": "01-04",
+                                   "source": "worker.wall", "worker_id": "engineer-01-04",
+                                   "owner": "architect", "decision": None}}}
+    jobN1 = {"kind": "triage", "triage_id": "triage-nv-1", "source": "worker.wall",
+             "block": "01-04", "case_id": "case-nv-1", "worker_id": "engineer-01-04",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mN1["architect"]["current_job"] = jobN1
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mN1, jobN1)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-NV1 (OPEN-BLOCK STILL PAGES, ADR-0008 non-vacuity — must be GREEN): a "
+       "genuine landing worker.wall on a block whose gate is NOT closed (merge) still "
+       "resolves LOUD to operator and pages — the guard never suppresses an in-flight block",
+       jobN1.get("verdict") == "operator" and any(p["case_id"] == "case-nv-1" for p in paged),
+       f"verdict={jobN1.get('verdict')} paged_nv1={[p for p in paged if p['case_id']=='case-nv-1']}")
+
+    # STALE-NV2 (NON-VACUITY) — block CLOSED but detail is NON-landing (dep cycle):
+    # the landing signature fails -> still pages (a non-landing wall is never suppressed
+    # merely because its worker's block happens to be closed).
+    mN2 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-05": {"stage": "closed"}},
+           "cases": {"case-nv-2": {"case_id": "case-nv-2", "block": None,
+                                   "source": "worker.wall", "worker_id": "engineer-01-05",
+                                   "owner": "architect", "decision": None}}}
+    jobN2 = {"kind": "triage", "triage_id": "triage-nv-2", "source": "worker.wall",
+             "block": None, "case_id": "case-nv-2", "worker_id": "engineer-01-05",
+             "detail": "dependency cycle between 01-06 and 01-07 — cannot proceed",
+             "ordered": True, "verdict": None, "resolved": False}
+    mN2["architect"]["current_job"] = jobN2
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mN2, jobN2)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-NV2 (NON-LANDING WALL STILL PAGES, ADR-0008 non-vacuity — must be GREEN): "
+       "a genuine NON-landing worker.wall (dep cycle) on a closed block fails the landing "
+       "signature and STILL pages operator — suppression is landing-scoped by content",
+       jobN2.get("verdict") == "operator" and any(p["case_id"] == "case-nv-2" for p in paged),
+       f"verdict={jobN2.get('verdict')} paged_nv2={[p for p in paged if p['case_id']=='case-nv-2']}")
+
     # PT3 — the backstop HOLDS while the architect is provably mid-turn: a real
     # `claude -p` turn posts nothing until it finishes, so a working architect must
     # NEVER trip the backstop however long the turn (the A3 multi-turn-race fix).

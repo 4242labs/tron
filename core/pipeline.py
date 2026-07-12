@@ -50,6 +50,46 @@ DISPATCHABLE_STATUS = "to-do"
 _TERMINAL_GATE_STAGES = ("closed", "escalated")
 
 
+def block_landed_closed(manifest, block):
+    """True iff `block`'s gate reached the terminal CLOSED stage — landed +
+    closed out on trunk. Durable: `core/gate.py` sets `stage="closed"` at close
+    and does NOT pop the gate (only case-resolution `_drop_gate_and_worker`
+    pops), so this survives branch teardown — unlike branch-ancestry, which
+    reads a deleted ref. NOT `"escalated"` (also terminal, but NOT landed).
+    ADR-0008 stale-wall revalidation primitive."""
+    if not block:
+        return False
+    return ((manifest.get("gates") or {}).get(block) or {}).get("stage") == "closed"
+
+
+def _is_landing_wall(detail):
+    """A land.sh-refusal signature in a wall's free-text detail. Additive and
+    fail-safe: a landing wall whose text misses the signature simply pages
+    (ADR-0008 §3.2), so this only ever NARROWS suppression to genuine landing
+    walls — a dep-cycle / untestable-AC wall never matches."""
+    d = (detail or "").lower()
+    return "land.sh" in d or ("land" in d and ("grant" in d or "refus" in d
+                                               or "content mismatch" in d))
+
+
+def stale_landing_wall(manifest, source, worker_id, detail):
+    """ADR-0008: True iff a `worker.wall` is a LANDING wall now moot — the
+    raising `engineer-<block>` worker's block has closed out on trunk. Every
+    unresolvable input fails TOWARD paging (returns False): a non-worker.wall
+    source, a non-`engineer-` worker (an architect self-escalation carries
+    ARCHITECT_WID → never suppressed), a detail without a landing signature, or
+    a block whose gate is not `"closed"`. The one signal it trusts — the gate
+    stage — is durable across branch teardown and correct in live and dry."""
+    if source != "worker.wall":
+        return False
+    wid = worker_id or ""
+    if not wid.startswith("engineer-"):
+        return False
+    if not _is_landing_wall(detail):
+        return False
+    return block_landed_closed(manifest, wid[len("engineer-"):])
+
+
 def in_flight_blocks(manifest):
     """Block ids in-flight per the manifest alone (see module docstring):
     every non-terminal gate's block, plus every worker's block that has no

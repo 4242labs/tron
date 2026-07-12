@@ -577,6 +577,21 @@ def _advance_triage(eng, manifest, job):
             job["verdict"] = verdict
             job["note"] = v.get("note")
 
+    # ADR-0008 — stale-wall revalidation (covers BOTH the R1b idle-backstop
+    # operator verdict AND a structured `triage_verdict="operator"`: both set
+    # verdict="operator" and converge here). A genuine LANDING worker.wall whose
+    # block has already closed out on trunk is moot — revalidate against durable
+    # trunk truth (the gate stage, which survives branch teardown) and retire it
+    # benignly rather than paging the operator about a wall that no longer holds.
+    if job["verdict"] == "operator" and pipeline.stale_landing_wall(
+            manifest, job.get("source"), job.get("worker_id"), job.get("detail")):
+        job["verdict"] = "answer"
+        job["note"] = ("stale landing worker.wall — block closed on trunk; "
+                       "operator NOT paged (ADR-0008)")
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: STALE landing worker.wall "
+                        f"revalidated (worker={job.get('worker_id')!r} block CLOSED on "
+                        f"trunk) — downgraded operator->answer, operator NOT paged (ADR-0008)")
+
     if job["verdict"] in ("answer", "operator"):
         if job.get("case_id") is not None:
             casestate.architect_resolve(eng, manifest, job["case_id"], job["verdict"],

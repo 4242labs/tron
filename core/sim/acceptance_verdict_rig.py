@@ -140,6 +140,44 @@ def main():
        "(paged, settled, signature) STILL REJECTs — a valid abandon never greens an unbuilt block",
        not okv and any("abandoned" in r for r in reasons), f"reasons={reasons}")
 
+    # ── ADR-0008 guard C — a provably-stale-resolved transient is discounted ──
+    # V11 — a landing worker.wall the engine self-resolved on trunk (decision=
+    # 'stale-resolved-on-trunk') that ALREADY paged once AND channel-escalated:
+    # both the page count and the R2d escalation-log arm discount it -> ACCEPT.
+    okv, reasons = live._acceptance_verdict(
+        _clean(operator_pages={"p1": {"case_id": "case-stale-1"}},
+               cases={"case-stale-1": {"decision": "stale-resolved-on-trunk"}},
+               escalations=[{"case": "case-stale-1", "target_block": "01-03",
+                             "kind": "operator-page-failed", "level": "warning"}]),
+        expect_pages=0)
+    ok("V11 (ADR-0008): a paged + channel-escalated case the engine PROVED resolved on "
+       "trunk (decision='stale-resolved-on-trunk') is discounted from BOTH the page count "
+       "and the R2d escalation log -> ACCEPTs a trivial SIM",
+       okv and not reasons, f"reasons={reasons}")
+
+    # V12 (NON-VACUITY) — the SAME page but the case is genuinely OPEN (decision=None):
+    # nothing is discounted -> REJECT (guard C only discounts the trunk-truth decision).
+    okv, reasons = live._acceptance_verdict(
+        _clean(operator_pages={"p1": {"case_id": "case-open-1"}},
+               cases={"case-open-1": {"decision": None}}),
+        expect_pages=0)
+    ok("V12 (ADR-0008 non-vacuity): an OPEN (undecided) case with a page is NOT discounted "
+       "-> still REJECTs (dangling case + count) — guard C keys ONLY on the trunk-truth decision",
+       not okv and (any("OPEN" in r for r in reasons) or any("escalations" in r for r in reasons)),
+       f"reasons={reasons}")
+
+    # V13 (NON-VACUITY) — a case settled by a DIFFERENT decision ('operator', a real
+    # human answer) with a page on a trivial SIM: NOT discounted -> REJECT on the count.
+    # Proves the discount is scoped to the 'stale-resolved-on-trunk' literal, no other.
+    okv, reasons = live._acceptance_verdict(
+        _clean(operator_pages={"p1": {"case_id": "case-op-1"}},
+               cases={"case-op-1": {"decision": "operator"}}),
+        expect_pages=0)
+    ok("V13 (ADR-0008 non-vacuity): a case settled by a NON-stale decision ('operator') "
+       "with a page still REJECTs a trivial SIM on the count — only 'stale-resolved-on-trunk' "
+       "is discounted, never another decision value",
+       not okv and any("escalations" in r for r in reasons), f"reasons={reasons}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.sim.acceptance_verdict_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")
