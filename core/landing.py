@@ -107,6 +107,31 @@ def paperwork_case_id(role, branch, patch_id):
     return f"paperwork-{role}-{safe_branch}-{(patch_id or '')[:12]}"
 
 
+def stage_case_id(prev, role, branch, patch_id):
+    """The ONE place a landing caller resolves its per-stage grant case-id
+    (T2-17 fix, single-source for all six `land_via_grant` callers — gate.py's
+    merge/record/close arms and architect.py's triage-forward/forward/logreview
+    lanes). Content-binds to the branch's CURRENT patch-id whenever it resolves
+    (a genuine re-authoring -> a FRESH case-id; a pure rebase preserves the
+    patch-id -> the SAME case-id, stable across churn). ONLY when the patch-id
+    is momentarily UNRESOLVABLE (`""` — the branch already fully landed so its
+    diff is empty, or a mid-churn read) does it keep the caller's last-good
+    `prev` id rather than overwrite it with a malformed empty-suffix id.
+
+    Why this exists: callers used to compute `prev or paperwork_case_id(...)`,
+    which CACHED the id UNCONDITIONALLY — pinning it to the FIRST landing's
+    patch-id. A re-authored branch (a follow-up commit) then reused that stale,
+    already-consumed case-id, and the worker's `land.sh` already-consumed check
+    (keyed on case-id alone) no-op'd the new commit -> trunk stuck -> wall ->
+    stall -> operator escalation (the T2-17 REJECT). Binding to the current
+    patch-id restores the content-bound invariant `land_via_grant` documents as
+    "the invariant's one enforcement point". `prev` may be `None` (first call).
+    """
+    if patch_id:
+        return paperwork_case_id(role, branch, patch_id)
+    return prev or paperwork_case_id(role, branch, patch_id)
+
+
 def _mint_or_reuse_grant(eng, case_id, block, branch, patch_id):
     """Ported verbatim from `land.py::_mint_or_reuse_grant` (private to this
     module, same contract): a LIVE grant whose patch-id already matches this

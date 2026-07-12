@@ -321,26 +321,10 @@ def _advance_merge(eng, block, gate_state):
     truth_ref = eng._truth_ref()
 
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    # Content-bind the case-id to the branch's CURRENT patch-id whenever it
-    # resolves — a genuine re-authoring (new commit -> new patch-id) yields a
-    # FRESH case-id, and a pure rebase preserves the patch-id so the case-id
-    # stays stable across churn. Only when the patch-id is momentarily
-    # UNRESOLVABLE ("" — the branch already fully landed so the diff is empty,
-    # or a mid-churn read) do we keep the last good case-id rather than
-    # overwrite it with a malformed empty-suffix id. Caching the case-id
-    # UNCONDITIONALLY (the old `gate_state.get(...) or ...`) was the T2-17 bug:
-    # it pinned the id to the FIRST landing's patch-id, so a follow-up commit
-    # reused the stale, already-consumed case-id and the worker's land.sh
-    # short-circuited ("already consumed — nothing to do, exit 0") WITHOUT
-    # landing it -> trunk stuck -> wall -> stall -> operator escalation.
-    # `paperwork_case_id` is content-bound by construction (...-{patch_id[:12]});
-    # binding here restores the invariant `land_via_grant` documents as "the
-    # invariant's one enforcement point". Same fix on record + close.
-    if patch_id:
-        case_id = landing.paperwork_case_id("merge", branch, patch_id)
-    else:
-        case_id = gate_state.get("merge_case_id") or landing.paperwork_case_id(
-            "merge", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id, shared by all six landing callers).
+    case_id = landing.stage_case_id(gate_state.get("merge_case_id"), "merge",
+                                    branch, patch_id)
     gate_state["merge_case_id"] = case_id
     gate_state["merge_ordered"] = True
 
@@ -459,15 +443,10 @@ def _advance_record(eng, block, gate_state):
                          f"record commit on {branch} is out-of-gate: {detail}")
 
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    # Content-bind to the current patch-id when it resolves, else keep the last
-    # good id — see _advance_merge (T2-17 fix): unconditional caching lets a
-    # cached case-id outlive the content it was minted for and makes land.sh
-    # no-op a re-authored branch's new landing.
-    if patch_id:
-        case_id = landing.paperwork_case_id("record", branch, patch_id)
-    else:
-        case_id = gate_state.get("record_case_id") or landing.paperwork_case_id(
-            "record", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id).
+    case_id = landing.stage_case_id(gate_state.get("record_case_id"), "record",
+                                    branch, patch_id)
     gate_state["record_case_id"] = case_id
 
     outcome = landing.land_via_grant(eng, case_id, block, branch, wid,
@@ -532,17 +511,10 @@ def _advance_close(eng, block, gate_state):
     tip = gitobs.tip_sha(eng.paths["root"], branch, eng.dry)
     if tip and not gitobs.is_ancestor(eng.paths["root"], tip, truth_ref, eng.dry):
         pid = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-        # Content-bind to the current patch-id when it resolves, else keep the
-        # last good id — see _advance_merge (T2-17 fix): the worker's follow-up
-        # Completed-date fix commit re-authored the branch, but the old cached
-        # close case-id was reused, so land.sh no-op'd the new commit and trunk
-        # fell behind. (This block only runs while tip is NOT yet on trunk, so
-        # `pid` normally resolves; the else-arm is the defensive fallback.)
-        if pid:
-            case_id = landing.paperwork_case_id("close", branch, pid)
-        else:
-            case_id = gate_state.get("close_case_id") or landing.paperwork_case_id(
-                "close", branch, pid)
+        # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17
+        # fix; single-source in landing.stage_case_id).
+        case_id = landing.stage_case_id(gate_state.get("close_case_id"), "close",
+                                        branch, pid)
         gate_state["close_case_id"] = case_id
         outcome = landing.land_via_grant(eng, case_id, block, branch, wid,
                                          "close.worker", "gate-close")

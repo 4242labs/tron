@@ -627,16 +627,10 @@ def _advance_triage(eng, manifest, job):
 
     truth_ref = eng._truth_ref()
     patch_id = gitobs.patch_id(eng.paths["root"], entry["branch"], truth_ref, eng.dry)
-    # Content-bind to the current patch-id when it resolves, else keep the last
-    # good id — the same T2-17 fix as core/gate.py's landing arms: an
-    # unconditional `entry.get("case_id") or ...` cache pins the id to the first
-    # landing's content, so a re-authored branch reuses the stale, already-
-    # consumed case-id and the worker's land.sh no-ops the new commit.
-    if patch_id:
-        land_case_id = landing.paperwork_case_id("triage-forward", entry["branch"], patch_id)
-    else:
-        land_case_id = entry.get("case_id") or landing.paperwork_case_id(
-            "triage-forward", entry["branch"], patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id, shared with core/gate.py).
+    land_case_id = landing.stage_case_id(entry.get("case_id"), "triage-forward",
+                                         entry["branch"], patch_id)
     entry["case_id"] = land_case_id
 
     outcome = landing.land_via_grant(eng, land_case_id, entry["block"], entry["branch"],
@@ -686,13 +680,9 @@ def _advance_forward(eng, manifest, job):
 
     truth_ref = eng._truth_ref()
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    # Content-bind when patch-id resolves, else keep last good id (T2-17 fix,
-    # same as core/gate.py). Unconditional caching reuses a stale consumed
-    # case-id on a re-authored branch and land.sh no-ops the new commit.
-    if patch_id:
-        case_id = landing.paperwork_case_id("forward", branch, patch_id)
-    else:
-        case_id = job.get("case_id") or landing.paperwork_case_id("forward", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id).
+    case_id = landing.stage_case_id(job.get("case_id"), "forward", branch, patch_id)
     job["case_id"] = case_id
 
     outcome = landing.land_via_grant(eng, case_id, block, branch, ARCHITECT_WID,
@@ -798,13 +788,9 @@ def _advance_log(eng, manifest, job):
             continue
         block, branch = e["block"], e["branch"]
         patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-        # Content-bind when patch-id resolves, else keep last good id (T2-17 fix,
-        # same as core/gate.py). Unconditional caching reuses a stale consumed
-        # case-id on a re-authored branch and land.sh no-ops the new commit.
-        if patch_id:
-            case_id = landing.paperwork_case_id("logreview", branch, patch_id)
-        else:
-            case_id = e.get("case_id") or landing.paperwork_case_id("logreview", branch, patch_id)
+        # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17
+        # fix; single-source in landing.stage_case_id).
+        case_id = landing.stage_case_id(e.get("case_id"), "logreview", branch, patch_id)
         e["case_id"] = case_id
         outcome = landing.land_via_grant(eng, case_id, block, branch, ARCHITECT_WID,
                                          "arch.log-review", "architect-logreview")
