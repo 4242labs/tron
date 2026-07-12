@@ -90,6 +90,8 @@ import gate                  # noqa: E402 — core/gate.py, the DONE ladder core
 import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, wave 9's architect-enqueue/advance wiring
 import architect              # noqa: E402 — core/architect.py, the module under test
+from engine import Engine as CoreEngine  # noqa: E402 — core/engine.py, R-A's REAL implementation
+import jobs                    # noqa: E402 — engine/jobs.py, the runner-consumption seam (HWM file)
 
 SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
 MAIN = "main"
@@ -816,10 +818,10 @@ def run_phantom_triage_grace_scenario():
     # PT1 — low-confidence phantom -> BENIGN 'answer' backstop.
     mA = {"architect": {"status": "busy"}, "triage_verdicts": {}}
     jobA = {"kind": "triage", "triage_id": "triage-1", "source": "classify.unclassified",
-            "block": None, "worker_id": "engineer-01-03", "ordered": True,
+            "block": None, "worker_id": "engineer-01-03", "ordered": True, "dispatch_seq": True,
             "verdict": None, "resolved": False}
     mA["architect"]["current_job"] = jobA
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mA, jobA)
     ok("PT1 (LOW-CONFIDENCE BENIGN BACKSTOP, R1b — must be GREEN): a "
        "classify.unclassified phantom with no verdict auto-resolves BENIGN "
@@ -836,9 +838,9 @@ def run_phantom_triage_grace_scenario():
                                      "owner": "architect", "decision": None}}}
     jobB = {"kind": "triage", "triage_id": "triage-2", "source": "worker.wall",
             "block": "01-02", "case_id": "case-01-02-1", "worker_id": "engineer-01-02",
-            "ordered": True, "verdict": None, "resolved": False}
+            "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mB["architect"]["current_job"] = jobB
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mB, jobB)
     paged = getattr(eng, "operator_pages", [])
     ok("PT2 (GENUINE LOUD BACKSTOP, R1b — must be GREEN): a real worker.wall the "
@@ -871,10 +873,10 @@ def run_phantom_triage_grace_scenario():
            "gates": {"01-03": {"stage": "closed"}}}
     jobS0 = {"kind": "triage", "triage_id": "triage-stale-0", "source": "worker.wall",
              "block": None, "case_id": None, "worker_id": "engineer-01-03",
-             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+             "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mS0["architect"]["current_job"] = jobS0
     _pages_before = len(getattr(eng, "operator_pages", []))
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mS0, jobS0)
     _pages_after = getattr(eng, "operator_pages", [])
     ok("STALE-A0 (BLOCK-LESS T2-18 PATH, ADR-0008 — must be GREEN): the literal defect "
@@ -894,9 +896,9 @@ def run_phantom_triage_grace_scenario():
                                       "owner": "architect", "decision": None}}}
     jobS1 = {"kind": "triage", "triage_id": "triage-stale-1", "source": "worker.wall",
              "block": None, "case_id": "case-stale-1", "worker_id": "engineer-01-03",
-             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+             "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mS1["architect"]["current_job"] = jobS1
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mS1, jobS1)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-A1 (IDLE-BACKSTOP STALE-WALL, ADR-0008 — must be GREEN): a genuine "
@@ -917,7 +919,7 @@ def run_phantom_triage_grace_scenario():
                                       "owner": "architect", "decision": None}}}
     jobS2 = {"kind": "triage", "triage_id": "triage-stale-2", "source": "worker.wall",
              "block": None, "case_id": "case-stale-2", "worker_id": "engineer-01-03",
-             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+             "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mS2["architect"]["current_job"] = jobS2
     architect._advance_triage(eng, mS2, jobS2)
     paged = getattr(eng, "operator_pages", [])
@@ -939,9 +941,9 @@ def run_phantom_triage_grace_scenario():
                                    "owner": "architect", "decision": None}}}
     jobN1 = {"kind": "triage", "triage_id": "triage-nv-1", "source": "worker.wall",
              "block": "01-04", "case_id": "case-nv-1", "worker_id": "engineer-01-04",
-             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+             "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mN1["architect"]["current_job"] = jobN1
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mN1, jobN1)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-NV1 (OPEN-BLOCK STILL PAGES, ADR-0008 non-vacuity — must be GREEN): a "
@@ -961,9 +963,9 @@ def run_phantom_triage_grace_scenario():
     jobN2 = {"kind": "triage", "triage_id": "triage-nv-2", "source": "worker.wall",
              "block": None, "case_id": "case-nv-2", "worker_id": "engineer-01-05",
              "detail": "dependency cycle between 01-06 and 01-07 — cannot proceed",
-             "ordered": True, "verdict": None, "resolved": False}
+             "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mN2["architect"]["current_job"] = jobN2
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect._advance_triage(eng, mN2, jobN2)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-NV2 (NON-LANDING WALL STILL PAGES, ADR-0008 non-vacuity — must be GREEN): "
@@ -982,17 +984,16 @@ def run_phantom_triage_grace_scenario():
     mC = {"architect": {"status": "busy"}, "triage_verdicts": {}}
     jobC = {"kind": "triage", "triage_id": "triage-3", "source": "worker.wall",
             "block": "01-02", "case_id": "case-01-02-9", "worker_id": "engineer-01-02",
-            "ordered": True, "verdict": None, "resolved": False}
+            "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mC["architect"]["current_job"] = jobC
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+    for _ in range(10):
         architect._advance_triage(engW, mC, jobC)
-    ok("PT3 (WORKING-ARCHITECT HOLD, R1b/A3 — must be GREEN): while the architect is "
-       "provably mid-turn (_worker_working True) the backstop NEVER fires, however "
+    ok("PT3 (WORKING-ARCHITECT HOLD, R1b/A3, ADR-0009 re-keyed onto "
+       "_turn_settled — must be GREEN): while the architect is provably "
+       "mid-turn (_worker_working True) the backstop NEVER fires, however "
        "many ticks — no premature page, no multi-turn race",
-       jobC.get("resolved") is not True and jobC.get("verdict") is None
-       and jobC.get("idle_ticks", 0) == 0,
-       f"resolved={jobC.get('resolved')} verdict={jobC.get('verdict')} "
-       f"idle_ticks={jobC.get('idle_ticks')}")
+       jobC.get("resolved") is not True and jobC.get("verdict") is None,
+       f"resolved={jobC.get('resolved')} verdict={jobC.get('verdict')}")
 
     # PT4 — R1a enqueue backstop: enqueue_triage from the architect itself creates
     # nothing (defense-in-depth; the call-site guards in classify/router are primary).
@@ -1007,6 +1008,43 @@ def run_phantom_triage_grace_scenario():
        len(mD.get("architect_queue") or []) == 0,
        f"queue={mD.get('architect_queue')}")
 
+    # ── ADR-0009 §5 rig 7, H1 (worker-careful, benign) ──────────────────
+    # The worker attempted `record` ahead of its own commit reaching trunk
+    # and self-walled HONESTLY (a genuine wall, block + land signature).
+    # Handling: architect-first -> a structured verdict `answer` ("land,
+    # then record") -> the worker is relayed the note and the case
+    # resolves WITHOUT ever paging the operator — Defect 1 alone (this
+    # ADR's R-A..R-G) is what stops this from starving behind a wedged
+    # architect; the VERDICT machinery itself (`architect_resolve`'s
+    # "answer" arm) is pre-existing, exercised here end-to-end together
+    # with the NEW land.sh-signature structural classify path (§4).
+    engH1 = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    mH1 = {"architect": {"status": "busy"}, "triage_verdicts": {
+              "triage-h1": {"verdict": "answer",
+                            "note": "land your merge first, THEN re-attempt record — "
+                                    "you're ahead of your own commit reaching trunk"}},
+          "cases": {"case-h1-1": {"case_id": "case-h1-1", "block": "01-06",
+                                  "source": "worker.wall", "worker_id": "engineer-01-06",
+                                  "owner": "architect", "decision": None}}}
+    jobH1 = {"kind": "triage", "triage_id": "triage-h1", "source": "worker.wall",
+            "block": "01-06", "case_id": "case-h1-1", "worker_id": "engineer-01-06",
+            "detail": "land.sh refused: grant minted for commit aaa1111, but worker "
+                      "committed bbb2222 before landing, causing content mismatch",
+            "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
+    mH1["architect"]["current_job"] = jobH1
+    architect._advance_triage(engH1, mH1, jobH1)
+    h1_pages = getattr(engH1, "operator_pages", [])
+    h1_relay = [o for o in engH1.orders if o[0] == "engineer-01-06"]
+    ok("H1 (WORKER-CAREFUL PREMATURE-RECORD, ADR-0009 §5 rig 7 — must be "
+       "GREEN): a genuine worker.wall (land-signature detail) with a "
+       "structured 'answer' verdict resolves via architect_resolve WITHOUT "
+       "ever paging the operator, and relays the 'land, then record' note "
+       "back to the worker so it can re-drive",
+       jobH1.get("resolved") is True and "case-h1-1" not in mH1["cases"]
+       and len(h1_pages) == 0 and len(h1_relay) == 1,
+       f"resolved={jobH1.get('resolved')} cases={mH1['cases']} "
+       f"pages={h1_pages} relay={h1_relay}")
+
 
 def run_reconcile_backstop_scenario():
     """T2-12 regression: a NO-OP reconcile must not silently WEDGE the fleet. The
@@ -1014,9 +1052,21 @@ def run_reconcile_backstop_scenario():
     free-text ('no forward impact / work complete') is never routed as a structured
     `architect.reconciled` — so the block never enters `manifest['reconciled']` and,
     before the fix, `advance` held `current_job` busy FOREVER while the runner sat
-    idle: 01-03's dispatch hung with no wall/page/retry. The shared R1b idle backstop
-    (`_architect_settled_idle`) clears the gate once the architect settles idle after
-    its ordered turn — completion tied to ENGINE STATE, never to parsed prose."""
+    idle: 01-03's dispatch hung with no wall/page/retry. The shared R1b backstop
+    (`_turn_settled`, ADR-0009 re-keyed onto R-D's `read_hwm >= dispatch_seq` read)
+    clears the gate once the architect's reconcile order is genuinely DELIVERED and
+    it settles idle — completion tied to ENGINE STATE, never to parsed prose.
+
+    ADR-0009 consolidation note: the OLD RB4/RB5/RB6 here proved the `arch_started`
+    latch (settled-after-a-genuine-turn vs. never-started-at-all) — that latch is
+    DELETED (§6): its DISTINGUISHING POWER for a hookless `eng` (no `_read_hwm`) is
+    gone too (a hookless `_delivered` degrades to 'sent == delivered', so it can no
+    longer tell 'cold-start-dead' apart from 'genuinely settled' — only a LIVE
+    engine's real `read_hwm` can). RB5/RB6's actual INTENT (a dead architect must
+    still reach a human, exactly once, never a silent wedge) is NOT lost — it moves
+    to the new live-hwm rig `run_no_progress_budget_rig` (§8 rig 4a), which proves
+    it PROPERLY, with a real (rig-controlled) `_read_hwm` signal backing it, rather
+    than a hookless approximation that can't actually distinguish the two cases."""
     root = build_root()
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
@@ -1024,10 +1074,11 @@ def run_reconcile_backstop_scenario():
 
     # RB1 — settled idle, no architect.reconciled -> backstop marks reconciled + clears.
     eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
-    jobA = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    jobA = {"kind": "reconcile", "block": "01-03", "after": "01-02",
+            "ordered": True, "dispatch_seq": True}
     mA = {"architect": {"status": "busy", "current_job": jobA, "spawned": True},
           "architect_queue": [], "reconciled": []}
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+    for _ in range(3):
         architect.advance(eng, mA)
     ok("RB1 (RECONCILE NO-OP BACKSTOP KILLER — must be GREEN): a reconcile the "
        "architect took its turn on but never reported architect.reconciled clears on "
@@ -1044,10 +1095,11 @@ def run_reconcile_backstop_scenario():
         def _worker_working(self, wid):
             return wid == architect.ARCHITECT_WID
     engW = _WorkingEng(root, tron_ctx, test_command="true", worker_count=1)
-    jobB = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    jobB = {"kind": "reconcile", "block": "01-03", "after": "01-02",
+            "ordered": True, "dispatch_seq": True}
     mB = {"architect": {"status": "busy", "current_job": jobB, "spawned": True},
           "architect_queue": [], "reconciled": []}
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+    for _ in range(10):
         architect.advance(engW, mB)
     ok("RB2 (WORKING-ARCHITECT HOLD — must be GREEN): while the architect is provably "
        "mid-reconcile-turn (_worker_working True) the backstop NEVER fires — current_job "
@@ -1060,7 +1112,7 @@ def run_reconcile_backstop_scenario():
     # arm, and the backstop never DOUBLE-adds the block.
     eng2 = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
     jobC = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True,
-            "idle_ticks": 0}
+            "dispatch_seq": True}
     mC = {"architect": {"status": "busy", "current_job": jobC, "spawned": True},
           "architect_queue": [], "reconciled": ["01-03"]}
     architect.advance(eng2, mC)
@@ -1071,9 +1123,12 @@ def run_reconcile_backstop_scenario():
        and (mC.get("reconciled") or []).count("01-03") == 1,
        f"reconciled={mC.get('reconciled')} architect={mC['architect']}")
 
-    # RB4 — live-like STARTED-then-SETTLED (peer-review #2 hardening): the architect
-    # is observed working (turn genuinely taken), THEN settles idle -> the started-latch
-    # permits the backstop to arm and clear the reconcile.
+    # RB7 — ADR-0006 R1d (STARTED-THEN-REFUSED FORWARD/LOG KILLER, ADR-0009 re-keyed
+    # onto `_turn_settled`/R-D): the architect's forward order was genuinely DELIVERED
+    # (observed working, then idle) and it settled idle having authored NO branch
+    # (`land_via_grant` -> "fail-closed" for a never-created branch). The job must NOT
+    # poll to budget nor benign-clear (dropping work) — it routes LOUD to the operator
+    # once and frees the architect.
     class _StartsThenIdleEng(MiniEng):
         def __init__(self, *a, **k):
             super().__init__(*a, **k)
@@ -1082,60 +1137,6 @@ def run_reconcile_backstop_scenario():
             if wid != architect.ARCHITECT_WID:
                 return False
             return self._wk.pop(0) if self._wk else False
-    engS = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
-    jobD = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
-    mD = {"architect": {"status": "busy", "current_job": jobD, "spawned": True},
-          "architect_queue": [], "reconciled": []}
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 3):
-        architect.advance(engS, mD)
-    ok("RB4 (STARTED-THEN-SETTLED ARMS — must be GREEN): once the architect is observed "
-       "working (turn taken) and THEN settles idle, the backstop arms and clears the "
-       "reconcile — the started-latch permits arming after a genuine turn",
-       "01-03" in (mD.get("reconciled") or []) and mD["architect"].get("current_job") is None,
-       f"reconciled={mD.get('reconciled')} architect={mD['architect']}")
-
-    # RB5 — live-like COLD-START / SILENTLY-DEAD (peer-review #2 KILLER): the architect
-    # is NEVER observed working. The backstop must NEVER arm (no silent false-clear of a
-    # reconcile that never ran); the reconcile HOLDS so the run fails honestly on budget.
-    class _NeverStartsEng(MiniEng):
-        def _worker_working(self, wid):
-            return False                 # architect never comes up
-    engN = _NeverStartsEng(root, tron_ctx, test_command="true", worker_count=1)
-    jobE = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
-    mE = {"architect": {"status": "busy", "current_job": jobE, "spawned": True},
-          "architect_queue": [], "reconciled": []}
-    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 20):
-        architect.advance(engN, mE)
-    ok("RB5 (COLD-START/DEAD HOLD KILLER — must be GREEN): an architect NEVER observed "
-       "working (slow cold-start or silently dead) NEVER arms the reconcile backstop, "
-       "however many ticks — no silent false-clear; the reconcile holds (run fails "
-       "honestly on budget) rather than falsely marking reconciled (peer-review #2)",
-       "01-03" not in (mE.get("reconciled") or [])
-       and mE["architect"].get("current_job") is not None,
-       f"reconciled={mE.get('reconciled')} architect={mE['architect']}")
-
-    # RB6 — ADR-0006 R1c (COLD-START ARCHITECT-LIVENESS KILLER): the same cold-start/
-    # dead architect that RB5 proves the backstop must HOLD is now PAGED exactly once
-    # (the pool-excluded architect finally has a liveness net) — the hold is loud, not
-    # silent-to-budget. Reuses RB5's engN/mE state after its 22-tick drive.
-    arch_pages = [p for p in getattr(engN, "operator_pages", [])
-                  if (p.get("worker_id") == architect.ARCHITECT_WID
-                      or p.get("block") == "01-03")]
-    ok("RB6 (R1c COLD-START ARCHITECT PAGE — must be GREEN): a never-started architect is "
-       "paged the operator EXACTLY ONCE (once-guard holds across the whole drive), while "
-       "the reconcile job is still held (RB5) — a dead architect no longer wedges silently",
-       len(arch_pages) == 1 and mE["architect"]["current_job"].get("stall_paged") is True
-       and mE["architect"]["current_job"].get("cold_ticks", 0)
-           >= architect._ARCHITECT_COLD_START_CAP_TICKS,
-       f"arch_pages={arch_pages} job={mE['architect']['current_job']}")
-
-    # RB7 — ADR-0006 R1d (STARTED-THEN-REFUSED FORWARD/LOG KILLER): the architect
-    # TOOK its ordered forward turn (observed working) then settled idle having
-    # authored NO branch (`land_via_grant` -> "fail-closed" for a never-created
-    # branch). The job must NOT poll to budget nor benign-clear (dropping work) —
-    # it routes LOUD to the operator once and frees the architect. Distinct from
-    # R1c (never-started): here `arch_started` is set, so R1c stays silent and
-    # R1d owns it — the clean partition.
     engR = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
     jobF = {"kind": "forward", "block": "09-09", "ordered": False}
     mF = {"architect": {"status": "busy", "current_job": jobF, "spawned": True},
@@ -1147,7 +1148,7 @@ def run_reconcile_backstop_scenario():
     _real_lvg = architect.landing.land_via_grant
     architect.landing.land_via_grant = lambda *a, **k: "fail-closed"
     try:
-        for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 4):
+        for _ in range(8):
             architect.advance(engR, mF)
     finally:
         architect.landing.land_via_grant = _real_lvg
@@ -1155,11 +1156,583 @@ def run_reconcile_backstop_scenario():
                  if p.get("block") == "09-09"]
     ok("RB7 (R1d STARTED-THEN-REFUSED FORWARD — must be GREEN): an architect that took its "
        "forward turn but authored no branch (fail-closed + settled idle) is routed to the "
-       "operator ONCE and freed — never a silent wedge, never a benign drop; R1c stays quiet "
-       "(arch_started set, so not the cold-start window)",
+       "operator ONCE and freed — never a silent wedge, never a benign drop",
        len(r1d_pages) == 1 and mF["architect"].get("current_job") is None
        and not jobF.get("landed"),
        f"r1d_pages={r1d_pages} architect={mF['architect']} last_outcome={jobF.get('last_outcome')}")
+
+
+class HwmEng(MiniEng):
+    """ADR-0009 §8 (rigs 1-5) — a CONTROLLABLE eng stand-in backing the
+    R-A..R-G duck-typed hooks (`_read_hwm`/`_is_alive`/`_runner_idle`/
+    `_mbox_seq`/`_resend`) with an in-memory, fully rig-driven fake of the
+    runner-consumption signals — never real files (real `engine/jobs.py`
+    file behavior is proven elsewhere: `core/sim/teardown_rig.py`,
+    `core/engine_rig.py`'s real mailbox send/receive, and RIG2's own
+    direct test of `core.engine.Engine`'s REAL `_next_mbox_seq` below);
+    this rig only needs to prove `core/architect.py`'s OWN CONSUMPTION of
+    those signals is correct, deterministically, mutation-provably. A
+    pluggable clock (`tick_clock`) drives every pace-unit-based comparison
+    (REDELIVER_AFTER/NO_PROGRESS_BUDGET) exactly like `core/sentry_rig.py`
+    already does for `core/sentry.py`."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._hwm = {}
+        self._mbox = {}
+        self._alive_map = {}
+        self._idle_map = {}
+        self._clk = 0
+        self.working = False
+        self.resend_calls = []
+        self.respawn_calls = 0
+
+    def _now(self):
+        return self._clk
+
+    def tick_clock(self, n=1):
+        self._clk += n
+
+    def _to_worker(self, wid, msg, kind):
+        seq = self._mbox.get(wid, 0) + 1
+        self._mbox[wid] = seq
+        self.orders.append((wid, msg, kind))
+        return seq
+
+    def emit(self, template_id, fallback_text, slots=None, worker_id=None, kind=None):
+        line = fallback_text
+        if worker_id and not self.dry:
+            self._to_worker(worker_id, line, kind or template_id)
+        return line
+
+    def _mbox_seq(self, wid):
+        return self._mbox.get(wid)
+
+    def _resend(self, wid, seq, text, kind):
+        self.resend_calls.append((wid, seq, text, kind))
+        return seq
+
+    def _read_hwm(self, wid):
+        return self._hwm.get(wid, 0)
+
+    def consume(self, wid=None, seq=None):
+        """Simulate the runner finishing a turn that consumed up through
+        `seq` (default: the CURRENT mbox seq) — bumps the durable hwm,
+        mirroring `worker_runner.py::_write_hwm`'s own "after each
+        fully-finished turn" timing."""
+        wid = wid or architect.ARCHITECT_WID
+        if seq is None:
+            seq = self._mbox.get(wid, 0)
+        self._hwm[wid] = max(self._hwm.get(wid, 0), seq)
+
+    def _is_alive(self, wid):
+        return self._alive_map.get(wid, True)
+
+    def _runner_idle(self, wid):
+        return self._idle_map.get(wid, True)
+
+    def _worker_working(self, wid):
+        return self.working if wid == architect.ARCHITECT_WID else False
+
+    def _spawn_architect(self):
+        self.respawn_calls += 1
+        # R-C: clean-slate — `retire_stale_dir` archives the whole dir, so
+        # a re-spawn resets hwm -> 0 with an empty mailbox ("resumes from
+        # hwm" is FALSE for this stack); mbox_seq (R-A, per-wid monotonic)
+        # is untouched by a respawn — only THIS reset, never the counter.
+        self._hwm[architect.ARCHITECT_WID] = 0
+
+
+def _hwm_job(triage_id, worker_id):
+    return {"kind": "triage", "triage_id": triage_id, "source": "classify.unclassified",
+           "block": None, "worker_id": worker_id, "ordered": False,
+           "verdict": None, "resolved": False}
+
+
+def run_delivery_gap_rig():
+    """§8 rig 1 — DELIVERY-GAP (literal T2-20): pin `read_hwm < dispatch_seq`
+    for K ticks (runner alive+idle, the order silently never consumed — the
+    exact T2-20 shape: 'state:idle turns:2 is positive proof seq-3 was
+    never consumable') then let it consume -> re-delivers, completes,
+    0 pages, the architect frees for the next job. Mutation: restore the
+    `ordered`-boolean-only, fire-and-forget pre-ADR-0009 shape (disable the
+    R-C/R-E redeliver loop) -> strands, pages -> reproduces the T2-20
+    'a genuinely stuck architect order must still reach a human' signature
+    (via R-G's no-progress budget, which absorbs the deleted R1c ladder's
+    honest core — the same page, never a silent wedge)."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    def _fresh(tid, wid):
+        eng = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+        job = _hwm_job(tid, wid)
+        m = {"architect": {"status": "busy", "current_job": job, "spawned": True},
+            "architect_queue": [], "triage_verdicts": {}}
+        return eng, m, job
+
+    # RUN A — the fix intact.
+    eng, m, job = _fresh("triage-dg-a", "engineer-01")
+    architect.advance(eng, m)   # orders — dispatch_seq stamped
+    seq0 = job.get("dispatch_seq")
+    K = architect.REDELIVER_AFTER + 2
+    for _ in range(K):
+        eng.tick_clock()
+        architect.advance(eng, m)
+    ok("RIG1-A1: the order was genuinely re-delivered (R-E, idle-gated) "
+       "while pinned unconsumed — at the SAME dispatch_seq (runner dedups)",
+       len(eng.resend_calls) >= 1 and all(c[1] == seq0 for c in eng.resend_calls),
+       f"resend_calls={eng.resend_calls} seq0={seq0}")
+    ok("RIG1-A2: 0 operator pages while the gap was still within budget",
+       len(getattr(eng, "operator_pages", [])) == 0,
+       f"pages={getattr(eng, 'operator_pages', [])}")
+    eng.consume()   # the runner (finally) processes the (re-)delivered order
+    eng.tick_clock()
+    architect.advance(eng, m)
+    ok("RIG1-A3 (THE DELIVERY-GAP KILLER — must be GREEN): once genuinely "
+       "consumed, the job resolves — 0 pages for the WHOLE run, the "
+       "architect is freed (current_job cleared) for the next triage",
+       job.get("resolved") is True and len(getattr(eng, "operator_pages", [])) == 0
+       and m["architect"].get("current_job") is None,
+       f"resolved={job.get('resolved')} pages={getattr(eng, 'operator_pages', [])} "
+       f"architect={m['architect']}")
+
+    # RUN B — MUTATION: disable the redeliver loop entirely (restore the
+    # `ordered`-boolean-only, fire-and-forget shape) — the SAME scenario
+    # must now STRAND and eventually PAGE.
+    eng2, m2, job2 = _fresh("triage-dg-b", "engineer-02")
+    architect.advance(eng2, m2)
+    _real_redeliver = architect._redeliver
+    architect._redeliver = lambda eng_, d, now: None   # MUTATION: never re-send
+    try:
+        for _ in range(architect.NO_PROGRESS_BUDGET + 5):
+            eng2.tick_clock()
+            architect.advance(eng2, m2)
+    finally:
+        architect._redeliver = _real_redeliver
+    pages2 = getattr(eng2, "operator_pages", [])
+    ok("RIG1-B (MUTATION -> RED, non-vacuity proof): with re-delivery "
+       "disabled, the SAME delivery gap STRANDS — never resolves — and "
+       "eventually PAGES (R-G's no-progress budget), reproducing the "
+       "T2-20 'a genuinely stuck architect order must still reach a "
+       "human' signature the deleted R1c ladder used to own",
+       job2.get("resolved") is not True and len(pages2) == 1,
+       f"resolved={job2.get('resolved')} pages={pages2}")
+
+
+def run_respawn_rig():
+    """§8 rig 2 — RESPAWN (R-C/R-A): dir archived -> hwm->0 -> monotonic
+    mbox_seq stays high -> order re-sent at the higher seq -> `turn_done`
+    carries that seq (no `(wid,seq)` collision) -> verdict couriered ->
+    completes, 0 pages. Two mutations: (1) architect.py's own respawn+
+    resend loop (R-C), proven via the controllable HwmEng; (2) R-A's
+    monotonic-upward reconciliation, proven DIRECTLY against `core.engine.
+    Engine`'s REAL `_next_mbox_seq`/`_to_worker` — the property under
+    mutation (2) is ENGINE-internal (the 'engine-restart wedge'), not
+    architect.py's own recovery loop (already proven non-vacuous above)."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    # ── R-C: architect.py's own respawn+resend (via the controllable HwmEng) ──
+    eng = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng._alive_map[architect.ARCHITECT_WID] = False   # DEAD from the start
+    job = _hwm_job("triage-rs", "engineer-03")
+    m = {"architect": {"status": "busy", "current_job": job, "spawned": True},
+        "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng, m)   # orders — dispatch_seq stamped
+    seq0 = job.get("dispatch_seq")
+    for _ in range(3):
+        eng.tick_clock()
+        architect.advance(eng, m)
+    ok("RIG2-A1: a DEAD architect (never alive) was clean-slate RE-SPAWNED "
+       "(R-C) and its order RE-DELIVERED at the SAME dispatch_seq",
+       eng.respawn_calls >= 1 and len(eng.resend_calls) >= 1
+       and all(c[1] == seq0 for c in eng.resend_calls),
+       f"respawn_calls={eng.respawn_calls} resend_calls={eng.resend_calls} seq0={seq0}")
+    ok("RIG2-A2: the respawn's clean-slate reset hwm -> 0 while mbox_seq "
+       "(dispatch_seq) stayed HIGH — 'resumes from hwm' is FALSE for this "
+       "stack (R-C's own correction)",
+       eng._hwm.get(architect.ARCHITECT_WID, -1) == 0 and seq0 and seq0 >= 1,
+       f"hwm={eng._hwm} seq0={seq0}")
+    eng._alive_map[architect.ARCHITECT_WID] = True   # the fresh incarnation comes up
+    eng.consume()   # ... and processes the re-delivered order
+    eng.tick_clock()
+    architect.advance(eng, m)
+    ok("RIG2-A3 (THE RESPAWN KILLER — must be GREEN): completes cleanly "
+       "post-respawn — 0 pages, job resolved",
+       job.get("resolved") is True and len(getattr(eng, "operator_pages", [])) == 0,
+       f"resolved={job.get('resolved')} pages={getattr(eng, 'operator_pages', [])}")
+
+    # MUTATION 1 (architect.py's R-C loop disabled): a dead architect is
+    # NEVER re-spawned at all -> permanently wedged (never resolves; R-G
+    # eventually pages, but the job itself never completes).
+    eng_m1 = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng_m1._alive_map[architect.ARCHITECT_WID] = False
+    job_m1 = _hwm_job("triage-rs-m1", "engineer-04")
+    m_m1 = {"architect": {"status": "busy", "current_job": job_m1, "spawned": True},
+           "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng_m1, m_m1)
+    _real_spawn_fn = HwmEng._spawn_architect
+    HwmEng._spawn_architect = lambda self: None   # MUTATION: respawn never fires
+    try:
+        for _ in range(10):
+            eng_m1.tick_clock()
+            architect.advance(eng_m1, m_m1)
+    finally:
+        HwmEng._spawn_architect = _real_spawn_fn
+    ok("RIG2-B (MUTATION -> RED, non-vacuity for RIG2-A1/A3): with the "
+       "respawn call disabled, a dead architect's order is NEVER "
+       "re-delivered (no clean-slate incarnation to deliver it to) — "
+       "never resolves",
+       job_m1.get("resolved") is not True and eng_m1.respawn_calls == 0,
+       f"resolved={job_m1.get('resolved')} respawn_calls={eng_m1.respawn_calls}")
+
+    # ── R-A: tested DIRECTLY against `core.engine.Engine`'s REAL
+    #     `_to_worker`/`_next_mbox_seq` — the "engine-restart wedge": a
+    #     fresh engine process (its in-memory `_mailbox_seq` counter LOST
+    #     to the crash, and no persisted `manifest["mbox_seq"]` entry
+    #     either — the exact shape a real restart leaves) must reconcile
+    #     its FIRST post-restart send UPWARD off the runner's REAL,
+    #     already-high, on-disk high-water — never re-mint a seq the
+    #     runner's own dedupe (`seq <= hwm: skip`,
+    #     `engine/worker_runner.py::_pending`) would silently treat as
+    #     already-consumed. ──
+    real_eng = CoreEngine(tron_ctx, dry=False)
+    wdir = tron_ctx.worker_dir(architect.ARCHITECT_WID)
+    os.makedirs(wdir, exist_ok=True)
+    with open(os.path.join(wdir, jobs.HWM), "w") as f:
+        f.write("50")   # the runner ALREADY consumed up through seq 50 (a real prior incarnation)
+    real_eng._manifest = {}   # a genuine restart: no persisted mbox_seq entry at all
+    seq_fixed = real_eng._to_worker(architect.ARCHITECT_WID, "hello", "arch.triage")
+    ok("RIG2-C1 (R-A ENGINE-RESTART KILLER — must be GREEN): a fresh "
+       "`core.engine.Engine` (no persisted mbox_seq — the exact "
+       "'in-memory counter lost to a crash' shape) reconciles its FIRST "
+       "post-restart send UPWARD off the runner's REAL on-disk high-water "
+       "— never re-collides with (or reads as stale-behind) already-"
+       "consumed seq territory",
+       seq_fixed is not None and seq_fixed > 50,
+       f"seq_fixed={seq_fixed} hwm_on_disk=50")
+
+    # MUTATION 2 (R-A): seed the seq from the persisted counter ALONE,
+    # ignoring the runner's real hwm entirely (the pre-R-A, in-memory-
+    # counter-only shape) — a fresh process with NO persisted counter
+    # mints seq=1, which the runner's OWN dedupe treats as ALREADY
+    # consumed — a permanently unreachable, silently-dropped send.
+    real_eng2 = CoreEngine(tron_ctx, dry=False)
+    real_eng2._manifest = {}
+    def _seed_from_persisted_only(wid):
+        mbox = real_eng2._manifest.setdefault("mbox_seq", {})
+        seq = mbox.get(wid, 0) + 1
+        mbox[wid] = seq
+        return seq
+    real_eng2._next_mbox_seq = _seed_from_persisted_only
+    seq_mut = real_eng2._to_worker(architect.ARCHITECT_WID, "hello", "arch.triage")
+    ok("RIG2-C2 (MUTATION -> RED, non-vacuity for RIG2-C1): seeding the "
+       "seq from the persisted counter ALONE (ignoring the runner's real "
+       "high-water, R-A's own 'max' rule disabled) mints a seq the "
+       "runner's real hwm has ALREADY passed — the exact engine-restart "
+       "wedge R-A closes",
+       seq_mut is not None and seq_mut <= 50,
+       f"seq_mut={seq_mut} hwm_on_disk=50")
+
+
+def run_multi_order_rig():
+    """§8 rig 3 — MULTI-ORDER (R-B): a job that issues a SECOND, order-
+    requiring sub-state (triage `scope_forward`'s adhoc `entry`) must wait
+    for its OWN hwm advance, never read 'delivered' off an EARLIER order's
+    already-consumed dispatch_seq. Mutation: stamp dispatch_seq ONCE (never
+    re-stamp the second order) -> the second, authoring turn reads
+    'delivered' the instant the FIRST order's hwm passed -> false-completed
+    before the architect ever took the second turn (red)."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+    eng = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+
+    job = {"kind": "triage", "triage_id": "triage-mo", "source": "worker.wall",
+          "block": "01-07", "worker_id": "engineer-01-07",
+          "ordered": False, "verdict": None, "resolved": False, "case_id": None}
+    architect._order_triage(eng, job)   # order #1 — stamps job["dispatch_seq"]
+    seq1 = job["dispatch_seq"]
+    eng.consume()                        # the runner delivers order #1
+    ok("RIG3-1: order #1 (the triage verdict ask) is delivered",
+       architect._delivered(eng, job), f"seq1={seq1} hwm={eng._hwm}")
+
+    entry = {"block": "adhoc-triage-1", "branch": "arch/adhoc-triage-1-logreview",
+            "finding": "x", "case_id": None, "landed": False, "ordered": False}
+    text2 = "[TRON] scope_forward order #2"
+    eng._to_worker(architect.ARCHITECT_WID, text2, "arch.log-review")
+    entry["ordered"] = True
+    architect._stamp_dispatch(eng, entry, text2, "arch.log-review")   # order #2
+    seq2 = entry["dispatch_seq"]
+    ok("RIG3-2 (THE MULTI-ORDER KILLER — must be GREEN): order #2's OWN "
+       "dispatch_seq is a DISTINCT, HIGHER seq than order #1's, and reads "
+       "UNDELIVERED even though order #1's hwm already passed — a stale "
+       "EARLIER order can never satisfy a LATER order's completion read",
+       seq2 is not None and seq1 is not None and seq2 > seq1
+       and not architect._delivered(eng, entry),
+       f"seq1={seq1} seq2={seq2} hwm={eng._hwm} "
+       f"delivered_entry={architect._delivered(eng, entry)}")
+    eng.consume()   # the runner ALSO finishes order #2's turn
+    ok("RIG3-3: once order #2's OWN hwm passes, entry reads delivered too",
+       architect._delivered(eng, entry), f"hwm={eng._hwm} seq2={seq2}")
+
+    # MUTATION: never re-stamp — order #2 reuses order #1's OLD dispatch_seq.
+    entry_mut = {"block": "adhoc-triage-2", "dispatch_seq": seq1}
+    ok("RIG3-4 (MUTATION -> RED, non-vacuity for RIG3-2): reusing the "
+       "FIRST order's dispatch_seq for the SECOND turn reads 'delivered' "
+       "immediately (hwm already passed seq1) — a false-complete before "
+       "the architect ever took the second turn",
+       architect._delivered(eng, entry_mut),
+       f"entry_mut={entry_mut} hwm={eng._hwm}")
+
+
+def run_no_progress_budget_rig():
+    """§8 rig 4 — NO-PROGRESS-BUDGET (R-G), three sub-cases."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    # ── 4a — a permanently DEAD architect (respawns exhaust RESPAWN_CAP,
+    #     never comes back) is paged EXACTLY ONCE, never looped, however
+    #     long the drive continues past the budget. ──
+    eng = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng._alive_map[architect.ARCHITECT_WID] = False
+    job = _hwm_job("triage-np-a", "engineer-05")
+    m = {"architect": {"status": "busy", "current_job": job, "spawned": True},
+        "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng, m)
+    for _ in range(architect.NO_PROGRESS_BUDGET + 10):
+        eng.tick_clock()
+        architect.advance(eng, m)
+    pages_a = getattr(eng, "operator_pages", [])
+    ok("RIG4a-1 (DEAD-ARCHITECT PAGE-ONCE KILLER — must be GREEN): a "
+       "permanently dead architect is paged the operator EXACTLY ONCE "
+       "past NO_PROGRESS_BUDGET, never looped, however long the drive "
+       "continues",
+       len(pages_a) == 1 and job.get("resolved") is not True,
+       f"pages={pages_a} respawn_calls={eng.respawn_calls} "
+       f"resolved={job.get('resolved')}")
+
+    # MUTATION 4a: key the no-progress clock on the RAW hwm/respawn signal
+    # instead of the working-excluded accumulator — a respawn's hwm reset
+    # (3->0) would then read as "progress", resetting the clock forever ->
+    # the page NEVER fires -> silent wedge (the rejected rev-2 design).
+    eng_mut = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng_mut._alive_map[architect.ARCHITECT_WID] = False
+    job_mut = _hwm_job("triage-np-a-mut", "engineer-06")
+    m_mut = {"architect": {"status": "busy", "current_job": job_mut, "spawned": True},
+             "architect_queue": [], "triage_verdicts": {}}
+    _real_integrate = architect.liveness.working_excluded_integrate
+
+    def _hwm_keyed_mutation(now, last_sample, accumulated, active, reset_on_active=True):
+        if eng_mut.respawn_calls > job_mut.get("_seen_respawns", 0):
+            job_mut["_seen_respawns"] = eng_mut.respawn_calls
+            return now, 0   # MUTATION: a respawn resets the clock to 0 ("progress")
+        return _real_integrate(now, last_sample, accumulated, active, reset_on_active)
+    architect.liveness.working_excluded_integrate = _hwm_keyed_mutation
+    # Also uncap respawns (a REAL RESPAWN_CAP bounds the thrash — this
+    # mutation's own hypothesis, per the ADR, is specifically an
+    # UNBOUNDED thrash that keeps "resetting the clock forever"; with the
+    # cap left in place, respawns stop after 3 and the real accumulator
+    # would still eventually page from there, masking the mutation).
+    _real_cap = architect.RESPAWN_CAP
+    architect.RESPAWN_CAP = 10 ** 9
+    try:
+        architect.advance(eng_mut, m_mut)
+        for _ in range(architect.NO_PROGRESS_BUDGET + 10):
+            eng_mut.tick_clock()
+            architect.advance(eng_mut, m_mut)
+    finally:
+        architect.liveness.working_excluded_integrate = _real_integrate
+        architect.RESPAWN_CAP = _real_cap
+    pages_a_mut = getattr(eng_mut, "operator_pages", [])
+    ok("RIG4a-2 (MUTATION -> RED, non-vacuity for RIG4a-1): keying the "
+       "no-progress clock on the raw hwm/respawn signal instead of the "
+       "working-excluded accumulator lets the RESPAWN_CAP-bounded thrash "
+       "reset the clock forever — NEVER pages, a silent wedge",
+       len(pages_a_mut) == 0 and job_mut.get("resolved") is not True,
+       f"pages={pages_a_mut} respawn_calls={eng_mut.respawn_calls}")
+
+    # ── 4b — a legit long WORKING turn (provably mid-turn the WHOLE drive)
+    #     must NEVER page — the accumulator is PAUSED, not merely slow. ──
+    eng2 = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng2.working = True
+    job2 = _hwm_job("triage-np-b", "engineer-07")
+    m2 = {"architect": {"status": "busy", "current_job": job2, "spawned": True},
+         "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng2, m2)
+    for _ in range(architect.NO_PROGRESS_BUDGET + 10):
+        eng2.tick_clock()
+        architect.advance(eng2, m2)
+    pages_b = getattr(eng2, "operator_pages", [])
+    ok("RIG4b-1 (WORKING-PAUSE KILLER — must be GREEN): a legit long "
+       "WORKING turn (provably mid-turn the WHOLE drive, well past "
+       "NO_PROGRESS_BUDGET pace-units) NEVER pages — the accumulator is "
+       "PAUSED, not merely slow to accrue",
+       len(pages_b) == 0, f"pages={pages_b} "
+       f"unconsumed_work_excluded={job2.get('unconsumed_work_excluded')}")
+
+    # MUTATION 4b: accrue WHILE working too (ignore the pause) -> false-
+    # pages mid-turn, the exact defect this ADR kills.
+    eng2b = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng2b.working = True
+    job2b = _hwm_job("triage-np-b-mut", "engineer-08")
+    m2b = {"architect": {"status": "busy", "current_job": job2b, "spawned": True},
+          "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng2b, m2b)
+    _real_integrate2 = architect.liveness.working_excluded_integrate
+
+    def _accrue_while_working(now, last_sample, accumulated, active, reset_on_active=True):
+        return now, accumulated + max(0, now - last_sample)   # MUTATION: ignore `active`
+    architect.liveness.working_excluded_integrate = _accrue_while_working
+    try:
+        for _ in range(architect.NO_PROGRESS_BUDGET + 10):
+            eng2b.tick_clock()
+            architect.advance(eng2b, m2b)
+    finally:
+        architect.liveness.working_excluded_integrate = _real_integrate2
+    pages_b_mut = getattr(eng2b, "operator_pages", [])
+    ok("RIG4b-2 (MUTATION -> RED, non-vacuity for RIG4b-1): accruing while "
+       "provably working (ignoring the pause) false-pages mid-turn — the "
+       "exact defect the working-excluded accumulator exists to kill",
+       len(pages_b_mut) == 1, f"pages={pages_b_mut}")
+
+    # ── 4c — sizing: RESPAWN_CAP*settle < NO_PROGRESS_BUDGET < run_budget —
+    #     a dead-then-recovering architect completes BEFORE any page. ──
+    eng3 = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng3._alive_map[architect.ARCHITECT_WID] = False
+    job3 = _hwm_job("triage-np-c", "engineer-09")
+    m3 = {"architect": {"status": "busy", "current_job": job3, "spawned": True},
+         "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng3, m3)
+    recovery_span = 2 * architect.REDELIVER_AFTER   # comfortably inside RESPAWN_CAP*settle
+    for _ in range(recovery_span):
+        eng3.tick_clock()
+        architect.advance(eng3, m3)
+        if eng3.respawn_calls >= 1:
+            eng3._alive_map[architect.ARCHITECT_WID] = True   # the respawned incarnation comes up
+            eng3.consume()
+    eng3.tick_clock()
+    architect.advance(eng3, m3)
+    pages_c = getattr(eng3, "operator_pages", [])
+    ok("RIG4c-1 (SIZING KILLER — must be GREEN): RESPAWN_CAP*settle < "
+       "NO_PROGRESS_BUDGET means recovery genuinely completes BEFORE any "
+       "page — 0 pages, job resolved, well within the budget's own span",
+       len(pages_c) == 0 and job3.get("resolved") is True
+       and recovery_span < architect.NO_PROGRESS_BUDGET,
+       f"pages={pages_c} resolved={job3.get('resolved')} "
+       f"recovery_span={recovery_span} budget={architect.NO_PROGRESS_BUDGET}")
+
+    # MUTATION 4c: budget < recovery span — the honest page now fires
+    # MID-RECOVERY, before the respawn ladder ever gets a chance to finish.
+    _real_budget = architect.NO_PROGRESS_BUDGET
+    architect.NO_PROGRESS_BUDGET = 1   # MUTATION: budget far under recovery_span
+    eng3b = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng3b._alive_map[architect.ARCHITECT_WID] = False
+    job3b = _hwm_job("triage-np-c-mut", "engineer-10")
+    m3b = {"architect": {"status": "busy", "current_job": job3b, "spawned": True},
+          "architect_queue": [], "triage_verdicts": {}}
+    try:
+        architect.advance(eng3b, m3b)
+        # Heal only on the LAST tick of the (same) recovery_span — a
+        # genuine multi-tick recovery, unlike RIG4c-1's "heals on the
+        # very first respawn" fast path — so the (mutated, tiny) budget
+        # gets the SAME recovery_span worth of elapsed no-progress time
+        # to fire against, exactly the "budget sized under the recovery
+        # span" scenario this mutation names.
+        for i in range(recovery_span):
+            eng3b.tick_clock()
+            architect.advance(eng3b, m3b)
+            if i == recovery_span - 1:
+                eng3b._alive_map[architect.ARCHITECT_WID] = True
+                eng3b.consume()
+    finally:
+        architect.NO_PROGRESS_BUDGET = _real_budget
+    pages_c_mut = getattr(eng3b, "operator_pages", [])
+    ok("RIG4c-2 (MUTATION -> RED, non-vacuity for RIG4c-1): sizing the "
+       "budget UNDER the recovery span pages MID-RECOVERY, before the "
+       "respawn ladder ever gets a chance to finish — recovery no longer "
+       "beats the honest page",
+       len(pages_c_mut) >= 1, f"pages={pages_c_mut}")
+
+
+def run_redeliver_idle_rig():
+    """§8 rig 5 — REDELIVER-IDLE (R-E): a long LIVE turn (runner working,
+    never idle) must NEVER trigger a re-send (would race it); runner idle
+    + a genuine gap re-sends, throttled — roughly once per REDELIVER_AFTER
+    interval, never a busy-loop. Mutation: drop the idle gate -> races a
+    live turn (red)."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    # 5a — the runner is BUSY (not idle) the whole time — NO re-send may
+    # ever fire, however long the gap.
+    eng = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng._idle_map[architect.ARCHITECT_WID] = False
+    job = _hwm_job("triage-ri-a", "engineer-11")
+    m = {"architect": {"status": "busy", "current_job": job, "spawned": True},
+        "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng, m)
+    for _ in range(architect.REDELIVER_AFTER * 5):
+        eng.tick_clock()
+        architect.advance(eng, m)
+    ok("RIG5-A1 (LIVE-TURN NO-RACE KILLER — must be GREEN): a runner "
+       "reporting BUSY (not idle) the whole time — a long live turn — "
+       "NEVER gets a re-send, however long the gap",
+       len(eng.resend_calls) == 0, f"resend_calls={eng.resend_calls}")
+
+    # 5b — idle + a genuine gap DOES re-send, throttled.
+    eng2 = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    job2 = _hwm_job("triage-ri-b", "engineer-12")
+    m2 = {"architect": {"status": "busy", "current_job": job2, "spawned": True},
+         "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng2, m2)
+    N = architect.REDELIVER_AFTER * 3
+    for _ in range(N):
+        eng2.tick_clock()
+        architect.advance(eng2, m2)
+    ok("RIG5-B1: an idle runner + a genuine unconsumed gap DOES re-send, "
+       "throttled — roughly one per REDELIVER_AFTER interval, never a "
+       "busy-loop (every tick)",
+       0 < len(eng2.resend_calls) <= (N // architect.REDELIVER_AFTER) + 1,
+       f"resend_calls={len(eng2.resend_calls)} N={N} "
+       f"REDELIVER_AFTER={architect.REDELIVER_AFTER}")
+
+    # MUTATION: drop the idle gate — re-send fires on the interval alone,
+    # regardless of `_runner_idle` — races a live turn (5a's own scenario
+    # would then ALSO re-send, which must never happen).
+    eng3 = HwmEng(root, tron_ctx, test_command="true", worker_count=1)
+    eng3._idle_map[architect.ARCHITECT_WID] = False   # busy — same as 5a
+    job3 = _hwm_job("triage-ri-mut", "engineer-13")
+    m3 = {"architect": {"status": "busy", "current_job": job3, "spawned": True},
+         "architect_queue": [], "triage_verdicts": {}}
+    architect.advance(eng3, m3)
+    _real_advance_delivery = architect._advance_delivery
+
+    def _mutated_advance_delivery(eng_, manifest_, d):
+        now = architect._clock(eng_, manifest_)
+        if d.get("last_sent_at") is None:
+            d["last_sent_at"] = now
+        if (now - d["last_sent_at"]) >= architect.REDELIVER_AFTER:
+            architect._redeliver(eng_, d, now)   # MUTATION: no idle check at all
+    architect._advance_delivery = _mutated_advance_delivery
+    try:
+        for _ in range(architect.REDELIVER_AFTER * 5):
+            eng3.tick_clock()
+            architect.advance(eng3, m3)
+    finally:
+        architect._advance_delivery = _real_advance_delivery
+    ok("RIG5-C (MUTATION -> RED, non-vacuity for RIG5-A1): dropping the "
+       "idle gate re-sends on the interval alone — the SAME busy-the-"
+       "whole-time scenario (5a) now races a live turn",
+       len(eng3.resend_calls) > 0, f"resend_calls={eng3.resend_calls}")
 
 
 def main():
@@ -1167,6 +1740,11 @@ def main():
     run_forward_scenario()
     run_phantom_triage_grace_scenario()
     run_reconcile_backstop_scenario()
+    run_delivery_gap_rig()
+    run_respawn_rig()
+    run_multi_order_rig()
+    run_no_progress_budget_rig()
+    run_redeliver_idle_rig()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.architect_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

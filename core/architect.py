@@ -130,6 +130,7 @@ import gitobs     # noqa: E402 — core/gitobs.py, the ONE git-observation seam
 import landing    # noqa: E402 — core/landing.py, Wave-1's ONE landing primitive
 import pipeline   # noqa: E402 — core/pipeline.py, in_flight_blocks (dedupe read)
 import casestate  # noqa: E402 — core/casestate.py, parked_blocks (dedupe read)
+import liveness   # noqa: E402 — core/liveness.py, the shared working-excluded integrator (R-G)
 
 ARCHITECT_WID = "architect"
 
@@ -336,183 +337,301 @@ def enqueue_triage(eng, manifest, case_id, source, block, detail, worker_id=None
 
 
 def _order_triage(eng, job):
+    text = (f"[TRON]  architect — TRIAGE (triage_id={job['triage_id']!r}, "
+           f"case_id={job.get('case_id')!r}, source={job.get('source')!r}, "
+           f"block={job.get('block')!r}): {job.get('detail')}\nReply with a "
+           f"structured architect.triage_verdict (triage_id="
+           f"{job['triage_id']!r}, verdict in "
+           f"scope_forward|answer|operator[, note]).")
     if not eng.dry:
         eng.emit(
-            "arch.triage",
-            f"[TRON]  architect — TRIAGE (triage_id={job['triage_id']!r}, "
-            f"case_id={job.get('case_id')!r}, source={job.get('source')!r}, "
-            f"block={job.get('block')!r}): {job.get('detail')}\nReply with a "
-            f"structured architect.triage_verdict (triage_id="
-            f"{job['triage_id']!r}, verdict in "
-            f"scope_forward|answer|operator[, note]).",
+            "arch.triage", text,
             slots={"detail": job.get("detail"), "sender": job.get("source")},
             worker_id=ARCHITECT_WID,
             kind="arch.triage")
     job["ordered"] = True
+    _stamp_dispatch(eng, job, text, "arch.triage")   # ADR-0009 R-B
     eng.log("flow", f"architect[triage:{job['triage_id']}]: ordered triage "
-                    f"(source={job.get('source')!r})")
+                    f"(source={job.get('source')!r}, dispatch_seq="
+                    f"{job.get('dispatch_seq')!r})")
 
 
-# R1b (ADR-0005) — the architect-idle, source-directional triage backstop.
-#
-# A triage the architect has been ordered but has NOT resolved with a structured
-# `architect.triage_verdict` must neither WEDGE the fleet nor SWALLOW a real
-# escalation:
-#   • wedge — blocker B: the architect stuck ~13 min on a block-less worker.wall
-#     it could not verdict, blocking every later job + session-end;
-#   • swallow — M1/F2: the old self-guards benign-'answer'-ed a GENUINE escalation
-#     the instant the architect narrated a turn (the courier harvests every turn),
-#     so the planted operator wall never paged — the false-green disease.
-#
-# The backstop resolves the triage once the architect has genuinely TAKEN ITS TURN
-# and settled idle with no verdict — keyed on the REAL runner signal
-# `eng._worker_working(ARCHITECT_WID)` (the same seam liveness/sentry gate on),
-# NOT a wall-clock tick count. A `claude -p` turn posts nothing until it finishes,
-# so while the architect is provably mid-turn the backstop HOLDS (idle_ticks reset);
-# it only arms across genuinely settled-idle ticks. `_ARCHITECT_IDLE_DEBOUNCE_TICKS`
-# is a small debounce so a brief between-turns idle blip of a multi-turn architect
-# is not mistaken for "finished" — it is NOT a timeout (the counter freezes the
-# instant the architect is working again), it debounces the idle signal.
-#
-# Resolution is DIRECTIONAL by the TRUSTED source label (set by the router/engine
-# at enqueue — `casestate.open_case` / `router` / `classify` — never by classify's
-# tag of the architect's own prose): a low-confidence source resolves benign
-# ('answer', never wedges session-end); a genuine escalation resolves LOUD
-# ('operator', its real page — never swallowed). This replaces BOTH the
-# classify.unclassified-only phantom grace (which left a real worker.wall wedged)
-# and the two source-agnostic self-guards' benign write (which swallowed genuine
-# walls); the self-source CREATION guards move to R1a (classify.py / router.py).
-_ARCHITECT_IDLE_DEBOUNCE_TICKS = 2
+# ADR-0009 — restore the deliver-until-consumed dispatch invariant and
+# consolidate R1b/R1c/R1d onto it (§3, §6). R1c (the `arch_started`/
+# `cold_ticks`/`stall_paged` ladder above, `_architect_liveness_ladder`) is
+# DELETED — its scope (the delivery gap) dissolves into R-A..R-E below; its
+# honest core (a genuinely dead/unrestartable architect must still reach a
+# human) becomes ONE no-progress budget (R-G, `_advance_delivery`). R1b's
+# `arch_started` latch + `idle_ticks` debounce are ALSO deleted
+# (`_architect_settled_idle` -> `_turn_settled`, below, re-keyed onto the
+# `read_hwm(ARCH) >= dispatch_seq` read, R-D) — see this module's own
+# module-docstring cross-reference and `adr-0009-architect-turn-completion-
+# invariant.md` §3/§6 for the full design.
 _LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
-# ADR-0006 R1c: how many ticks an ORDERED architect may sit never-having-worked
-# before its stall is paged. Only the started-latch's `arch_started==False` window
-# is governed here (a started-then-hung architect is owned by the settled-idle/R1d
-# backstops, which CAN false-clear-safely because the turn provably ran). Sized
-# GENEROUSLY: the sole job is to beat the run's wall-clock budget (default 60 min)
-# so a genuinely dead/never-spawned architect is paged rather than silently wedging
-# to budget — it need NOT be tight. At the live poll cadence (~20s/tick) 15 ticks
-# ≈ 5 min, comfortably longer than any real cold start (the runner writes
-# `state="working"` at turn-START / mailbox-pickup, so this window is bounded by
-# process-spawn + poll latency, NOT LLM response latency) yet ~55 min before budget.
-# (Peer-review note: R1c pages straight to the operator with no ping step; a
-# graduated ping-then-page ladder like the worker silence net is a future refinement
-# — watch the real cold-start timing on the next live SIM.)
-_ARCHITECT_COLD_START_CAP_TICKS = 15
+
+# R-C/R-E/R-G tunables (ordering constraint, R-G): RESPAWN_CAP * (respawn-
+# settle + turn-latency) < NO_PROGRESS_BUDGET < the run's own wall-clock
+# budget — recovery always gets its full budget before the honest page, and
+# the honest page always beats a silent budget-REJECT. Units are "pace
+# units" — the SAME opaque, pluggable clock `core/sentry.py`/`core/
+# liveness.py` already use (`eng._now()` live, a persisted tick counter in
+# a rig) — never a hardcoded wall-clock assumption baked in here.
+RESPAWN_CAP = 3            # at most this many clean re-spawns per stuck order (R-C)
+REDELIVER_AFTER = 3        # pace units the runner must sit IDLE before a re-send (R-E)
+NO_PROGRESS_BUDGET = 30    # working-excluded pace units unconsumed before ONE page (R-G)
 
 
-def _architect_settled_idle(eng, job):
-    """The shared R1b ENGINE-STATE signal: True once the architect has genuinely
-    TAKEN its ordered turn for `job` and settled idle. HELD while the architect is
-    provably mid-turn (`eng._worker_working(ARCHITECT_WID)` — a real `claude -p`
-    turn posts nothing until it finishes, so only genuine settled-idle time arms
-    the backstop; `idle_ticks` resets the instant it works again), then armed after
-    `_ARCHITECT_IDLE_DEBOUNCE_TICKS` settled-idle ticks (a debounce for a between-
-    turns blip, NOT a wall-clock timeout). Duck-typed + crash-safe, exactly as
-    core/sentry.py + core/liveness.py read the SAME hook; an absent/erroring hook
-    (dry rigs) reads not-working, so the backstop arms across ordinary ticks there.
-    Used by BOTH `_advance_triage` and the reconcile arm of `advance` — one
-    invariant ('the architect took its turn and settled with no structured
-    result'), never two copies that could drift.
-
-    STARTED-LATCH (peer-review hardening): the debounce distinguishes 'settled
-    after a genuine turn' from 'NEVER STARTED a turn' only when a real liveness
-    hook is present. When `_worker_working` is callable (a live run), the backstop
-    arms ONLY after the architect has been observed working at least once for this
-    job (`job["arch_started"]`) — else a slow cold-start or a silently-dead
-    architect (which NO liveness net watches, since it is pool-excluded from
-    `manifest["workers"]`) would arm the backstop having never reconciled: a silent
-    false-clear. A never-started architect instead HOLDS (the run fails honestly on
-    budget, never false-greens). When the hook is ABSENT (dry rigs), turn-start is
-    unobservable, so the documented dry behavior is preserved: arm across the idle
-    debounce."""
-    if not job.get("ordered"):
+def _delivered(eng, job):
+    """ADR-0009 R-D: `delivered(W) ≡ read_hwm(W) >= dispatch_seq`, read
+    per-wid (here always `ARCHITECT_WID` — the active resend/respawn loop
+    is architect-only; workers stay on `core/sentry.py`'s own re-send
+    ladder). `eng._read_hwm` is an OPTIONAL duck-typed hook (mirrors
+    `eng._worker_working`/`eng._now`) — real `core.engine.Engine` wires it
+    to `engine/jobs.py::read_hwm`. ABSENT (every `core/*_rig.py` fixture
+    that predates ADR-0009 and never backs a real runner mailbox for the
+    architect) degrades to the job's own `ordered` flag — 'sent ==
+    delivered', the documented PRE-ADR-0009 behavior — so no prior rig
+    changes; `job["dispatch_seq"]` itself degrades the SAME way (see
+    `_stamp_dispatch`), so the two stay consistent whether or not either is
+    a real int."""
+    if job.get("dispatch_seq") is None:
         return False
-    fn = getattr(eng, "_worker_working", None)
+    fn = getattr(eng, "_read_hwm", None)
     if not callable(fn):
-        # No liveness hook (dry rigs): turn-start is unobservable — preserve the
-        # documented 'arm across the idle debounce' behavior the R1b rigs rely on.
-        job["idle_ticks"] = job.get("idle_ticks", 0) + 1
-        return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
+        return bool(job.get("ordered"))
     try:
-        working = bool(fn(ARCHITECT_WID))
+        hwm = fn(ARCHITECT_WID)
     except Exception:   # noqa: BLE001 — a broken hook never wedges the job
-        working = False
-    if working:
-        job["arch_started"] = True   # latch: the architect provably took its turn
-        job["idle_ticks"] = 0
         return False
-    if not job.get("arch_started"):
-        # Not working AND never observed working: a cold-start/dead architect, not
-        # a settled one. HOLD — never arm the backstop on a turn that never ran.
-        # (ADR-0006 R1c watches THIS window and pages the operator if it persists,
-        # so a dead architect no longer wedges to budget silently.)
+    return hwm >= job["dispatch_seq"]
+
+
+def _turn_settled(eng, job):
+    """Whether it is safe to apply a completion BACKSTOP for `job` (R1b's
+    directional triage resolve, R1d's refused-authoring escalation, the
+    reconcile no-op backstop): the current order must be DELIVERED (R-D,
+    `_delivered` above) AND the architect must not currently be mid-turn
+    (`eng._worker_working`, optional — absent reads not-working, same
+    fail-toward-arming discipline `core/sentry.py`/`core/liveness.py`
+    already use for this hook). Replaces the deleted `_architect_settled_
+    idle` (the `arch_started` latch + `idle_ticks` debounce, ADR-0009 §6):
+    no separate debounce state — `_worker_working`, re-sampled every call
+    (never latched), is what pauses a genuinely live turn; `_delivered`
+    alone (hwm-anchored, for a live engine) is what proves a turn actually
+    ran to completion. One invariant, read fresh every call, never two
+    copies that could drift."""
+    if not _delivered(eng, job):
         return False
-    job["idle_ticks"] = job.get("idle_ticks", 0) + 1
-    return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
-
-
-def _architect_liveness_ladder(eng, manifest):
-    """ADR-0006 R1c: the dedicated liveness net for the architect, which is
-    pool-excluded from `manifest["workers"]` so NEITHER `core/liveness.py` nor
-    `core/sentry.py` ever watches it. Scope is exactly the one window no other
-    backstop covers: an architect that has been ORDERED a job but has NEVER been
-    observed working it (`arch_started` unset) — i.e. a cold-start that never
-    started, or an architect that died/hung before its first turn. The
-    started-latch (`_architect_settled_idle`) deliberately HOLDS that window
-    (never false-clears a turn that never ran); R1c makes the hold LOUD instead
-    of silent-to-budget: after a generous cold-start tolerance it pages the
-    operator ONCE (the wave-17 `casestate.reping` FLOOR then re-pings that one
-    case). A started-then-hung architect is NOT R1c's job — `arch_started` is
-    set, so this returns early and the settled-idle/R1d backstops own it.
-
-    Live-only: with no `_worker_working` hook (dry rigs that don't wire one) R1c
-    is inert — turn-start is unobservable, so the started-latch's dry path
-    governs, exactly as the settled-idle backstop documents. Idempotent per job:
-    the once-guard lives on the job dict, so it resets when the job changes."""
-    arch = manifest.setdefault("architect", new_state())
-    cur = arch.get("current_job")
-    if not cur or not cur.get("ordered"):
-        return                       # nothing ordered — no stall to watch
-    if cur.get("arch_started"):
-        return                       # it started; settled-idle/R1d own completion now
     fn = getattr(eng, "_worker_working", None)
-    if not callable(fn):
-        return                       # dry rig, no liveness hook — R1c inert
-    try:
-        if fn(ARCHITECT_WID):
-            cur["arch_started"] = True   # observed working — hand off to the started-latch
-            return
-    except Exception:                # noqa: BLE001 — a broken hook never pages
-        return
-    cur["cold_ticks"] = cur.get("cold_ticks", 0) + 1
-    if cur["cold_ticks"] < _ARCHITECT_COLD_START_CAP_TICKS:
-        return                       # tolerate a legitimate cold start / spawn latency
-    if cur.get("stall_paged"):
-        return                       # already paged this stall exactly once
-    detail = (f"architect ordered a {cur.get('kind')!r} job for "
-              f"{cur.get('block')!r} but has NOT started a turn in "
-              f"{cur['cold_ticks']} ticks (cold-start/dead-before-first-turn; "
-              f"the architect is pool-excluded from every worker liveness net) "
-              f"— R1c dedicated architect-liveness escalation, paged once")
-    casestate.open_operator_case(eng, manifest, cur.get("block"),
-                                 "architect.stalled", detail,
-                                 worker_id=ARCHITECT_WID, kind="stall")
-    cur["stall_paged"] = True
-    eng.log("flow", f"architect: STALLED before first turn — {detail}")
+    if callable(fn):
+        try:
+            if fn(ARCHITECT_WID):
+                return False
+        except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+            pass
+    return True
+
+
+def _stamp_dispatch(eng, d, text, kind):
+    """ADR-0009 R-B: stamp `d["dispatch_seq"]` (a job OR one of its
+    sub-dict entries — e.g. a `scope_forward` triage's own adhoc `entry`,
+    a SEPARATE order-requiring sub-state with its own namespace, so a
+    fresh dict already starts `dispatch_seq=None` the instant a NEW
+    order-requiring sub-state begins — R-B's "NULLED on every transition"
+    is satisfied by construction, never a second explicit reset) to the
+    seq JUST used for this send — read back off `eng._mbox_seq` (OPTIONAL,
+    mirrors R-A's persisted `manifest["mbox_seq"][ARCHITECT_WID]`; real
+    `core.engine.Engine` wires it). ABSENT (every pre-ADR-0009 rig, none of
+    which back a real runner mailbox for the architect) degrades to a
+    truthy sentinel (`True`) — the exact pre-ADR-0009 `ordered=True`
+    semantic `_delivered`'s own hookless fallback already expects. Also
+    remembers the exact order text/kind (`_order_text`/`_order_kind`) so
+    R-C/R-E can re-deliver the SAME content at the SAME seq — the runner
+    dedups by seq (`engine/worker_runner.py::_pending`), so an
+    at-least-once re-send is harmless."""
+    fn = getattr(eng, "_mbox_seq", None)
+    if callable(fn):
+        try:
+            d["dispatch_seq"] = fn(ARCHITECT_WID)
+        except Exception:   # noqa: BLE001 — never wedge a send on a broken hook
+            d["dispatch_seq"] = True
+    else:
+        d["dispatch_seq"] = True
+    d["_order_text"] = text
+    d["_order_kind"] = kind
+
+
+def _clock(eng, manifest):
+    """The SAME pluggable-clock idiom `core/sentry.py`/`core/liveness.py`
+    already use — `eng._now()` when present, else an internal counter
+    persisted at `manifest["architect_clock"]`, incremented once per
+    call — a SEPARATE counter from either of those modules' own (all three
+    track each other tick-for-tick whenever every one falls back, but none
+    ever reads another's counter directly)."""
+    now_fn = getattr(eng, "_now", None)
+    if callable(now_fn):
+        return now_fn()
+    counters = manifest.setdefault("architect_clock", {})
+    counters["clock"] = counters.get("clock", 0) + 1
+    return counters["clock"]
+
+
+def _redeliver(eng, d, now):
+    """Re-send `d`'s already-stamped order at its ALREADY-STAMPED seq
+    (never a fresh mint — R-A/R-E: 'same monotonic seq; runner dedups') via
+    the OPTIONAL `eng._resend` hook (real `core.engine.Engine` wires it to
+    `engine/jobs.py::send` at a caller-supplied seq); absent, a no-op (a
+    pre-ADR-0009 rig has no real mailbox to re-append to anyway — its own
+    `_delivered` fallback already reads 'delivered' the instant `ordered`
+    is set, so this is never reached for one). Re-anchors `last_sent_at` so
+    R-E's idle-gated throttle measures from THIS send forward."""
+    fn = getattr(eng, "_resend", None)
+    seq = d.get("dispatch_seq")
+    # `is not True` (never `!=`/`not in (None, True)`): Python's `1 == True`,
+    # so an equality-based check would wrongly treat a REAL, legitimate seq
+    # of 1 as the hookless `True` sentinel and skip the re-send entirely.
+    if callable(fn) and seq is not None and seq is not True:
+        try:
+            fn(ARCHITECT_WID, d["dispatch_seq"], d.get("_order_text") or "",
+              d.get("_order_kind") or "arch.redeliver")
+        except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+            pass
+    d["last_sent_at"] = now
+
+
+def _advance_delivery(eng, manifest, d):
+    """ADR-0009 R-C/R-E/R-G: the architect-ONLY deliver-until-consumed
+    recovery loop for `d` (a job or one of its sub-dict entries) whose
+    current order has been SENT (`dispatch_seq` set) but not yet DELIVERED
+    (`_delivered` False). Workers stay on `core/sentry.py`'s own re-send
+    ladder (R-D) — this is never called for anything but the architect's
+    own `current_job`/adhoc entries.
+
+    Live-only: `eng._read_hwm` gates the WHOLE function — absent (every
+    pre-ADR-0009 rig `eng` stand-in), this is a genuine no-op, because
+    `_delivered`'s own hookless fallback already reads 'delivered' the
+    instant `ordered` is set (`dispatch_seq` is then `True`, never `None`),
+    so the 'not yet consumed' branch this function handles is structurally
+    unreachable for those rigs — zero behavior change, exactly the
+    discipline every other optional hook in this stack already keeps.
+
+    R-G's no-progress accumulator is a PERSISTED INTEGRATING accumulator
+    (`d["unconsumed_work_excluded"]`), sampled once per call via the SAME
+    shared helper `core/liveness.py::sweep` uses for its own silence ladder
+    (`liveness.working_excluded_integrate` — "FACTOR the working-excluded
+    integration step... into a shared helper both call, do not copy it") —
+    `reset_on_active=False`: PAUSED while the architect is provably
+    working, never reset to 0 merely because it worked (only a genuine
+    `_delivered` flip resets it — see the job-kind advance functions below,
+    which clear it the instant `_turn_settled`/`_delivered` observes
+    completion). Anchored on the ORDER (`d["unconsumed_since"]`), never on
+    the raw hwm integer (a respawn's hwm reset 3->0 must never read as
+    'progress')."""
+    read_hwm = getattr(eng, "_read_hwm", None)
+    if not callable(read_hwm):
+        return   # no live delivery signal — see docstring; nothing to recover
+
+    now = _clock(eng, manifest)
+    if d.get("unconsumed_since") is None:
+        d["unconsumed_since"] = now
+    if d.get("last_sample") is None:
+        d["last_sample"] = now
+    if d.get("last_sent_at") is None:
+        # Anchor R-E's idle-gated redeliver timer to the FIRST tick this
+        # gap was observed (effectively "right after sending" — `advance`
+        # calls this the very next pass after `_stamp_dispatch`) — never
+        # left unset until a redeliver has already happened once, else
+        # `now - d.get("last_sent_at", now)` would trivially read 0 forever
+        # and REDELIVER_AFTER could never trip.
+        d["last_sent_at"] = now
+
+    working = False
+    wfn = getattr(eng, "_worker_working", None)
+    if callable(wfn):
+        try:
+            working = bool(wfn(ARCHITECT_WID))
+        except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+            working = False
+
+    d["last_sample"], d["unconsumed_work_excluded"] = liveness.working_excluded_integrate(
+        now, d["last_sample"], d.get("unconsumed_work_excluded", 0),
+        working, reset_on_active=False)
+
+    alive = True
+    afn = getattr(eng, "_is_alive", None)
+    if callable(afn):
+        try:
+            alive = bool(afn(ARCHITECT_WID))
+        except Exception:   # noqa: BLE001 — fail toward "alive" (never respawn-storm on a flaky hook)
+            alive = True
+
+    if not alive:
+        respawns = d.get("respawns", 0)
+        if respawns < RESPAWN_CAP:
+            spawn_fn = getattr(eng, "_spawn_architect", None)
+            if callable(spawn_fn):
+                spawn_fn()   # R-C: clean-slate (retire_stale_dir, engine.py::_real_spawn)
+            d["respawns"] = respawns + 1
+            _redeliver(eng, d, now)
+            eng.log("flow", f"architect: DEAD — re-spawned (clean-slate, R-C) and "
+                            f"re-delivered the outstanding order at dispatch_seq="
+                            f"{d.get('dispatch_seq')!r} (respawn #{d['respawns']})")
+    else:
+        idle = False
+        ifn = getattr(eng, "_runner_idle", None)
+        if callable(ifn):
+            try:
+                idle = bool(ifn(ARCHITECT_WID))
+            except Exception:   # noqa: BLE001 — fail toward "not idle" (never race a live turn)
+                idle = False
+        if idle and (now - d.get("last_sent_at", now)) >= REDELIVER_AFTER:
+            _redeliver(eng, d, now)
+            eng.log("flow", f"architect: re-delivered (R-E, idle-gated) the "
+                            f"outstanding order at dispatch_seq="
+                            f"{d.get('dispatch_seq')!r}")
+
+    if (d["unconsumed_work_excluded"] >= NO_PROGRESS_BUDGET
+            and not d.get("no_progress_paged")):
+        detail = (f"architect ordered a job (dispatch_seq={d.get('dispatch_seq')!r}) "
+                  f"that has stayed UNCONSUMED for {d['unconsumed_work_excluded']} "
+                  f"working-excluded pace unit(s) (>= NO_PROGRESS_BUDGET="
+                  f"{NO_PROGRESS_BUDGET}) — R-G no-progress budget, paged ONCE "
+                  f"(THE FLOOR re-pings after)")
+        casestate.open_operator_case(eng, manifest, d.get("block"),
+                                     "architect.no_progress", detail,
+                                     worker_id=ARCHITECT_WID, kind="stall")
+        d["no_progress_paged"] = True
+        eng.log("flow", f"architect: NO-PROGRESS — {detail}")
+
+
+def _reset_delivery_state(d):
+    """R-G: reset the no-progress accumulator + respawn count ONLY on the
+    genuine `read_hwm >= dispatch_seq` flip (never on a mere respawn or a
+    working-tick) — called by every job-kind's advance function the
+    instant it observes `_delivered`/`_turn_settled` true, so a
+    MULTI-order job (R-B) starts its NEXT order's budget fresh."""
+    d["unconsumed_since"] = None
+    d["last_sample"] = None
+    d["last_sent_at"] = None
+    d["unconsumed_work_excluded"] = 0
+    d["respawns"] = 0
+    d["no_progress_paged"] = False
 
 
 def _backstop_refused_authoring(eng, manifest, cur):
-    """ADR-0006 R1d: a STARTED-then-REFUSED forward/log job — the architect took
-    its ordered turn (`arch_started`, so `_architect_settled_idle` can arm) and
-    settled idle, yet `land_via_grant` still reports `"fail-closed"` (its patch-id
-    is unresolvable == it authored NO branch, prose instead of a file). Resolve
-    LOUD: page the operator once and free the architect. Never poll a
-    never-authored branch to budget (the log/forward wedge A3), and — for a
-    log-review — never silently DROP the reviewer's findings by benign-clearing.
-    Clearing `current_job` at the call site is the once-guard (the job is gone
-    next tick, so `open_operator_case`'s non-idempotency can't storm). A cold
-    architect that NEVER started is not here — R1c (`_architect_liveness_ladder`)
-    owns that window."""
+    """ADR-0006 R1d (ADR-0009: re-keyed onto `_turn_settled`/R-D): a
+    STARTED-then-REFUSED forward/log job — the architect's order was
+    genuinely DELIVERED (`_turn_settled`) and it settled idle, yet
+    `land_via_grant` still reports `"fail-closed"` (its patch-id is
+    unresolvable == it authored NO branch, prose instead of a file).
+    Resolve LOUD: page the operator once and free the architect. Never poll
+    a never-authored branch to budget (the log/forward wedge A3), and — for
+    a log-review — never silently DROP the reviewer's findings by
+    benign-clearing. Clearing `current_job` at the call site is the
+    once-guard (the job is gone next tick, so `open_operator_case`'s
+    non-idempotency can't storm). A cold/dead architect whose order was
+    NEVER delivered at all is not here — R-G's no-progress budget
+    (`_advance_delivery`) owns that window."""
     kind = cur.get("kind")
     detail = (f"architect ordered a {kind!r} job for {cur.get('block')!r} and "
               f"settled idle having authored NO branch (land grant fail-closed) "
@@ -551,22 +670,29 @@ def _advance_triage(eng, manifest, job):
         verdicts = manifest.get("triage_verdicts") or {}
         v = verdicts.get(job["triage_id"])
         if v is None:
-            # No structured verdict yet (R1b — see the constant block above).
-            # Arm only once the architect has genuinely taken its turn and settled
-            # idle (shared engine-state signal, HELD while it is mid-turn).
-            if not _architect_settled_idle(eng, job):
+            # No structured verdict yet (R1b, ADR-0009 re-keyed onto R-D).
+            # Arm only once the architect's order is genuinely DELIVERED
+            # (`_turn_settled`: read_hwm >= dispatch_seq, held while
+            # provably mid-turn) — never a wall-clock/idle-tick debounce.
+            # While NOT yet delivered, drive the R-C/R-E/R-G recovery loop
+            # (respawn/re-deliver/no-progress-budget) instead of just idling.
+            if not _turn_settled(eng, job):
+                if job.get("dispatch_seq") is not None and not _delivered(eng, job):
+                    _advance_delivery(eng, manifest, job)
                 return
+            _reset_delivery_state(job)   # R-G: genuine delivery flip — reset the budget
             genuine = job.get("source") not in _LOW_CONFIDENCE_TRIAGE_SOURCES
             job["verdict"] = "operator" if genuine else "answer"
             job["note"] = (
-                f"architect settled idle after its ordered turn with no structured "
-                f"triage_verdict (source={job.get('source')!r}) -> "
+                f"architect's order was DELIVERED (read_hwm >= dispatch_seq, R-D) "
+                f"with no structured triage_verdict (source={job.get('source')!r}) -> "
                 + ("LOUD 'operator' backstop — a genuine escalation is never "
                    "swallowed (R1b)" if genuine else
                    "benign 'answer' backstop — a low-confidence phantom never "
                    "wedges session-end (R1b)"))
             eng.log("flow", f"architect[triage:{job['triage_id']}]: {job['note']}")
         else:
+            _reset_delivery_state(job)   # R-G: a routed report proves delivery too
             verdict = v.get("verdict")
             if verdict not in ("scope_forward", "answer", "operator"):
                 eng.log("flow", f"architect[triage:{job['triage_id']}]: "
@@ -625,19 +751,23 @@ def _advance_triage(eng, manifest, job):
         job["adhoc"] = entry
 
     if not entry["ordered"]:
+        text = (f"[TRON]  architect — scope_forward on triage "
+               f"(triage_id={job['triage_id']!r}): author + land ONE "
+               f"upcoming adhoc block ({entry['block']}, meta/blocks/"
+               f"{entry['block']}.md, Status: 📋 To do, plus its "
+               f"pipeline.md row) — I land it once it resolves, then "
+               f"resolve the original wall/escalation.")
         if not eng.dry:
-            eng._to_worker(
-                ARCHITECT_WID,
-                f"[TRON]  architect — scope_forward on triage "
-                f"(triage_id={job['triage_id']!r}): author + land ONE "
-                f"upcoming adhoc block ({entry['block']}, meta/blocks/"
-                f"{entry['block']}.md, Status: 📋 To do, plus its "
-                f"pipeline.md row) — I land it once it resolves, then "
-                f"resolve the original wall/escalation.",
-                "arch.log-review")
+            eng._to_worker(ARCHITECT_WID, text, "arch.log-review")
         entry["ordered"] = True
+        # R-B: `entry` is its OWN order-requiring sub-state, a fresh dict
+        # separate from `job`'s own `dispatch_seq` namespace — stamping it
+        # here satisfies "NULLED on every transition" by construction (a
+        # freshly-created dict already starts `dispatch_seq=None`).
+        _stamp_dispatch(eng, entry, text, "arch.log-review")
         eng.log("flow", f"architect[triage:{job['triage_id']}]: ordered "
-                        f"adhoc {entry['block']!r}")
+                        f"adhoc {entry['block']!r} (dispatch_seq="
+                        f"{entry.get('dispatch_seq')!r})")
         return
 
     truth_ref = eng._truth_ref()
@@ -680,17 +810,16 @@ def _advance_forward(eng, manifest, job):
     job["branch"] = branch
 
     if not job.get("ordered"):
+        text = (f"[TRON]  architect — block {block!r} is missing its block file. "
+               f"Author it on {branch} (meta/blocks/{block}.md, Status: 📋 To do) "
+               f"and push — I land it once it resolves.")
         if not eng.dry:
-            eng.emit(
-                "arch.forward",
-                f"[TRON]  architect — block {block!r} is missing its block file. "
-                f"Author it on {branch} (meta/blocks/{block}.md, Status: 📋 To do) "
-                f"and push — I land it once it resolves.",
-                slots={"block": block},
-                worker_id=ARCHITECT_WID,
-                kind="arch.forward")
+            eng.emit("arch.forward", text, slots={"block": block},
+                    worker_id=ARCHITECT_WID, kind="arch.forward")
         job["ordered"] = True
-        eng.log("flow", f"architect[forward:{block}]: ordered authoring on {branch}")
+        _stamp_dispatch(eng, job, text, "arch.forward")   # ADR-0009 R-B
+        eng.log("flow", f"architect[forward:{block}]: ordered authoring on {branch} "
+                        f"(dispatch_seq={job.get('dispatch_seq')!r})")
         return
 
     truth_ref = eng._truth_ref()
@@ -776,18 +905,18 @@ def _advance_log(eng, manifest, job):
             eng.log("flow", f"architect[log:{job.get('type')}]: clean review — "
                             f"no findings, nothing queued")
             return
+        text = (f"[TRON]  architect — log-review for the {job.get('type')} "
+               f"review: author + land {len(entries)} upcoming adhoc block "
+               f"file(s), one per finding ({', '.join(e['block'] for e in entries)}), "
+               f"each on its OWN branch (meta/blocks/<id>.md, Status: 📋 To do, "
+               f"plus its pipeline.md row) — I land each once it resolves.")
         if not eng.dry:
-            eng._to_worker(
-                ARCHITECT_WID,
-                f"[TRON]  architect — log-review for the {job.get('type')} "
-                f"review: author + land {len(entries)} upcoming adhoc block "
-                f"file(s), one per finding ({', '.join(e['block'] for e in entries)}), "
-                f"each on its OWN branch (meta/blocks/<id>.md, Status: 📋 To do, "
-                f"plus its pipeline.md row) — I land each once it resolves.",
-                "arch.log-review")
+            eng._to_worker(ARCHITECT_WID, text, "arch.log-review")
+        _stamp_dispatch(eng, job, text, "arch.log-review")   # ADR-0009 R-B
         eng.log("flow", f"architect[log:{job.get('type')}]: ordered "
                         f"{len(entries)} adhoc block(s): "
-                        f"{[e['block'] for e in entries]}")
+                        f"{[e['block'] for e in entries]} (dispatch_seq="
+                        f"{job.get('dispatch_seq')!r})")
         return
 
     entries = job.get("adhoc") or []
@@ -842,16 +971,15 @@ def _order_reconcile(eng, job):
     module docstring) — completion is observed exclusively via a LATER
     `architect.reconciled` report `core/router.py` routes into `manifest
     ["reconciled"]`; this function never mutates that itself."""
+    text = (f"[TRON]  architect — reconcile {job['block']!r} against "
+           f"{job.get('after')!r}'s just-landed drift and report "
+           f"architect.reconciled once clear.")
     if not eng.dry:
-        eng.emit(
-            "arch.reconcile",
-            f"[TRON]  architect — reconcile {job['block']!r} against "
-            f"{job.get('after')!r}'s just-landed drift and report "
-            f"architect.reconciled once clear.",
-            slots={"block": job["block"], "after": job.get("after")},
-            worker_id=ARCHITECT_WID,
-            kind="arch.reconcile")
+        eng.emit("arch.reconcile", text,
+                slots={"block": job["block"], "after": job.get("after")},
+                worker_id=ARCHITECT_WID, kind="arch.reconcile")
     job["ordered"] = True
+    _stamp_dispatch(eng, job, text, "arch.reconcile")   # ADR-0009 R-B
 
 
 def advance(eng, manifest):
@@ -868,46 +996,57 @@ def advance(eng, manifest):
     queue = manifest.setdefault("architect_queue", [])
     reconciled = set(manifest.get("reconciled") or [])
 
-    # ADR-0006 R1c: watch the one liveness window no worker net covers — an
-    # ordered-but-never-started architect (cold-start/dead) — and page once.
-    _architect_liveness_ladder(eng, manifest)
-
     cur = arch.get("current_job")
     if cur:
+        # ADR-0009 R-C/R-E/R-G: the architect-only deliver-until-consumed
+        # recovery loop — runs BEFORE the kind-specific step below, on
+        # WHATEVER order is currently outstanding (any job kind), so a
+        # stuck delivery recovers regardless of which completion signal
+        # that job kind ultimately waits on. Replaces ADR-0006 R1c
+        # (`_architect_liveness_ladder`, DELETED — its scope dissolves into
+        # R-A..R-E, its honest core becomes this ONE no-progress budget).
+        if cur.get("dispatch_seq") is not None and not _delivered(eng, cur):
+            _advance_delivery(eng, manifest, cur)
         if cur.get("kind") == "reconcile":
             if cur.get("block") in reconciled:
                 eng.log("flow", f"architect[reconcile:{cur['block']}]: "
                                 f"architect.reconciled observed -> gate "
                                 f"cleared, architect idle")
+                _reset_delivery_state(cur)
                 arch["status"], arch["current_job"] = "idle", None
-            elif _architect_settled_idle(eng, cur):
-                # R1b-style backstop for reconcile (mirrors _advance_triage): the
-                # architect took its ordered reconcile turn and settled idle with
-                # NO `architect.reconciled` routed — a real-LLM NO-OP reconcile
-                # ("no forward impact") whose free-text classify couldn't tag as a
-                # structured reconciled report. Tie completion to ENGINE STATE
-                # (turn taken + settled idle), never to parsed prose: mark the
-                # block reconciled so 01-xx's dispatch is freed. A no-op is benign,
-                # and any REAL drift the architect missed surfaces as an ordinary
-                # build wall on that block (architect-first) — never a silent WEDGE
-                # of the whole fleet (the T2-12 reconcile-gate hang).
+            elif _turn_settled(eng, cur):
+                # R1b-style backstop for reconcile (mirrors _advance_triage,
+                # ADR-0009 re-keyed onto `_turn_settled`/R-D): the architect's
+                # reconcile order was genuinely DELIVERED and it settled idle
+                # with NO `architect.reconciled` routed — a real-LLM NO-OP
+                # reconcile ("no forward impact") whose free-text classify
+                # couldn't tag as a structured reconciled report. Tie
+                # completion to ENGINE STATE (genuine delivery + settled),
+                # never to parsed prose: mark the block reconciled so 01-xx's
+                # dispatch is freed. A no-op is benign, and any REAL drift the
+                # architect missed surfaces as an ordinary build wall on that
+                # block (architect-first) — never a silent WEDGE of the whole
+                # fleet (the T2-12 reconcile-gate hang).
                 manifest.setdefault("reconciled", []).append(cur["block"])
-                eng.log("flow", f"architect[reconcile:{cur['block']}]: settled idle "
-                                f"after its ordered turn with no architect.reconciled "
+                eng.log("flow", f"architect[reconcile:{cur['block']}]: order "
+                                f"DELIVERED, settled idle, no architect.reconciled "
                                 f"-> no-op reconcile backstop, gate cleared (R1b-style)")
+                _reset_delivery_state(cur)
                 arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "forward":
             _advance_forward(eng, manifest, cur)
             if cur.get("landed"):
+                _reset_delivery_state(cur)
                 arch["status"], arch["current_job"] = "idle", None
-            elif cur.get("last_outcome") == "fail-closed" and _architect_settled_idle(eng, cur):
+            elif cur.get("last_outcome") == "fail-closed" and _turn_settled(eng, cur):
                 _backstop_refused_authoring(eng, manifest, cur)
                 arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "log":
             _advance_log(eng, manifest, cur)
             if cur.get("landed_all"):
+                _reset_delivery_state(cur)
                 arch["status"], arch["current_job"] = "idle", None
-            elif cur.get("last_outcome") == "fail-closed" and _architect_settled_idle(eng, cur):
+            elif cur.get("last_outcome") == "fail-closed" and _turn_settled(eng, cur):
                 _backstop_refused_authoring(eng, manifest, cur)
                 arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "triage":

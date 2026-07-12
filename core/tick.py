@@ -179,6 +179,14 @@ def tick(eng):
 
     # ── observe ──
     snap = snapshot.build(eng)
+    # ADR-0009 R-A: hand the live, in-progress manifest to `eng` for this
+    # pass — `Engine._to_worker`/`_mbox_seq` read/write `manifest["mbox_seq"]`
+    # off this handle so the monotonic per-worker mailbox seq is durable
+    # (`core.state.save`, below) rather than an in-memory-only counter that a
+    # crashed/restarted engine process would lose. A plain attribute set —
+    # harmless on any duck-typed `eng` stand-in (every `core/*_rig.py`
+    # fixture) that never reads it.
+    eng._manifest = snap.manifest
 
     # ── route (structured — NO LLM/classify in this brick): ASSIGN any
     #     worker that reported online this tick, before deciding what to

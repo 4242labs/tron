@@ -423,9 +423,12 @@ def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kin
     (1) the architect's OWN `operator` verdict for a triage job that never had an
     existing casestate case behind it (`core/classify.py`'s unclassified path —
     raw free text with no block/gate to park; `_advance_triage`);
-    (2) ADR-0006 R1c, `_architect_liveness_ladder` — a cold-start/dead architect's
-    OWN stall (the architect cannot triage its own death, and it is pool-excluded
-    from every worker liveness net);
+    (2) ADR-0009 R-G, `_advance_delivery`'s no-progress budget (DISSOLVED from
+    ADR-0006 R1c's dedicated cold-start ladder, consolidated onto the deliver-
+    until-consumed invariant) — a genuinely stuck/dead architect's OWN order
+    never reaching `read_hwm(ARCH) >= dispatch_seq` past a bounded budget (the
+    architect cannot triage its own death, and it is pool-excluded from every
+    worker liveness net);
     (3) ADR-0006 R1d, `_backstop_refused_authoring` — the architect took its
     ordered forward/log turn but authored NO branch (land grant fail-closed) and
     settled idle; its own refusal routes here so the work is never a silent wedge

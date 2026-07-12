@@ -269,6 +269,57 @@ def _escalate(gate_state, detail):
     return "escalate", detail
 
 
+def _merge_still_landed(eng, gate_state):
+    """ADR-0009 §5 (H2 — the engine's own false-advance root, Defect 3):
+    'a block occupies `record` only while its merged commit is currently a
+    trunk ancestor.' Re-checked at EACH `gate.trunk`/`gate.record` call
+    against a FRESHLY-read `eng._truth_ref()` — never a value cached at
+    merge time. `land_via_grant`'s receipt short-circuit can otherwise
+    return 'landed' for a `merged_sha` that trunk churn (a force-push/
+    rebase after `gate.merge` genuinely observed it) has since dropped —
+    the engine would then advance `gate.trunk`/`gate.record` on content
+    current ancestry no longer corroborates: a real false-green, not a
+    dependent of Defect 1. Extends ADR-0008's `stale_landing_wall`
+    machinery (the ANALOGOUS already-landed-wall dual) to this
+    not-yet-landed dual: illegal-state fix — a churn-invalidated
+    `merged_sha` re-drives merge, never reads as landed.
+
+    A `gate_state` with no `merged_sha` recorded yet (the tail-only
+    `new_state()` shape, `core/gate_rig.py`/`core/landing_rig.py`'s own
+    fixtures — record driven directly, never through `gate.merge`) reads
+    True — nothing to invalidate, the caller's own no-merged_sha branch
+    (`_advance_trunk`'s `_escalate` arm) still owns that case."""
+    sha = gate_state.get("merged_sha")
+    if not sha:
+        return True
+    truth_ref = eng._truth_ref()
+    return gitobs.is_ancestor(eng.paths["root"], sha, truth_ref, eng.dry)
+
+
+def _churn_redrive_to_merge(eng, block, gate_state, stage_name):
+    """H2's illegal-state fix, applied: `merged_sha` is no longer a CURRENT
+    trunk ancestor — trunk churned it away after `gate.merge` observed it.
+    Re-drive from `gate.merge` (never trust the stale sha as 'landed'):
+    clear the merge/trunk-verdict bookkeeping so the NEXT `_advance_merge`
+    call re-derives a fresh case-id off the branch's CURRENT patch-id
+    (`landing.stage_case_id`'s own content-bound discipline) and re-lands
+    for real. `merge_ordered` stays True (the worker was already told once;
+    a stale grant/receipt is harmless — `land_via_grant`'s own content-bound
+    enforcement, §5's sibling fix) so this never re-spams a fresh order."""
+    detail = (f"gate[{block}] {stage_name}: merged_sha "
+             f"{str(gate_state.get('merged_sha'))[:8]} is NO LONGER a "
+             f"current trunk ancestor (churn — a force-push/rebase dropped "
+             f"it after gate.merge observed it) — re-driving from gate.merge, "
+             f"never reading stale content as landed (ADR-0009 §5 H2)")
+    gate_state["stage"] = STAGE_MERGE
+    gate_state["merged_sha"] = None
+    gate_state["trunk_verdict_sha"] = None
+    gate_state["trunk_verdict"] = None
+    gate_state["trunk_verdict_detail"] = None
+    eng.log("flow", detail)
+    return "merge_churned", detail
+
+
 def _advance_local(eng, block, gate_state, local_report):
     """One local-stage step: order once (side effect, idempotent), then
     judge whatever `local_report` THIS call was handed. A well-formed
@@ -359,6 +410,13 @@ def _advance_trunk(eng, block, gate_state):
                          "gate.trunk reached with no merged_sha recorded — "
                          "gate.merge never observed a landing")
 
+    if not _merge_still_landed(eng, gate_state):
+        # ADR-0009 §5 H2: `sha` is no longer a CURRENT trunk ancestor —
+        # never re-validate/advance on stale content. Re-drive from
+        # gate.merge instead of trusting a cached trunk_verdict for a sha
+        # churn has since dropped off trunk.
+        return _churn_redrive_to_merge(eng, block, gate_state, "trunk")
+
     if gate_state.get("trunk_verdict_sha") == sha and gate_state.get("trunk_verdict") in ("pass", "fail"):
         status = gate_state["trunk_verdict"]
         detail = gate_state.get("trunk_verdict_detail", "")
@@ -393,6 +451,16 @@ def _advance_record(eng, block, gate_state):
     block_file = gate_state["block_file"]
     wid = gate_state.get("wid")
     truth_ref = eng._truth_ref()
+
+    if not _merge_still_landed(eng, gate_state):
+        # ADR-0009 §5 H2: a block occupies `gate.record` only while its
+        # merged commit is STILL a current trunk ancestor — re-checked here
+        # too (record's own baseline is derived off `branch`/`truth_ref`,
+        # not `merged_sha` directly, but the block has no business being at
+        # `record` at all once the merge that got it there has churned off
+        # trunk). Re-drive from gate.merge, never treat this stage's own
+        # progress as still valid on stale content.
+        return _churn_redrive_to_merge(eng, block, gate_state, "record")
 
     if not gate_state["record_ordered"]:
         # Re-anchor the record baseline to the block doc's last-touching commit

@@ -170,7 +170,16 @@ class Engine:
         self.ctx = ctx
         self.dry = bool(dry)
         self.events = events if events is not None else _Events()
-        self._mailbox_seq = {}   # wid -> next engine->worker mailbox seq (engine/jobs.py::send)
+        # ADR-0009 R-A: this in-memory dict is now only the NO-LIVE-MANIFEST
+        # fallback (a caller driving `Engine` without ever going through
+        # `core.tick.tick`/`core.engine.Engine.start`, neither of which is a
+        # real call shape in this stack) — see `_next_mbox_seq` below. The
+        # SOURCE OF TRUTH is the manifest-persisted `manifest["mbox_seq"]`,
+        # set on `self._manifest` by `core.tick.tick`/`Engine.start` each
+        # pass; this dict is never itself durable and must never be trusted
+        # across a process restart (the exact defect R-A closes).
+        self._mailbox_seq = {}   # wid -> next engine->worker mailbox seq (fallback only)
+        self._manifest = None    # the live manifest for the CURRENT tick/bootup pass (R-A)
         self._models = {}        # role -> model, the session override start(models=...) layers
         self._roles = None       # engine/roles.py::RolesConfig, resolved lazily on first spawn
         self._renderer = None    # engine/render.py::Renderer, resolved lazily on first emit
@@ -257,17 +266,110 @@ class Engine:
         return deadline is None or time.time() < deadline
 
     # ── duck-typed surface: engine -> worker mailbox + release (real, TRON's own folder) ──
+    def _next_mbox_seq(self, worker_id):
+        """ADR-0009 R-A: `mbox_seq = max(persisted_mbox_seq, read_hwm(W))`,
+        reconciled UPWARD ONLY, per-wid — never seeded back down to a fresh
+        hwm. Source of truth is `self._manifest["mbox_seq"][worker_id]`
+        (persisted by `core.state.save`, the SAME manifest `core.tick.tick`/
+        `Engine.start` set on `self._manifest` for this pass); reconciling
+        against `jobs.read_hwm` on every call is what closes the
+        engine-restart wedge — a crashed engine process loses only this
+        Python object's own prior counter, but the runner's OWN durable
+        high-water mark (`.mbox-hwm`, survives the crash) is never lower
+        than what was truly consumed, so `max(persisted, hwm)` can never
+        under-count and re-collide with an already-processed seq. Absent a
+        live manifest (a caller driving `Engine` without ever going through
+        `core.tick.tick`/`Engine.start` — no real call shape in this stack)
+        falls back to the in-memory `self._mailbox_seq` dict, reconciled the
+        SAME way, just not durable across a restart."""
+        hwm = 0
+        if not self.dry:
+            hwm = jobs.read_hwm(self.ctx.worker_dir(worker_id))
+        if self._manifest is not None:
+            mbox = self._manifest.setdefault("mbox_seq", {})
+            persisted = int(mbox.get(worker_id, 0) or 0)
+            seq = max(persisted, hwm) + 1
+            mbox[worker_id] = seq
+            return seq
+        persisted = int(self._mailbox_seq.get(worker_id, 0) or 0)
+        seq = max(persisted, hwm) + 1
+        self._mailbox_seq[worker_id] = seq
+        return seq
+
+    def _mbox_seq(self, worker_id):
+        """ADR-0009 R-B: the seq LAST assigned to `worker_id` (read-only —
+        never mints a new one). This is what `core/architect.py` reads
+        right after an `emit`/`_to_worker` call to stamp `job["dispatch_seq"]`
+        — a duck-typed OPTIONAL hook (mirrors `_worker_working`/`_now`):
+        absent on a pre-ADR-0009 rig `eng` stand-in, `core/architect.py`
+        degrades to its documented pre-ADR-0009 `ordered=True` sentinel."""
+        if self._manifest is not None:
+            return (self._manifest.get("mbox_seq") or {}).get(worker_id)
+        return self._mailbox_seq.get(worker_id)
+
     def _to_worker(self, worker_id, text, kind):
         """Real, non-stubbed: one line appended to the worker's OWN mailbox
         (`engine/jobs.py::send` — the established engine->worker channel;
         `ctx.workers_dir/<worker_id>/tron-inbox.jsonl`, TRON's own folder,
-        never a project write). `seq` is this Engine's own per-worker
-        monotonic counter (mirrors `engine/fsm.py::emit`'s own counter)."""
+        never a project write). `seq` is R-A's monotonic, manifest-persisted
+        per-worker counter (mirrors `engine/fsm.py::emit`'s own counter, now
+        durable across a restart). Returns the seq used (or `None` under
+        `self.dry`)."""
         if self.dry:
-            return
-        seq = self._mailbox_seq.get(worker_id, 0) + 1
-        self._mailbox_seq[worker_id] = seq
+            return None
+        seq = self._next_mbox_seq(worker_id)
         jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
+        return seq
+
+    def _resend(self, worker_id, seq, text, kind):
+        """ADR-0009 R-C/R-E: re-deliver an order at an ALREADY-STAMPED seq —
+        never a fresh mint (unlike `_to_worker`). The runner dedups
+        by seq (`engine/worker_runner.py::_pending`: "a re-appended
+        same-seq line is applied at most once"), so an at-least-once
+        re-send is harmless — this is what lets the architect-only
+        recovery loop (`core/architect.py`) re-deliver on a bounded
+        interval (R-E) or after a clean re-spawn (R-C) without minting a
+        seq the runner has no way to correlate back to the SAME order.
+        Real, non-stubbed; a no-op under `self.dry` or a `None` seq."""
+        if self.dry or seq is None:
+            return None
+        jobs.send(self.ctx.worker_dir(worker_id), seq, kind, text)
+        return seq
+
+    def _read_hwm(self, worker_id):
+        """ADR-0009 R-D: `engine/jobs.py::read_hwm` — the runner's own
+        durable consumed-seq, read fresh every call (never cached). Real,
+        non-stubbed; under `self.dry` there is no real runner, so this
+        reads 0 (nothing consumed) — `core/architect.py`'s own delivery
+        loop already treats `self.dry` as an inert no-op regardless (no
+        real mailbox exists to consume), so this value is never actually
+        consulted in that mode."""
+        if self.dry:
+            return 0
+        return jobs.read_hwm(self.ctx.worker_dir(worker_id))
+
+    def _is_alive(self, worker_id):
+        """ADR-0009 R-C: `engine/jobs.py::is_alive` — the runner's LOGICAL
+        liveness (a live pid, non-terminal state). Real, non-stubbed; under
+        `self.dry` there is no real runner, so this reads False — harmless,
+        `core/architect.py`'s delivery loop is inert under dry (see
+        `_read_hwm`)."""
+        if self.dry:
+            return False
+        return jobs.is_alive(worker_id)
+
+    def _runner_idle(self, worker_id):
+        """ADR-0009 R-E: `engine/jobs.py::runner_idle` — True iff the
+        runner reports `state: idle` (finished its turn, waiting on the
+        mailbox), gating the architect-only re-deliver so it can never race
+        a live turn. Real, non-stubbed; under `self.dry` there is no real
+        runner — reads True (idle, matching `jobs.runner_idle`'s own
+        documented "a missing runner record is idle too" fail-open), though
+        inert either way since `_read_hwm` already makes the whole delivery
+        loop a no-op under dry."""
+        if self.dry:
+            return True
+        return jobs.runner_idle(worker_id)
 
     # ── the ONE emit choke-point every worker-facing message goes through
     #     (mirrors `engine/fsm.py::emit`, read for shape — see that
@@ -428,10 +530,20 @@ class Engine:
         self._real_spawn(agent_id, role, block)
 
     def _spawn_architect(self):
-        """Called at most once — either by `start()` (A8, this brick's own
-        boot-time spawn) or, lazily, by `core/architect.py::advance` the
-        first tick it actually pops a queued job (a caller that drives
-        `core.tick.tick` without ever going through `Engine.start`)."""
+        """Called by `start()` (A8, this brick's own boot-time spawn), or,
+        lazily, by `core/architect.py::advance` the first tick it actually
+        pops a queued job (a caller that drives `core.tick.tick` without
+        ever going through `Engine.start`) — both gated on the
+        `manifest["architect"]["spawned"]` latch, so at most once from
+        either of THOSE two call sites. ADR-0009 R-C: a THIRD legitimate
+        call site exists — `core/architect.py::_advance_delivery`'s own
+        re-spawn arm, called WHENEVER the architect is observed dead with
+        an outstanding undelivered order (never latched, by design: a
+        dead architect may need re-spawning more than once, up to
+        `RESPAWN_CAP`). `_real_spawn` -> `jobs.retire_stale_dir` archives
+        whatever dir is already there UNCONDITIONALLY before spawning, so a
+        repeat call here is always safe — clean-slate, never a double-spawn
+        onto a live process."""
         if self.dry:
             return
         rc = self._roles_config()
@@ -539,6 +651,7 @@ class Engine:
         # the tick loop's job, which this hands off to, never performs
         # itself ("BOOTUP spawns no agents beyond the architect").
         snap = snapshot.build(self)
+        self._manifest = snap.manifest   # R-A: live manifest handle for this pass's _to_worker/emit
         excluded = casestate.dispatch_excluded_blocks(snap.manifest) | architect.gated_blocks(snap.manifest)
         dispatch_view = [row for row in view if row.get("id") not in excluded] if excluded else view
         spawned = switchboard.fill(self, snap, view=dispatch_view)

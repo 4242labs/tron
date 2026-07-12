@@ -526,6 +526,57 @@ def run_scenario_2():
        tag3 == "unclassified" and len(queue_after2) == queue_len_before2 + 1,
        f"tag3={tag3} queue_len_before={queue_len_before2} queue_len_after={len(queue_after2)}")
 
+    # ── ADR-0009 §4 / rig 6 (PHANTOM-WALL) part A — the FREE-TEXT judge
+    #     structurally CANNOT mint worker.wall: even when the (stubbed) model
+    #     itself grades a block-less, evidence-less narration "worker.wall",
+    #     judge._v_classify's FREE_TEXT_BLOCKED rejection downgrades it to
+    #     invalid-output-exhausted -> unclassified -> architect triage (never
+    #     an escalating tag reaching open_case straight from prose). This is
+    #     the T2-16 phantom-wall's ROOT mechanism, one layer earlier than the
+    #     existing structural-bypass proof above (S2-K8/K9, which never even
+    #     reach the judge) — this scenario is the one case that DOES reach it.
+    raw_text_phantom_wall = "placeholder"
+    _set_stub(tron_ctx, "worker.wall", {"detail": "genuinely blocked"})
+    queue_len_before5 = len(manifest.get("architect_queue") or [])
+    tag8, _slots8 = classify.classify(
+        eng, {"text": raw_text_phantom_wall,
+              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        manifest)
+    queue_after5 = manifest.get("architect_queue") or []
+    ok("S2-K10 (PHANTOM-WALL JUDGE-ENUM KILLER, ADR-0009 §4 rig 6 — must be "
+       "GREEN): a free-text, block-less narration the (stubbed) judge itself "
+       "grades worker.wall is REJECTED at the validator (FREE_TEXT_BLOCKED) "
+       "-> invalid-output-exhausted -> unclassified -> architect triage, "
+       "NEVER an escalating worker.wall minted from prose",
+       tag8 == "unclassified" and len(queue_after5) == queue_len_before5 + 1,
+       f"tag8={tag8} queue_len_before={queue_len_before5} "
+       f"queue_len_after={len(queue_after5)}")
+
+    # ── ADR-0009 §4 / rig 6 (PHANTOM-WALL) part B — the land.sh-signature
+    #     structural path: a genuine landing wall (carries the land.sh-
+    #     refusal signature `core/pipeline.py::_is_landing_wall` already
+    #     recognizes) classifies DETERMINISTICALLY to worker.wall via
+    #     `_structured` — the judge is NEVER consulted, so it can't be
+    #     downgraded by the guard above either. Poison the stub so a judge
+    #     touch would surface as a WRONG tag. ──
+    _set_stub(tron_ctx, "SHOULD-NEVER-BE-POPPED-LANDING", {})
+    idx_before5 = dict(judge._stub_idx)
+    landing_wall_text = ("land.sh refused: grant minted for commit 98a1347, but "
+                         "worker committed 8f04a86 before landing, causing content "
+                         "mismatch")
+    tag9, slots9 = classify.classify(
+        eng, {"text": landing_wall_text,
+              "sender": {"kind": "worker", "id": "engineer-01-04"}},
+        manifest)
+    ok("S2-K11 (LANDING-SIGNATURE STRUCTURAL KILLER, ADR-0009 §4 rig 6 — must "
+       "be GREEN): a genuine land.sh-refusal-signature wall classifies "
+       "DETERMINISTICALLY to worker.wall — the judge is NEVER consulted (stub "
+       "idx unchanged), so the free-text FREE_TEXT_BLOCKED guard never even "
+       "has a chance to (wrongly) suppress a REAL landing wall",
+       tag9 == "worker.wall" and dict(judge._stub_idx) == idx_before5,
+       f"tag9={tag9} slots9={slots9} idx_before={idx_before5} "
+       f"idx_after={dict(judge._stub_idx)}")
+
     # ── deterministic operator CASE-<n> settle regex (bonus — "keep it
     #     working", the design's own words) — zero model calls ──
     settle_manifest = {"cases": {"case-01-01-1": {

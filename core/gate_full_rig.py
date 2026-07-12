@@ -714,6 +714,75 @@ def main():
        "changes a non-metadata line is still escalated (out-of-gate)",
        okB is False, f"ok={okB} detail={detB}")
 
+    # ══ Phase E (ADR-0009 §5, rig 7 H2) — trunk CHURN invalidates a merged
+    #    sha AFTER gate.merge genuinely observed it: a force-push/rebase
+    #    that drops the merge commit off trunk. `gate.trunk`/`gate.record`
+    #    must NEVER proceed on stale content — re-drive from gate.merge. ══
+    BLOCK_E, BRANCH_E, WID_E = "01-13", "feat/01-13", "engineer-01-13"
+    eng_e = MiniEng(root, grants_dir, test_command="true")
+    eng_e.workers[WID_E] = {"block": BLOCK_E, "status": "assigned"}
+    block_file_e = seed_block_doc(root, BLOCK_E, "meta/blocks/01-13.md")
+    code_tip_e = make_code_commit(root, BRANCH_E, "src/lib/e13.ts", "01-13-real-change")
+
+    gstate_e = gate.new_state_full(eng_e, BLOCK_E, block_file_e, BRANCH_E, WID_E)
+    hist_e1 = drive_full(eng_e, BLOCK_E, gstate_e, root, grants_dir,
+                         local_report=LOCAL_PASS_REPORT,
+                         stop_outcomes={"trunk_passed"}, max_iters=20)
+    outcomes_e1 = [o for o, _ in hist_e1]
+    merged_sha_e = gstate_e.get("merged_sha")
+    ok("E1: gate.merge/gate.trunk drove 01-13 genuinely to record-ready — "
+       "trunk_passed observed, merged_sha captured and (at this instant) "
+       "a real trunk ancestor",
+       "trunk_passed" in outcomes_e1 and gstate_e["stage"] == gate.STAGE_RECORD
+       and merged_sha_e and is_ancestor(root, merged_sha_e, MAIN),
+       f"outcomes={outcomes_e1} stage={gstate_e['stage']} merged_sha={merged_sha_e}")
+
+    # Simulate CHURN: a force-push/rebase strips 01-13's own merge commit
+    # off trunk (real git, no fake ancestry) — `merged_sha_e` is now
+    # UNREACHABLE from MAIN's new tip. `git branch -f` (never `reset --hard`
+    # — this rig's working tree stays in DETACHED HEAD throughout, per
+    # `build_root`'s own convention; a `reset --hard` there would move the
+    # detached HEAD pointer, NOT the `main` branch ref `gitobs.is_ancestor`
+    # actually reads).
+    _git(["branch", "-f", MAIN, f"{merged_sha_e}^"], root)
+    ok("E2: churn simulated for real — merged_sha_e is genuinely no longer "
+       "a trunk ancestor",
+       not is_ancestor(root, merged_sha_e, MAIN),
+       f"merged_sha_e={merged_sha_e} main_now={_git_out(['rev-parse', MAIN], root)}")
+
+    outcome_e2, detail_e2 = gate.advance(eng_e, BLOCK_E, gstate_e)
+    ok("E3 (THE H2 CHURN KILLER — must be GREEN): the record-ready gate_state "
+       "(stage==STAGE_RECORD, carrying the now-stale merged_sha) is RE-DRIVEN "
+       "back to gate.merge on the very next call — never silently proceeds "
+       "past a churn-invalidated commit (ADR-0009 §5, H2 — the engine's own "
+       "false-advance root, distinct from Defect 1)",
+       outcome_e2 == "merge_churned" and gstate_e["stage"] == gate.STAGE_MERGE
+       and gstate_e.get("merged_sha") is None,
+       f"outcome={outcome_e2} detail={detail_e2} stage={gstate_e['stage']} "
+       f"merged_sha_after={gstate_e.get('merged_sha')}")
+
+    # MUTATION-PROVEN NON-VACUITY: with `_merge_still_landed` disabled (the
+    # exact regression this fix closes — the engine trusting a cached
+    # merged_sha with NO fresh ancestry re-check), the SAME churned state
+    # must NOT self-correct — it stays wedged at record/trunk, illustrating
+    # the false-advance/false-completion this fix prevents.
+    gstate_e_mut = gate.new_state_full(eng_e, BLOCK_E, block_file_e, BRANCH_E, WID_E)
+    gstate_e_mut["stage"] = gate.STAGE_RECORD
+    gstate_e_mut["merged_sha"] = merged_sha_e
+    gstate_e_mut["record_ordered"] = False
+    _real_merge_still_landed = gate._merge_still_landed
+    gate._merge_still_landed = lambda eng, gs: True   # MUTATION: never re-check ancestry
+    try:
+        outcome_e2_mut, _detail_mut = gate.advance(eng_e, BLOCK_E, gstate_e_mut)
+    finally:
+        gate._merge_still_landed = _real_merge_still_landed
+    ok("E4 (MUTATION -> RED, non-vacuity proof for E3): disabling the H2 "
+       "ancestry re-check makes the SAME churned gate_state proceed as if "
+       "still record-ready (never 'merge_churned') — the fix (E3) is what "
+       "prevents this, not a vacuous rig",
+       outcome_e2_mut != "merge_churned" and gstate_e_mut["stage"] != gate.STAGE_MERGE,
+       f"mutated_outcome={outcome_e2_mut} mutated_stage={gstate_e_mut['stage']}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.gate_full_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")
