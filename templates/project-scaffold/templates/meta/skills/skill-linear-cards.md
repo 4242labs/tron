@@ -71,25 +71,30 @@ project/host/agent names in the canon copy.
 | `<DEFAULT_PRIORITY>` | Default priority (0–4) | `3` (Medium) |
 | `<PROJECT_LABELS>` | Fixed label(s) on **every** card in this project | `Infra` |
 | `<SCOPE_LABELS>` | Optional conditional-dimension label set + when each applies | machine: `HOST-A` / `HOST-B` |
-| `<AGENT_ROLE>` | This agent's role/persona, for the signature | `SYSADMIN` |
+| `<AGENT_ROLE>` | This agent's role/persona — used for both the persona label (§4) and the signature (§6) | `SYSADMIN` |
 
 ---
 
-## 4. Label Model — four tiers
+## 4. Label Model — five tiers
 
 Every card carries labels from these tiers, resolved in order:
 
 1. **Universal (MUST, all projects):** `🤖 beep-boop` — the workspace-wide marker that a card
    was created by an AI agent, not hand-authored. **Every agent stamps it on every card,
    regardless of project or team.** Create it once at workspace scope if absent.
-2. **Project (fixed):** `<PROJECT_LABELS>` — always applied in this project.
-3. **Scope (conditional):** a `<SCOPE_LABELS>` value when the card targets one thing in that
+2. **Persona (MUST, all projects):** the label naming the agent that authored the card — its
+   own `<AGENT_ROLE>` (§3), lowercase (e.g. `tron`, `architect`, `engineer`, `data-architect`).
+   **Every agent stamps its own persona on every card it creates**, so authorship is filterable,
+   not just readable in the signature. Create the label at workspace scope if absent; never
+   stamp another agent's persona.
+3. **Project (fixed):** `<PROJECT_LABELS>` — always applied in this project.
+4. **Scope (conditional):** a `<SCOPE_LABELS>` value when the card targets one thing in that
    dimension (e.g. a specific host/service/area); omit for project-wide cards.
-4. **Session (optional):** whatever extra label the operator names for a batch/session at
+5. **Session (optional):** whatever extra label the operator names for a batch/session at
    runtime. Ask/accept, don't invent.
 
-`labels` on `save_issue` **replaces** the full set — always send universal + project + any
-scope/session labels together, or you'll drop the ones you omit.
+`labels` on `save_issue` **replaces** the full set — always send universal + persona + project +
+any scope/session labels together, or you'll drop the ones you omit.
 
 ---
 
@@ -99,7 +104,7 @@ scope/session labels together, or you'll drop the ones you omit.
 
 - `team: <LINEAR_TEAM>` · **`project: <LINEAR_PROJECT>` — MANDATORY. Never create a project-less card** (unless the project is explicitly configured `<LINEAR_PROJECT> = none`).
 - `state: <DEFAULT_STATE>` · `assignee: <DEFAULT_ASSIGNEE>` · `priority: <DEFAULT_PRIORITY>`
-- `labels`: the resolved §4 set (universal + project + scope/session)
+- `labels`: the resolved §4 set (universal + persona + project + scope/session)
 - `description`: Markdown — real newlines, **not** `\n`. **End with the signature (§6).**
 
 **Multi-step work** → create the parent, then each sub-issue with `parentId: <parent identifier>`.
@@ -164,10 +169,14 @@ can attribute cards to that agent user; until then, label + signature are the me
 - **Every card MUST have a project.** A project-less card is never acceptable. Sub-issues do
   NOT inherit the parent's project — set it explicitly on each (§5). The only exception is a
   project explicitly configured `<LINEAR_PROJECT> = none`.
-- **Universal label + signature are non-negotiable** — they are what make an agent-authored
-  card identifiable and traceable. A card missing either is malformed.
+- **Universal label + persona label + signature are non-negotiable** — they are what make an
+  agent-authored card identifiable, filterable by author, and traceable. A card missing any of
+  the three is malformed.
 - **Description Markdown uses literal newlines**, never `\n` escape sequences.
 
 ---
 
-**Last Updated:** 2026-07-08 — initial authoring. Reusable across projects; fill §3 per project.
+**Last Updated:** 2026-07-12 — §4 label model extended to five tiers: a **persona label** (the
+authoring agent's own `<AGENT_ROLE>`, e.g. `tron` / `architect` / `engineer` / `data-architect`)
+is now mandatory alongside `🤖 beep-boop`, so card authorship is filterable and not only visible
+in the signature. Earlier 2026-07-08 — initial authoring. Reusable across projects; fill §3 per project.
