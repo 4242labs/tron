@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/4242labs/TRON/compare/v0.5.0...v0.6.0) (2026-07-12)
+
+
+### Features
+
+* **modes:** install.sh wires the terminal shortcuts too — one command on a fresh machine ([a5bb7b2](https://github.com/4242labs/TRON/commit/a5bb7b2894aa4517875a1e9a5bb95afd593ad71c))
+* **modes:** one-command install — slash commands + terminal shortcuts ([1780b4c](https://github.com/4242labs/TRON/commit/1780b4cb3e06ad38a3a6c2b182483e00903e1e48))
+
 ## [0.5.0](https://github.com/4242labs/TRON/compare/v0.4.1...v0.5.0) (2026-07-12)
 
 
