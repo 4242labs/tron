@@ -788,15 +788,22 @@ def main():
            all("import subprocess" not in s and "subprocess." not in s
                and "\nimport git\n" not in s for s in src.values()),
            "grep-equivalent source scan of core/{casestate,sentry,engine}.py")
+        _reping_body = src["casestate"].split("def reping(")[1].split("\ndef ")[0]
         ok("SRC2 (NO-PERMANENT-DROP KILLER — must be GREEN): `core/casestate.py`'s "
-           "`reping` never calls `cases.pop`/sets `case['decision']`/writes "
-           "`abandoned_blocks` — the ONLY places a case is ever cleared/dropped "
-           "remain `settle` (an explicit operator verb), never the re-ping ladder",
+           "`reping` never calls `cases.pop`/writes `abandoned_blocks`, and the "
+           "ONLY `case['decision']` it may set is the trunk-truth "
+           "'stale-resolved-on-trunk' (ADR-0008: a page PROVABLY answered by "
+           "trunk — the raising landing wall's block closed out — NOT a silent "
+           "drop of an unanswered page; guarded by pipeline.stale_landing_wall). "
+           "Every OTHER case-drop stays in `settle` (an explicit operator verb)",
            "def reping(" in src["casestate"]
-           and "cases.pop" not in src["casestate"].split("def reping(")[1].split("\ndef ")[0]
-           and "abandoned_blocks" not in src["casestate"].split("def reping(")[1].split("\ndef ")[0]
-           and '"decision"] =' not in src["casestate"].split("def reping(")[1].split("\ndef ")[0],
-           "grep-equivalent source scan of core/casestate.py::reping's own body")
+           and "cases.pop" not in _reping_body
+           and "abandoned_blocks" not in _reping_body
+           and _reping_body.count('"decision"] =')
+               == _reping_body.count('"decision"] = "stale-resolved-on-trunk"')
+           and "pipeline.stale_landing_wall" in _reping_body,
+           "grep-equivalent source scan of core/casestate.py::reping's own body — "
+           "the sole permitted decision-write is the ADR-0008 stale-resolve arm")
 
         passed = sum(1 for _, c2, _ in _results if c2)
         print(f"core.opfloor_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

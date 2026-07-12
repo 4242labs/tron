@@ -452,6 +452,51 @@ def main():
        "it ran, tore its OWN process down)",
        orphans == [], f"orphans={orphans}")
 
+    # ── R3-ACCEPT (ADR-0005): the live driver's escalation-fidelity acceptance
+    #     gate. A bare `session_end and not orphans` verdict proves nothing about
+    #     whether a planted wall reached the operator — the false-green vehicle.
+    #     `_acceptance_verdict` additionally rejects a dangling open case and a
+    #     page-count mismatch, so a hollow run that swallowed/dropped a planted
+    #     wall (or fired a spurious page) can never be reported clean. ──
+    from live import _acceptance_verdict   # noqa: E402 — core/sim/live.py, pure fn
+    clean = {"outcome": "session_end", "orphans": [], "cases": {}, "operator_pages": {}}
+    swallowed = {"outcome": "session_end", "orphans": [],
+                 "cases": {}, "operator_pages": {}}   # planted wall never paged
+    dangling = {"outcome": "session_end", "orphans": [],
+                "cases": {"case-op-9": {"decision": None}},
+                "operator_pages": {"case-op-9-p1": {"case_id": "case-op-9"}}}
+    settled_planted = {"outcome": "session_end", "orphans": [],
+                       "cases": {"case-op-9": {"decision": "resume"}},
+                       "operator_pages": {"case-op-9-p1": {"case_id": "case-op-9"}}}
+    # THE FLOOR (casestate.reping) re-pages an unsettled case EVERY tick, and no
+    # _deliver_page hook is wired live -> one genuine escalation yields MANY page
+    # entries. Counting raw entries would false-REJECT this clean 1-wall run; the gate
+    # must count DISTINCT escalated case_ids (Sonnet review HIGH). Same case, 4 pings:
+    reping_inflated = {"outcome": "session_end", "orphans": [],
+                       "cases": {"case-op-9": {"decision": "resume"}},
+                       "operator_pages": {
+                           "case-op-9-p1": {"case_id": "case-op-9", "detail": "PLANTED-XYZ blocked"},
+                           "case-op-9-p2": {"case_id": "case-op-9", "detail": "PLANTED-XYZ blocked"},
+                           "case-op-9-p3": {"case_id": "case-op-9", "detail": "PLANTED-XYZ blocked"},
+                           "case-op-9-p4": {"case_id": "case-op-9", "detail": "PLANTED-XYZ blocked"}}}
+    v_clean, _ = _acceptance_verdict(clean, expect_pages=0)
+    v_swallowed, r_sw = _acceptance_verdict(swallowed, expect_pages=1)
+    v_dangling, _ = _acceptance_verdict(dangling, expect_pages=1)
+    v_planted, _ = _acceptance_verdict(settled_planted, expect_pages=1)
+    v_reping, r_rp = _acceptance_verdict(reping_inflated, expect_pages=1)
+    v_sig_ok, _ = _acceptance_verdict(reping_inflated, expect_pages=1, expect_signature="PLANTED-XYZ")
+    v_sig_missing, _ = _acceptance_verdict(reping_inflated, expect_pages=1, expect_signature="OTHER-SIG")
+    ok("R3-ACCEPT (ESCALATION-FIDELITY GATE — must be GREEN): clean trivial run (0/no-case) "
+       "PASSES; a SWALLOWED planted wall (expect 1, got 0) FAILS; a DANGLING open case FAILS; "
+       "a settled planted wall PASSES; a single wall RE-PINGED 4x still counts as ONE "
+       "escalation and PASSES (attempts != escalations — the reping de-dup); the signature "
+       "check PASSES when a page carries the marker and FAILS when none does",
+       v_clean and (not v_swallowed) and (not v_dangling) and v_planted
+       and v_reping and v_sig_ok and (not v_sig_missing),
+       f"clean={v_clean} swallowed={v_swallowed}({r_sw}) dangling={v_dangling} "
+       f"planted={v_planted} reping4x={v_reping}({r_rp}) sig_ok={v_sig_ok} "
+       f"sig_missing={v_sig_missing}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.sim.boot_real_scaffold_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
          f"({passed}/{len(_results)})")

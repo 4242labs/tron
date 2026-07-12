@@ -313,6 +313,15 @@ def enqueue_triage(eng, manifest, case_id, source, block, detail, worker_id=None
     for a case-bearing job only — see `_has_triage_job`'s own docstring."""
     manifest.setdefault("architect", new_state())
     queue = manifest.setdefault("architect_queue", [])
+    # R1a (ADR-0005) final backstop: the architect can never be the SOURCE of a
+    # triage — its own narration creates nothing. The call-site guards (classify /
+    # router, ahead of open_case) are primary; this is defense-in-depth so no
+    # future creation path can queue an architect-sourced triage. Its OWN in-flight
+    # triage resolves via the R1b idle backstop, never by self-enqueue.
+    if worker_id == ARCHITECT_WID:
+        eng.log("flow", "architect: enqueue_triage refused — sender is the architect "
+                        "itself (R1a self-source backstop); created nothing")
+        return
     if _has_triage_job(manifest, case_id):
         return
     triage_id = _next_triage_id(manifest)
@@ -344,17 +353,176 @@ def _order_triage(eng, job):
                     f"(source={job.get('source')!r})")
 
 
-# A `classify.unclassified` triage is a LOW-CONFIDENCE phantom: classify could
-# not even tag the worker message (routinely a benign status narration — "landed
-# cleanly, standing by", a branch declaration). The architect is ordered a turn
-# to look; a real blocker gets a structured architect.triage_verdict
-# (verdict='operator'). If instead the architect responds with a loosely-tagged
-# / prose message (which never routes to a verdict) or nothing, the phantom must
-# NOT wedge the architect busy forever — that blocks every later job (log-review)
-# and session-end (the s3/s4 first-honest-SIM tail). After this many ordered
-# ticks with no verdict, a phantom auto-resolves benignly. ~4 min at the live
-# runner's ~20s tick — comfortably past the architect's own ordered turn.
-_PHANTOM_TRIAGE_GRACE_TICKS = 12
+# R1b (ADR-0005) — the architect-idle, source-directional triage backstop.
+#
+# A triage the architect has been ordered but has NOT resolved with a structured
+# `architect.triage_verdict` must neither WEDGE the fleet nor SWALLOW a real
+# escalation:
+#   • wedge — blocker B: the architect stuck ~13 min on a block-less worker.wall
+#     it could not verdict, blocking every later job + session-end;
+#   • swallow — M1/F2: the old self-guards benign-'answer'-ed a GENUINE escalation
+#     the instant the architect narrated a turn (the courier harvests every turn),
+#     so the planted operator wall never paged — the false-green disease.
+#
+# The backstop resolves the triage once the architect has genuinely TAKEN ITS TURN
+# and settled idle with no verdict — keyed on the REAL runner signal
+# `eng._worker_working(ARCHITECT_WID)` (the same seam liveness/sentry gate on),
+# NOT a wall-clock tick count. A `claude -p` turn posts nothing until it finishes,
+# so while the architect is provably mid-turn the backstop HOLDS (idle_ticks reset);
+# it only arms across genuinely settled-idle ticks. `_ARCHITECT_IDLE_DEBOUNCE_TICKS`
+# is a small debounce so a brief between-turns idle blip of a multi-turn architect
+# is not mistaken for "finished" — it is NOT a timeout (the counter freezes the
+# instant the architect is working again), it debounces the idle signal.
+#
+# Resolution is DIRECTIONAL by the TRUSTED source label (set by the router/engine
+# at enqueue — `casestate.open_case` / `router` / `classify` — never by classify's
+# tag of the architect's own prose): a low-confidence source resolves benign
+# ('answer', never wedges session-end); a genuine escalation resolves LOUD
+# ('operator', its real page — never swallowed). This replaces BOTH the
+# classify.unclassified-only phantom grace (which left a real worker.wall wedged)
+# and the two source-agnostic self-guards' benign write (which swallowed genuine
+# walls); the self-source CREATION guards move to R1a (classify.py / router.py).
+_ARCHITECT_IDLE_DEBOUNCE_TICKS = 2
+_LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
+# ADR-0006 R1c: how many ticks an ORDERED architect may sit never-having-worked
+# before its stall is paged. Only the started-latch's `arch_started==False` window
+# is governed here (a started-then-hung architect is owned by the settled-idle/R1d
+# backstops, which CAN false-clear-safely because the turn provably ran). Sized
+# GENEROUSLY: the sole job is to beat the run's wall-clock budget (default 60 min)
+# so a genuinely dead/never-spawned architect is paged rather than silently wedging
+# to budget — it need NOT be tight. At the live poll cadence (~20s/tick) 15 ticks
+# ≈ 5 min, comfortably longer than any real cold start (the runner writes
+# `state="working"` at turn-START / mailbox-pickup, so this window is bounded by
+# process-spawn + poll latency, NOT LLM response latency) yet ~55 min before budget.
+# (Peer-review note: R1c pages straight to the operator with no ping step; a
+# graduated ping-then-page ladder like the worker silence net is a future refinement
+# — watch the real cold-start timing on the next live SIM.)
+_ARCHITECT_COLD_START_CAP_TICKS = 15
+
+
+def _architect_settled_idle(eng, job):
+    """The shared R1b ENGINE-STATE signal: True once the architect has genuinely
+    TAKEN its ordered turn for `job` and settled idle. HELD while the architect is
+    provably mid-turn (`eng._worker_working(ARCHITECT_WID)` — a real `claude -p`
+    turn posts nothing until it finishes, so only genuine settled-idle time arms
+    the backstop; `idle_ticks` resets the instant it works again), then armed after
+    `_ARCHITECT_IDLE_DEBOUNCE_TICKS` settled-idle ticks (a debounce for a between-
+    turns blip, NOT a wall-clock timeout). Duck-typed + crash-safe, exactly as
+    core/sentry.py + core/liveness.py read the SAME hook; an absent/erroring hook
+    (dry rigs) reads not-working, so the backstop arms across ordinary ticks there.
+    Used by BOTH `_advance_triage` and the reconcile arm of `advance` — one
+    invariant ('the architect took its turn and settled with no structured
+    result'), never two copies that could drift.
+
+    STARTED-LATCH (peer-review hardening): the debounce distinguishes 'settled
+    after a genuine turn' from 'NEVER STARTED a turn' only when a real liveness
+    hook is present. When `_worker_working` is callable (a live run), the backstop
+    arms ONLY after the architect has been observed working at least once for this
+    job (`job["arch_started"]`) — else a slow cold-start or a silently-dead
+    architect (which NO liveness net watches, since it is pool-excluded from
+    `manifest["workers"]`) would arm the backstop having never reconciled: a silent
+    false-clear. A never-started architect instead HOLDS (the run fails honestly on
+    budget, never false-greens). When the hook is ABSENT (dry rigs), turn-start is
+    unobservable, so the documented dry behavior is preserved: arm across the idle
+    debounce."""
+    if not job.get("ordered"):
+        return False
+    fn = getattr(eng, "_worker_working", None)
+    if not callable(fn):
+        # No liveness hook (dry rigs): turn-start is unobservable — preserve the
+        # documented 'arm across the idle debounce' behavior the R1b rigs rely on.
+        job["idle_ticks"] = job.get("idle_ticks", 0) + 1
+        return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
+    try:
+        working = bool(fn(ARCHITECT_WID))
+    except Exception:   # noqa: BLE001 — a broken hook never wedges the job
+        working = False
+    if working:
+        job["arch_started"] = True   # latch: the architect provably took its turn
+        job["idle_ticks"] = 0
+        return False
+    if not job.get("arch_started"):
+        # Not working AND never observed working: a cold-start/dead architect, not
+        # a settled one. HOLD — never arm the backstop on a turn that never ran.
+        # (ADR-0006 R1c watches THIS window and pages the operator if it persists,
+        # so a dead architect no longer wedges to budget silently.)
+        return False
+    job["idle_ticks"] = job.get("idle_ticks", 0) + 1
+    return job["idle_ticks"] >= _ARCHITECT_IDLE_DEBOUNCE_TICKS
+
+
+def _architect_liveness_ladder(eng, manifest):
+    """ADR-0006 R1c: the dedicated liveness net for the architect, which is
+    pool-excluded from `manifest["workers"]` so NEITHER `core/liveness.py` nor
+    `core/sentry.py` ever watches it. Scope is exactly the one window no other
+    backstop covers: an architect that has been ORDERED a job but has NEVER been
+    observed working it (`arch_started` unset) — i.e. a cold-start that never
+    started, or an architect that died/hung before its first turn. The
+    started-latch (`_architect_settled_idle`) deliberately HOLDS that window
+    (never false-clears a turn that never ran); R1c makes the hold LOUD instead
+    of silent-to-budget: after a generous cold-start tolerance it pages the
+    operator ONCE (the wave-17 `casestate.reping` FLOOR then re-pings that one
+    case). A started-then-hung architect is NOT R1c's job — `arch_started` is
+    set, so this returns early and the settled-idle/R1d backstops own it.
+
+    Live-only: with no `_worker_working` hook (dry rigs that don't wire one) R1c
+    is inert — turn-start is unobservable, so the started-latch's dry path
+    governs, exactly as the settled-idle backstop documents. Idempotent per job:
+    the once-guard lives on the job dict, so it resets when the job changes."""
+    arch = manifest.setdefault("architect", new_state())
+    cur = arch.get("current_job")
+    if not cur or not cur.get("ordered"):
+        return                       # nothing ordered — no stall to watch
+    if cur.get("arch_started"):
+        return                       # it started; settled-idle/R1d own completion now
+    fn = getattr(eng, "_worker_working", None)
+    if not callable(fn):
+        return                       # dry rig, no liveness hook — R1c inert
+    try:
+        if fn(ARCHITECT_WID):
+            cur["arch_started"] = True   # observed working — hand off to the started-latch
+            return
+    except Exception:                # noqa: BLE001 — a broken hook never pages
+        return
+    cur["cold_ticks"] = cur.get("cold_ticks", 0) + 1
+    if cur["cold_ticks"] < _ARCHITECT_COLD_START_CAP_TICKS:
+        return                       # tolerate a legitimate cold start / spawn latency
+    if cur.get("stall_paged"):
+        return                       # already paged this stall exactly once
+    detail = (f"architect ordered a {cur.get('kind')!r} job for "
+              f"{cur.get('block')!r} but has NOT started a turn in "
+              f"{cur['cold_ticks']} ticks (cold-start/dead-before-first-turn; "
+              f"the architect is pool-excluded from every worker liveness net) "
+              f"— R1c dedicated architect-liveness escalation, paged once")
+    casestate.open_operator_case(eng, manifest, cur.get("block"),
+                                 "architect.stalled", detail,
+                                 worker_id=ARCHITECT_WID, kind="stall")
+    cur["stall_paged"] = True
+    eng.log("flow", f"architect: STALLED before first turn — {detail}")
+
+
+def _backstop_refused_authoring(eng, manifest, cur):
+    """ADR-0006 R1d: a STARTED-then-REFUSED forward/log job — the architect took
+    its ordered turn (`arch_started`, so `_architect_settled_idle` can arm) and
+    settled idle, yet `land_via_grant` still reports `"fail-closed"` (its patch-id
+    is unresolvable == it authored NO branch, prose instead of a file). Resolve
+    LOUD: page the operator once and free the architect. Never poll a
+    never-authored branch to budget (the log/forward wedge A3), and — for a
+    log-review — never silently DROP the reviewer's findings by benign-clearing.
+    Clearing `current_job` at the call site is the once-guard (the job is gone
+    next tick, so `open_operator_case`'s non-idempotency can't storm). A cold
+    architect that NEVER started is not here — R1c (`_architect_liveness_ladder`)
+    owns that window."""
+    kind = cur.get("kind")
+    detail = (f"architect ordered a {kind!r} job for {cur.get('block')!r} and "
+              f"settled idle having authored NO branch (land grant fail-closed) "
+              f"— started-then-refused authoring; routed to operator (ADR-0006 "
+              f"R1d), never a silent wedge or a dropped log-review finding")
+    casestate.open_operator_case(eng, manifest, cur.get("block"),
+                                 f"architect.{kind}_refused", detail,
+                                 worker_id=ARCHITECT_WID, kind="stall")
+    eng.log("flow", f"architect[{kind}:{cur.get('block')}]: refused authoring "
+                    f"(fail-closed + settled idle) -> operator (R1d)")
 
 
 def _advance_triage(eng, manifest, job):
@@ -369,6 +537,12 @@ def _advance_triage(eng, manifest, job):
                        # module (see its own module docstring); both are
                        # always fully loaded by the time either is CALLED
 
+    if job.get("resolved"):
+        # Idempotent: `advance` clears current_job the tick after resolved is set,
+        # so the live engine never re-enters — but never re-apply a verdict (e.g.
+        # re-page an operator case) if a caller ticks a resolved job again.
+        return
+
     if not job.get("ordered"):
         _order_triage(eng, job)
         return
@@ -377,24 +551,21 @@ def _advance_triage(eng, manifest, job):
         verdicts = manifest.get("triage_verdicts") or {}
         v = verdicts.get(job["triage_id"])
         if v is None:
-            # A real (worker.wall, block/case-bearing) triage still waits on the
-            # architect's routed verdict — unchanged. A `classify.unclassified`
-            # PHANTOM instead auto-resolves benignly once the architect has had
-            # its ordered turn (grace window) with no structured verdict — it
-            # must never wedge the architect + session-end (see the constant).
-            if job.get("source") != "classify.unclassified":
+            # No structured verdict yet (R1b — see the constant block above).
+            # Arm only once the architect has genuinely taken its turn and settled
+            # idle (shared engine-state signal, HELD while it is mid-turn).
+            if not _architect_settled_idle(eng, job):
                 return
-            job["await_ticks"] = job.get("await_ticks", 0) + 1
-            if job["await_ticks"] < _PHANTOM_TRIAGE_GRACE_TICKS:
-                return
-            job["verdict"] = "answer"
-            job["note"] = ("phantom classify.unclassified triage — no structured "
-                           "architect verdict within grace; benign auto-resolve "
-                           "(never wedges session-end)")
-            eng.log("flow", f"architect[triage:{job['triage_id']}]: phantom "
-                            f"(classify.unclassified) unresolved after "
-                            f"{job['await_ticks']} ordered ticks -> benign 'answer' "
-                            f"auto-resolve (never wedges session-end)")
+            genuine = job.get("source") not in _LOW_CONFIDENCE_TRIAGE_SOURCES
+            job["verdict"] = "operator" if genuine else "answer"
+            job["note"] = (
+                f"architect settled idle after its ordered turn with no structured "
+                f"triage_verdict (source={job.get('source')!r}) -> "
+                + ("LOUD 'operator' backstop — a genuine escalation is never "
+                   "swallowed (R1b)" if genuine else
+                   "benign 'answer' backstop — a low-confidence phantom never "
+                   "wedges session-end (R1b)"))
+            eng.log("flow", f"architect[triage:{job['triage_id']}]: {job['note']}")
         else:
             verdict = v.get("verdict")
             if verdict not in ("scope_forward", "answer", "operator"):
@@ -405,6 +576,21 @@ def _advance_triage(eng, manifest, job):
                 verdict = "operator"
             job["verdict"] = verdict
             job["note"] = v.get("note")
+
+    # ADR-0008 — stale-wall revalidation (covers BOTH the R1b idle-backstop
+    # operator verdict AND a structured `triage_verdict="operator"`: both set
+    # verdict="operator" and converge here). A genuine LANDING worker.wall whose
+    # block has already closed out on trunk is moot — revalidate against durable
+    # trunk truth (the gate stage, which survives branch teardown) and retire it
+    # benignly rather than paging the operator about a wall that no longer holds.
+    if job["verdict"] == "operator" and pipeline.stale_landing_wall(
+            manifest, job.get("source"), job.get("worker_id"), job.get("detail")):
+        job["verdict"] = "answer"
+        job["note"] = ("stale landing worker.wall — block closed on trunk; "
+                       "operator NOT paged (ADR-0008)")
+        eng.log("flow", f"architect[triage:{job['triage_id']}]: STALE landing worker.wall "
+                        f"revalidated (worker={job.get('worker_id')!r} block CLOSED on "
+                        f"trunk) — downgraded operator->answer, operator NOT paged (ADR-0008)")
 
     if job["verdict"] in ("answer", "operator"):
         if job.get("case_id") is not None:
@@ -456,8 +642,10 @@ def _advance_triage(eng, manifest, job):
 
     truth_ref = eng._truth_ref()
     patch_id = gitobs.patch_id(eng.paths["root"], entry["branch"], truth_ref, eng.dry)
-    land_case_id = entry.get("case_id") or landing.paperwork_case_id(
-        "triage-forward", entry["branch"], patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id, shared with core/gate.py).
+    land_case_id = landing.stage_case_id(entry.get("case_id"), "triage-forward",
+                                         entry["branch"], patch_id)
     entry["case_id"] = land_case_id
 
     outcome = landing.land_via_grant(eng, land_case_id, entry["block"], entry["branch"],
@@ -507,11 +695,18 @@ def _advance_forward(eng, manifest, job):
 
     truth_ref = eng._truth_ref()
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    case_id = job.get("case_id") or landing.paperwork_case_id("forward", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id).
+    case_id = landing.stage_case_id(job.get("case_id"), "forward", branch, patch_id)
     job["case_id"] = case_id
 
     outcome = landing.land_via_grant(eng, case_id, block, branch, ARCHITECT_WID,
                                      "arch.forward", "architect-forward")
+    # ADR-0006 R1d: record the grant poll's verdict for `advance`'s backstop.
+    # "fail-closed" = the branch's patch-id is unresolvable / no grant minted =
+    # the architect authored NOTHING (prose instead of a branch); "pending" =
+    # authored & landing (must keep polling, never backstop mid-land).
+    job["last_outcome"] = outcome
     if outcome == "landed":
         job["landed"] = True
         eng.log("flow", f"architect[forward:{block}]: block file landed via "
@@ -598,18 +793,23 @@ def _advance_log(eng, manifest, job):
     entries = job.get("adhoc") or []
     if not entries:
         job["landed_all"] = True
+        job["last_outcome"] = "landed"
         return
 
     truth_ref = eng._truth_ref()
+    tick_outcomes = []
     for e in entries:
         if e.get("landed"):
             continue
         block, branch = e["block"], e["branch"]
         patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-        case_id = e.get("case_id") or landing.paperwork_case_id("logreview", branch, patch_id)
+        # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17
+        # fix; single-source in landing.stage_case_id).
+        case_id = landing.stage_case_id(e.get("case_id"), "logreview", branch, patch_id)
         e["case_id"] = case_id
         outcome = landing.land_via_grant(eng, case_id, block, branch, ARCHITECT_WID,
                                          "arch.log-review", "architect-logreview")
+        tick_outcomes.append(outcome)
         if outcome == "landed":
             e["landed"] = True
             eng.log("flow", f"architect[log:{job.get('type')}]: adhoc block "
@@ -622,6 +822,18 @@ def _advance_log(eng, manifest, job):
                             f"{case_id}, branch not authored yet?)")
 
     job["landed_all"] = all(e.get("landed") for e in entries)
+    # ADR-0006 R1d: aggregate the tick's poll verdict for `advance`'s backstop.
+    # All landed -> done; ANY entry still authoring/landing ("pending") holds the
+    # poll (never backstop mid-land); otherwise every un-landed entry is
+    # "fail-closed" (nothing authored) -> the architect refused to author its
+    # ordered adhoc block(s) — a started-then-refused log-review that must NOT
+    # silently drop the reviewer's findings.
+    if job["landed_all"]:
+        job["last_outcome"] = "landed"
+    elif "pending" in tick_outcomes:
+        job["last_outcome"] = "pending"
+    else:
+        job["last_outcome"] = "fail-closed"
 
 
 def _order_reconcile(eng, job):
@@ -656,6 +868,10 @@ def advance(eng, manifest):
     queue = manifest.setdefault("architect_queue", [])
     reconciled = set(manifest.get("reconciled") or [])
 
+    # ADR-0006 R1c: watch the one liveness window no worker net covers — an
+    # ordered-but-never-started architect (cold-start/dead) — and page once.
+    _architect_liveness_ladder(eng, manifest)
+
     cur = arch.get("current_job")
     if cur:
         if cur.get("kind") == "reconcile":
@@ -664,13 +880,35 @@ def advance(eng, manifest):
                                 f"architect.reconciled observed -> gate "
                                 f"cleared, architect idle")
                 arch["status"], arch["current_job"] = "idle", None
+            elif _architect_settled_idle(eng, cur):
+                # R1b-style backstop for reconcile (mirrors _advance_triage): the
+                # architect took its ordered reconcile turn and settled idle with
+                # NO `architect.reconciled` routed — a real-LLM NO-OP reconcile
+                # ("no forward impact") whose free-text classify couldn't tag as a
+                # structured reconciled report. Tie completion to ENGINE STATE
+                # (turn taken + settled idle), never to parsed prose: mark the
+                # block reconciled so 01-xx's dispatch is freed. A no-op is benign,
+                # and any REAL drift the architect missed surfaces as an ordinary
+                # build wall on that block (architect-first) — never a silent WEDGE
+                # of the whole fleet (the T2-12 reconcile-gate hang).
+                manifest.setdefault("reconciled", []).append(cur["block"])
+                eng.log("flow", f"architect[reconcile:{cur['block']}]: settled idle "
+                                f"after its ordered turn with no architect.reconciled "
+                                f"-> no-op reconcile backstop, gate cleared (R1b-style)")
+                arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "forward":
             _advance_forward(eng, manifest, cur)
             if cur.get("landed"):
                 arch["status"], arch["current_job"] = "idle", None
+            elif cur.get("last_outcome") == "fail-closed" and _architect_settled_idle(eng, cur):
+                _backstop_refused_authoring(eng, manifest, cur)
+                arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "log":
             _advance_log(eng, manifest, cur)
             if cur.get("landed_all"):
+                arch["status"], arch["current_job"] = "idle", None
+            elif cur.get("last_outcome") == "fail-closed" and _architect_settled_idle(eng, cur):
+                _backstop_refused_authoring(eng, manifest, cur)
                 arch["status"], arch["current_job"] = "idle", None
         elif cur.get("kind") == "triage":
             _advance_triage(eng, manifest, cur)

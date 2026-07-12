@@ -146,6 +146,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import gate   # noqa: E402 — core/gate.py, STAGE_ESCALATED/STAGE_CLOSED terminal vocabulary (read-only)
+import pipeline   # noqa: E402 — core/pipeline.py, ADR-0008 stale_landing_wall (read-only; pipeline imports only gitobs — no cycle)
 
 VERBS = ("resume", "amend", "abandon")
 
@@ -235,6 +236,20 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
 
     Idempotent: a block that already has an OPEN case returns that SAME
     case_id — never a second parked case for one still-open situation."""
+    import architect   # lazy — casestate<->architect mutually import (see module docstring)
+
+    # R1a (ADR-0005) defense-in-depth: the architect can never be the SOURCE of a case.
+    # The router/classify call-sites already short-circuit an architect sender AHEAD of
+    # here, but guarding open_case itself makes an architect-sourced case structurally
+    # unrepresentable: a future caller passing the architect's id would otherwise mint an
+    # orphan case (enqueue_triage's own R1a backstop then refuses to attach a triage to
+    # it), which R3's terminal gate would correctly-but-permanently wedge session-end on.
+    if worker_id == architect.ARCHITECT_WID:
+        eng.log("flow", f"casestate: open_case refused — source is the architect itself "
+                        f"(R1a self-source guard); no case minted (block={block!r}, "
+                        f"source={source!r})")
+        return None
+
     cases = manifest.setdefault("cases", {})
 
     if block:
@@ -402,16 +417,22 @@ def architect_resolve(eng, manifest, case_id, verdict, note=None):
 
 
 def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
-    """Mint a case `owner="operator"` from BIRTH and page immediately — the
-    ONE legitimate direct-to-operator path left after wave 18/GAP-E: the
-    architect's OWN `operator` verdict for a triage job that never had an
-    existing casestate case behind it in the first place (`core/classify.py`
-    's unclassified path — raw free text with no block/gate to park; see
-    `core/architect.py::_advance_triage`, the ONE call site). This is not a
-    second bypass of architect-first routing — the architect has ALREADY
-    triaged it. A `worker.wall`/`sentry.cap`/liveness-stall escalation NEVER
-    reaches this function directly — those always go through `open_case` ->
-    `core/architect.py::enqueue_triage` -> `architect_resolve` (above)."""
+    """Mint a case `owner="operator"` from BIRTH and page immediately — a
+    legitimate direct-to-operator path for an escalation the architect itself
+    cannot be architect-first'd for. Three callers, all in `core/architect.py`:
+    (1) the architect's OWN `operator` verdict for a triage job that never had an
+    existing casestate case behind it (`core/classify.py`'s unclassified path —
+    raw free text with no block/gate to park; `_advance_triage`);
+    (2) ADR-0006 R1c, `_architect_liveness_ladder` — a cold-start/dead architect's
+    OWN stall (the architect cannot triage its own death, and it is pool-excluded
+    from every worker liveness net);
+    (3) ADR-0006 R1d, `_backstop_refused_authoring` — the architect took its
+    ordered forward/log turn but authored NO branch (land grant fail-closed) and
+    settled idle; its own refusal routes here so the work is never a silent wedge
+    or a dropped log-review finding. None is a bypass of architect-first for WORKER
+    escalations: a `worker.wall`/`sentry.cap`/liveness-stall for a worker NEVER
+    reaches here directly — those always go through `open_case` ->
+    `core/architect.py::enqueue_triage` -> `architect_resolve`."""
     cases = manifest.setdefault("cases", {})
     case_id = next_case_id(manifest, block, source)
     cases[case_id] = {
@@ -491,6 +512,21 @@ def reping(eng, manifest, now):
                        # triaged) — THE FLOOR only ever pings the
                        # OPERATOR-owned stage, never before the architect
                        # has had its own first look
+
+        # ADR-0008 — a landing worker.wall that opened + paged, then HEALED
+        # (its block closed out on trunk after the first page): settle it on
+        # durable trunk truth rather than re-paging forever. NOT a silent drop
+        # of an unanswered page — the thing paged about is provably resolved on
+        # trunk (recorded as a distinct decision, loudly logged); the FLOOR's
+        # invariant ("never silently drop an UNANSWERED page") holds.
+        if pipeline.stale_landing_wall(manifest, case.get("source"),
+                                       case.get("worker_id"), case.get("detail")):
+            case["decision"] = "stale-resolved-on-trunk"
+            case["settled_at"] = _now_iso()
+            eng.log("flow", f"casestate: case {case_id!r} STALE-RESOLVED — landing "
+                            f"worker.wall block closed on trunk; paging stops, page "
+                            f"provably answered by trunk (never an unanswered drop) (ADR-0008)")
+            continue
 
         paging = case.setdefault("paging", {
             "attempts": 0, "consecutive_fail": 0, "last_receipt": None,

@@ -63,13 +63,21 @@ blueprint-contracts.md): a block that has ALREADY passed gate.trunk (every
 applicable AC re-run green on trunk) drives exactly the two remaining
 stages:
 
-  record  — order the worker to flip the block doc's Status field to ✅ on
-            its OWN branch (TRON reads status, never writes it). Once a new
+  record  — order the worker to flip the block doc's Status field to ✅ (and
+            add the `**Completed:**` date the session-end skill §6 prescribes)
+            on its OWN branch (TRON reads status, never writes it). Once a new
             commit touches the block file, content-check its OWN diff
-            (`gitobs.record_commit_ok` — exactly one file, exactly the
-            `**Status:**` field). Anything else is an out-of-gate change
-            wearing the record's clothes and returns a distinct
-            `("escalate", detail)` outcome — it is never landed. A
+            (`gitobs.record_commit_ok`). Conforming = the block doc's Status/
+            Completed flip, ALONE or bundled with exactly the §6 close-out
+            paperwork the frozen skill prescribes as one commit — the block
+            doc's rename to `blocks/archive/` and the worker's OWN-row
+            `pipeline.md` edit (line-scoped to this block id), nothing else.
+            The engine conforms to the frozen skill's bundled close-out rather
+            than forcing a split (ADR-0005 R5). Any OTHER file/line (code, prose,
+            another block's row) is an out-of-gate change wearing the record's
+            clothes and returns a distinct `("escalate", detail)` outcome — never
+            landed. Whatever the worker bundled here, `close` then finds the
+            close-out already on trunk (idempotent) and just releases the slot. A
             conforming record lands through `core.landing.land_via_grant`
             under a CONTENT-BOUND case-id (`core.landing.paperwork_case_id`,
             the branch's current patch-id embedded) — the Wave-1 confirmed
@@ -313,8 +321,10 @@ def _advance_merge(eng, block, gate_state):
     truth_ref = eng._truth_ref()
 
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    case_id = gate_state.get("merge_case_id") or landing.paperwork_case_id(
-        "merge", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id, shared by all six landing callers).
+    case_id = landing.stage_case_id(gate_state.get("merge_case_id"), "merge",
+                                    branch, patch_id)
     gate_state["merge_case_id"] = case_id
     gate_state["merge_ordered"] = True
 
@@ -403,9 +413,12 @@ def _advance_record(eng, block, gate_state):
         if wid and not eng.dry:
             eng.emit(
                 "gate.record",
-                f"[TRON]  {wid} — gate.record: commit the ✅ Status flip on "
-                f"{branch} now — exactly one file ({block_file}), exactly the "
-                f"`**Status:**` field. Nothing else in that commit.",
+                f"[TRON]  {wid} — gate.record: commit your block-doc completion on "
+                f"{branch} per your session-end skill (§6): flip {block_file} to "
+                f"`**Status:** ✅ Done` and add the `**Completed:**` date. Your §6 "
+                f"close-out archival (`git mv` to blocks/archive/) and your OWN "
+                f"pipeline.md row may ride in that same commit or come at close — "
+                f"either lands. Nothing outside your block's own close-out paperwork.",
                 slots={"block": block, "record_path": block_file},
                 worker_id=wid,
                 kind="gate.record")
@@ -416,15 +429,24 @@ def _advance_record(eng, block, gate_state):
     if not cur_sha or cur_sha == gate_state["record_base_sha"]:
         return "record_waiting", f"no record commit on {branch} yet"
 
+    # R5 (ADR-0005): accept the frozen skill §6 close-out bundle (block-doc
+    # Status/Completed + its archival rename + this block's OWN pipeline row);
+    # pass the pipeline path + block id so the check can lane-verify a bundled
+    # pipeline edit, exactly as `verify_docs` does at land.
     ok, detail = gitobs.record_commit_ok(eng.paths["root"], block_file, eng.dry,
-                                         truth_ref=branch)
+                                         truth_ref=branch,
+                                         pipeline_file=eng.paths.get("pipeline_rel"),
+                                         block_id=block,
+                                         archive_dir=eng.paths.get("archive_rel"))
     if not ok:
         return _escalate(gate_state,
                          f"record commit on {branch} is out-of-gate: {detail}")
 
     patch_id = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-    case_id = gate_state.get("record_case_id") or landing.paperwork_case_id(
-        "record", branch, patch_id)
+    # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17 fix;
+    # single-source in landing.stage_case_id).
+    case_id = landing.stage_case_id(gate_state.get("record_case_id"), "record",
+                                    branch, patch_id)
     gate_state["record_case_id"] = case_id
 
     outcome = landing.land_via_grant(eng, case_id, block, branch, wid,
@@ -489,8 +511,10 @@ def _advance_close(eng, block, gate_state):
     tip = gitobs.tip_sha(eng.paths["root"], branch, eng.dry)
     if tip and not gitobs.is_ancestor(eng.paths["root"], tip, truth_ref, eng.dry):
         pid = gitobs.patch_id(eng.paths["root"], branch, truth_ref, eng.dry)
-        case_id = gate_state.get("close_case_id") or landing.paperwork_case_id(
-            "close", branch, pid)
+        # Content-bound to the CURRENT patch-id, never a stale cached id (T2-17
+        # fix; single-source in landing.stage_case_id).
+        case_id = landing.stage_case_id(gate_state.get("close_case_id"), "close",
+                                        branch, pid)
         gate_state["close_case_id"] = case_id
         outcome = landing.land_via_grant(eng, case_id, block, branch, wid,
                                          "close.worker", "gate-close")

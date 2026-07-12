@@ -150,14 +150,34 @@ def _structured(msg):
     """A report that already carries its own `tag` resolves without the
     model — the SAME discipline `core/snapshot.py`'s own `local_reports`
     drain already keeps for `worker.done`. Returns `(tag, slots)` or
-    `(None, None)` when `msg` carries no `tag` at all (the free-text path,
-    this module's own real job, below). A raw `report.sh` verb (`done`, ...)
-    is mapped to its canonical `worker.*` tag here (`_canonical_tag`); an
-    already-namespaced tag passes through untouched."""
+    `(None, None)` when `msg` carries neither a `tag` NOR a branch
+    declaration (the free-text path, this module's own real job, below). A
+    raw `report.sh` verb (`done`, ...) is mapped to its canonical `worker.*`
+    tag here (`_canonical_tag`); an already-namespaced tag passes through
+    untouched.
+
+    A tag-LESS report that declares a branch is the canonical branch
+    declaration and resolves DETERMINISTICALLY to `worker.branch` — NEVER
+    the free-text judge. `scripts/report.sh` documents this shape verbatim
+    ("The canonical branch declaration needs no `--tag` at all:
+    `report.sh <id> --branch <name> <message>`") and it is the ONLY tag-less
+    report that carries a branch slot. A branch slot is itself a
+    deterministic structured signal; handing such a report to the LLM judge
+    let a contentless declaration message (the bare word "placeholder") be
+    mis-graded `worker.wall`, minting a phantom architect-first case the
+    architect could not triage and escalated LOUD to the operator — a
+    spurious page that fails an otherwise-clean run (the T2-16 REJECT). The
+    gate still opens from the same rep's branch via
+    `router._open_gate_if_branch`; this only stops the mis-classification.
+    An EXPLICIT `--tag wall` (or any other tag) still wins above — a
+    worker's stated intent is never overridden."""
     tag = msg.get("tag")
-    if not tag:
-        return None, None
-    return _canonical_tag(tag), dict(msg.get("slots") or {})
+    if tag:
+        return _canonical_tag(tag), dict(msg.get("slots") or {})
+    slots = dict(msg.get("slots") or {})
+    if slots.get("branch") or msg.get("branch"):
+        return "worker.branch", slots
+    return None, None
 
 
 def _settle_from_text(manifest, text):
@@ -211,29 +231,22 @@ def _triage_unclassified(eng, manifest, text, sender, attempts):
     eng.events.event("unclassified", sender=sender, raw=raw, last_attempt=last_attempt)
     if manifest is None:
         return
-    # An UNCLASSIFIED message from the architect ITSELF must never spawn a new
-    # architect triage: the architect cannot triage its own narration, and doing
-    # so self-perpetuated a phantom-triage loop AND left the triage it was
-    # narrating about unresolved — wedging the architect busy on it and blocking
-    # session-end (the s3 first-honest-SIM tail). If the architect is narrating
-    # the resolution of its CURRENT triage job, record a benign 'answer' verdict
-    # for THAT job so `architect._advance_triage` resolves it and the architect
-    # frees back to idle (the architect's clean escalation path is a structured
-    # `architect.triage_verdict`, unaffected here); with no in-flight triage it
-    # is mere narration — logged above, dropped here, never a self-triage.
+    # R1a (ADR-0005) — the architect can never be the SOURCE of a triage/case.
+    # An UNCLASSIFIED message from the architect itself is narration (its reasoning
+    # while working a triage), never a new phantom. Short-circuit CREATION here and
+    # create nothing. Deliberately NO benign 'answer' write for its in-flight triage
+    # (the old self-triage guard): that write was source-AGNOSTIC and, the instant
+    # the architect narrated a turn while triaging a GENUINE worker.wall, resolved
+    # that real escalation to 'answer' before its structured `operator` verdict
+    # arrived — swallowing the page (M1, the false-green disease). Resolution of the
+    # architect's in-flight triage is now the single idle-gated, source-directional
+    # backstop in `architect._advance_triage` (R1b): a low-confidence phantom
+    # resolves benign, a genuine wall resolves LOUD to the operator, once the
+    # architect settles idle without a structured verdict.
     if (sender or {}).get("id") == architect.ARCHITECT_WID:
-        arch = manifest.get("architect") or {}
-        cur = arch.get("current_job") or {}
-        if cur.get("kind") == "triage" and cur.get("triage_id"):
-            verdicts = manifest.setdefault("triage_verdicts", {})
-            verdicts.setdefault(cur["triage_id"],
-                                {"verdict": "answer", "note": raw[:200]})
-            eng.log("flow", f"classify: unclassified architect narration -> benign "
-                            f"'answer' verdict recorded for its own in-flight triage "
-                            f"{cur['triage_id']!r} (self-triage loop guard)")
-        else:
-            eng.log("flow", "classify: unclassified architect narration, no in-flight "
-                            "triage -> logged, not triaged (self-triage loop guard)")
+        eng.log("flow", "classify: unclassified architect narration -> created "
+                        "nothing (R1a self-source guard); any in-flight triage "
+                        "resolves via the architect-idle backstop, not narration")
         return
     architect.enqueue_triage(eng, manifest, None, "classify.unclassified",
                              None, raw, worker_id=(sender or {}).get("id"))

@@ -149,6 +149,17 @@ def route(eng, manifest, worker_reports):
         _open_gate_if_branch(eng, workers, gates, rep)
 
 
+def _is_review_pseudo_block(block):
+    """True iff `block` is a reviewer's `review:<type>` PSEUDO-block (core.
+    reviewers.review_block) — a read-only cadence review, NOT a buildable
+    pipeline block. Matches the `review:` PREFIX (the exact shape reviewers mint),
+    never a bare ':' anywhere, so a human-authored pipeline ID cell with a stray
+    ':' is never mis-classified as a reviewer. Single-source discriminator shared
+    by _route_online (skip the build-ASSIGN) and _open_gate_if_branch (never open
+    a gate ladder for a review)."""
+    return isinstance(block, str) and block.startswith("review:")
+
+
 def _route_online(eng, manifest, workers, gates, rep):
     """`worker.online` — the worker's first check-in. Its job is ONE thing:
     ASSIGN (tell the worker WHAT to build), exactly once. It does NOT require a
@@ -175,6 +186,28 @@ def _route_online(eng, manifest, workers, gates, rep):
 
     block = worker.get("block")
     block_file = worker.get("block_file")
+    # A REVIEWER is spawned AND ordered by core.reviewers.dispatch (a PMT-SPAWN
+    # review order) and carries a `review:<type>` PSEUDO-block — the ONLY worker
+    # block containing a literal ':' (reviewers.review_block; real pipeline ids
+    # are living-doc ID cells that never contain a ':'). It is NOT a buildable
+    # block, so the engineer build-ASSIGN below ("you own block review:code, read
+    # its spec at None and build it end to end, declare a branch") is a MALFORMED
+    # order: a read-only reviewer correctly refuses to branch/build and walls the
+    # run (the T2-10 reviewer wall → operator page). Never ASSIGN a reviewer as a
+    # builder; its review order already went out at spawn. Mark it assigned so a
+    # repeat worker.online is inert (same idempotency the `assigned` guard gives
+    # an engineer), and let the DONE-REVIEW flow (core.reviewers) drive it.
+    # Match the `review:` PREFIX exactly (reviewers.review_block's own shape), not
+    # a bare ':' anywhere — so a typo'd human-authored pipeline ID cell carrying a
+    # stray ':' is never silently mis-read as a reviewer (a build-ASSIGN that
+    # silently never fires = a stalled block with no wall/page — a silent default).
+    if _is_review_pseudo_block(block):
+        worker["assigned"] = True
+        eng.log("flow", f"router: {agent_id!r} is a reviewer (pseudo-block "
+                        f"{block!r}) — already ordered at spawn (PMT-SPAWN), "
+                        f"no build ASSIGN")
+        return
+
     if not eng.dry:
         assignment = (f"[TRON]  {agent_id} — you own block {block}. Read its "
                       f"spec at {block_file} and build it end to end. Declare "
@@ -210,6 +243,13 @@ def _open_gate_if_branch(eng, workers, gates, rep):
     block = worker.get("block")
     if not block or block in gates:
         return
+    # A reviewer carries a `review:<type>` pseudo-block and is driven by the
+    # DONE-REVIEW flow, NOT a gate ladder — a review pseudo-block living in
+    # `manifest["gates"]` would crash the very next tick (core.reviewers docstring).
+    # A reviewer's order never asks for a branch, but LLM workers are
+    # non-deterministic, so never open a gate for one even if a stray branch arrives.
+    if _is_review_pseudo_block(block):
+        return
     gates[block] = gate.new_state_full(eng, block, worker.get("block_file"),
                                        branch, agent_id)
     worker["status"] = "busy"
@@ -237,28 +277,23 @@ def _route_wall(eng, manifest, rep):
     slots = rep.get("slots") or {}
     detail = slots.get("detail") or (rep.get("text") or "").strip() \
         or f"worker {worker_id!r} raised a wall (no detail text)"
+    # R1a (ADR-0005) — the architect can never be the SOURCE of a triage/case.
     # A "wall" whose sender is the architect is the architect NARRATING (its
-    # status/reasoning while working a triage — "sorted it", "operator's call,
-    # re-mint"), never a real worker wall: the architect cannot wall or triage
-    # ITSELF. Routing it as a wall spawned phantom worker.wall-sourced triages
-    # that neither the classify self-triage-guard nor the phantom-grace (both
-    # classify.unclassified-only) cover — they could loop/wedge session-end
-    # (s6 first-honest-SIM). Resolve the architect's in-flight triage benignly
-    # instead (its clean escalation path is a structured architect.triage_verdict,
-    # unaffected); never a new case/triage from the architect's own prose.
+    # reasoning while working a triage — "operator's call, re-mint"), never a real
+    # worker wall. Short-circuit CREATION here and create nothing — critically,
+    # ahead of `casestate.open_case` below, which would otherwise mint a spurious
+    # architect-OWNED case (and park a gate) from the mis-tagged narration; a guard
+    # only inside `enqueue_triage` runs too late, leaving that case with no triage
+    # to resolve it — an orphan case that R3's terminal gate would then deadlock on
+    # (A4). Deliberately NO benign 'answer' write for its in-flight triage (the old
+    # self-wall guard): that write was source-AGNOSTIC and swallowed a GENUINE
+    # worker.wall the moment the architect narrated (M1). The architect's in-flight
+    # triage resolves via the single idle-gated, source-directional backstop in
+    # `architect._advance_triage` (R1b) — LOUD to the operator for a genuine wall.
     if worker_id == architect.ARCHITECT_WID:
-        arch = manifest.get("architect") or {}
-        cur = arch.get("current_job") or {}
-        if cur.get("kind") == "triage" and cur.get("triage_id"):
-            verdicts = manifest.setdefault("triage_verdicts", {})
-            verdicts.setdefault(cur["triage_id"], {"verdict": "answer",
-                "note": "architect narration (mis-tagged worker.wall) while triaging"})
-            eng.log("flow", f"router: worker.wall FROM the architect (narration) -> "
-                            f"benign 'answer' verdict for its in-flight triage "
-                            f"{cur['triage_id']!r}, no new triage (self-wall guard)")
-        else:
-            eng.log("flow", "router: worker.wall FROM the architect (narration), no "
-                            "in-flight triage -> logged, no case/triage (self-wall guard)")
+        eng.log("flow", "router: worker.wall FROM the architect (narration) -> "
+                        "created nothing (R1a self-source guard, ahead of open_case); "
+                        "any in-flight triage resolves via the architect-idle backstop")
         return
     if not block:
         eng.log("flow", f"router: block-less worker.wall from {worker_id!r} "

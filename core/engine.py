@@ -106,6 +106,7 @@ headless SIM/the rig, never itself durable state.
 import json
 import os
 import sys
+import time
 import uuid
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -231,13 +232,29 @@ class Engine:
         not-working worker (dead/hung→timeout→error/idle-at-gate) accrues
         silence. Real, non-stubbed (reads TRON's own runner.json only, no
         git, no second process); under `self.dry` there is no real runner, so
-        it reports not-working (the report-only ladder governs, unchanged)."""
+        it reports not-working (the report-only ladder governs, unchanged).
+
+        ADR-0006 R1a: an actor cannot be "working" past its OWN declared turn
+        deadline. The runner publishes `deadline` (epoch seconds) whenever it
+        goes `working` (`worker_runner._write_state`, projected by `jobs.index`);
+        a hung-but-alive runner keeps `state=="working"` yet stops progressing,
+        and WITHOUT this bound it re-anchors every silence ladder forever — the
+        real per-turn ceiling becomes TURN_TIMEOUT_S (30 min), silently
+        overriding `silence_escalate_min` (8 min). Past its deadline the actor
+        reads not-working, so the existing ladders resume THIS tick on their
+        real knobs. Compare against raw `time.time()` (epoch seconds — the same
+        clock the runner used), NEVER `self._now()` (the live driver injects
+        epoch MINUTES) nor a synthetic tick counter. `deadline is None`
+        (a stale/pre-A4 record) preserves the prior behavior."""
         if self.dry:
             return False
         rec = jobs.find(worker_id)
         if rec is None or not jobs.is_alive(worker_id):
             return False
-        return rec.get("state") == "working"
+        if rec.get("state") != "working":
+            return False
+        deadline = rec.get("deadline")
+        return deadline is None or time.time() < deadline
 
     # ── duck-typed surface: engine -> worker mailbox + release (real, TRON's own folder) ──
     def _to_worker(self, worker_id, text, kind):

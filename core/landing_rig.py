@@ -293,6 +293,35 @@ def main():
        "verifiably reached trunk through the real land.sh)",
        final_main == v2_tip, f"final_main={final_main} v2_tip={v2_tip}")
 
+    # ══ stage_case_id — the ONE per-stage case-id resolver (T2-17 single-source
+    #    lock, shared by all six land_via_grant callers). Pure function, no git. ══
+    P1 = "1111111111111111111111111111111111111111"   # patch-id shape
+    P2 = "2222222222222222222222222222222222222222"
+    id_p1 = landing.paperwork_case_id("close", "feat/x", P1)
+    id_p2 = landing.paperwork_case_id("close", "feat/x", P2)
+    ok("S1 (T2-17 KILLER — must be GREEN): with a resolvable patch-id, stage_case_id "
+       "content-binds to the CURRENT patch-id and IGNORES a stale `prev` — a "
+       "re-authored branch (new patch-id) NEVER reuses the cached, already-consumed "
+       "id (the exact defect: an unconditional `prev or ...` cache returned the stale "
+       "id and land.sh no-op'd the new commit)",
+       landing.stage_case_id(id_p1, "close", "feat/x", P2) == id_p2 and id_p1 != id_p2,
+       f"prev={id_p1} got={landing.stage_case_id(id_p1, 'close', 'feat/x', P2)} want={id_p2}")
+    ok("S2: with the SAME patch-id (a pure rebase — same diff), stage_case_id returns "
+       "the SAME id, stable across churn (no second grant)",
+       landing.stage_case_id(id_p1, "close", "feat/x", P1) == id_p1,
+       f"got={landing.stage_case_id(id_p1, 'close', 'feat/x', P1)} want={id_p1}")
+    ok("S3: a momentarily UNRESOLVABLE patch-id ('' — fully-landed empty diff / "
+       "mid-churn read) KEEPS the last-good `prev` id rather than overwrite it with a "
+       "malformed empty-suffix id (this is why unconditional recompute broke the "
+       "churn rigs)",
+       landing.stage_case_id(id_p1, "close", "feat/x", "") == id_p1,
+       f"got={landing.stage_case_id(id_p1, 'close', 'feat/x', '')} want={id_p1}")
+    ok("S4: '' patch-id with NO prev falls back to the (fail-closed-downstream) "
+       "empty-suffix id — grants.mint refuses it, never a false pass",
+       landing.stage_case_id(None, "close", "feat/x", "") == landing.paperwork_case_id(
+           "close", "feat/x", ""),
+       f"got={landing.stage_case_id(None, 'close', 'feat/x', '')}")
+
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.landing_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")

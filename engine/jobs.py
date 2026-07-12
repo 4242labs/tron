@@ -104,7 +104,7 @@ def _read_state(worker_dir):
 
 # ── the store: workers are the subdirs of <instance>/workers/ ──
 def index():
-    """worker_id -> {shortid, session_id, state, updated_at, dir}. Skips junk."""
+    """worker_id -> {shortid, session_id, state, updated_at, pid, turns, deadline, dir}. Skips junk."""
     out = {}
     if not _STORE or not os.path.isdir(_STORE):
         return out
@@ -120,6 +120,10 @@ def index():
             "updated_at": st.get("updated_at"),
             "pid": st.get("pid"),
             "turns": st.get("turns", 0),   # completed turns; >=1 => the spawn/identity turn is done
+            # A-4 (ADR-0006 R1a): the runner DECLARES its own turn deadline (epoch seconds,
+            # worker_runner._write_state) — projected here so `Engine._worker_working` can read it
+            # and refuse to count an actor "working" past its own deadline (the 30-min-per-turn wedge).
+            "deadline": st.get("deadline"),
             "dir": wdir,
         }
     return out
@@ -162,6 +166,23 @@ def is_alive(worker_id, idx=None):
     if rec.get("state") in ("error", "failed", "killed", "released"):
         return False
     return _pid_alive(rec.get("pid"))   # a crashed runner leaves a stale state file -> dead
+
+
+def proc_alive(worker_id, idx=None):
+    """OS-TRUTH process liveness — `_pid_alive` on the runner's recorded pid,
+    IGNORING the self-reported `state`. Unlike `is_alive` (which treats a
+    'released'/'killed'/… flag as dead even while the OS process still lingers —
+    correct for LOGICAL liveness: a released worker is done doing work), this
+    answers the PHYSICAL question the fleet-teardown must ask: is the process
+    still on the OS? A runner writes `state:"released"` the instant it catches
+    its SIGTERM but can linger for seconds while its `claude` child dies; teardown
+    keys its hard-kill escalation on THIS so such a runner is SIGKILLed, never
+    left for the OS-truth orphan scan (`core/sim/live.py::_owned_orphans`, a real
+    `pgrep`) to flag as a survivor. (T2-19 REJECT root fix.)"""
+    rec = find(worker_id, idx)
+    if rec is None:
+        return False
+    return _pid_alive(rec.get("pid"))
 
 
 def timeline_tail(worker_id, n=20, idx=None):

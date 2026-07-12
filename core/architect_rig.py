@@ -287,6 +287,15 @@ class MiniEng:
     def _spawn_architect(self):
         self.architect_spawns.append(True)
 
+    def _page_operator(self, case_id, block, detail, worker_id=None, manifest=None):
+        # Rig stub for the R1b LOUD backstop path (a genuine triage the architect
+        # could not verdict resolves to 'operator' -> casestate pages). Records the
+        # page and returns a delivered receipt, exactly the shape casestate reads.
+        self.operator_pages = getattr(self, "operator_pages", [])
+        self.operator_pages.append({"case_id": case_id, "block": block,
+                                    "detail": detail, "worker_id": worker_id})
+        return "delivered"
+
 
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
@@ -788,47 +797,376 @@ def run_forward_scenario():
 
 
 def run_phantom_triage_grace_scenario():
-    """s4 first-honest-SIM lock: a `classify.unclassified` PHANTOM triage that
-    never gets a structured verdict auto-resolves benignly after the grace
-    window — it can NEVER wedge the architect + session-end. A real
-    `worker.wall` triage never auto-resolves here (still requires a verdict)."""
+    """R1b (ADR-0005) idle-gated, source-DIRECTIONAL backstop lock. A triage the
+    architect took its ordered turn on but never verdicted must neither wedge the
+    fleet (blocker B) nor swallow a real escalation (M1). Directional by TRUSTED
+    source: a low-confidence `classify.unclassified` phantom resolves BENIGN
+    ('answer', never wedges session-end); a GENUINE `worker.wall` resolves LOUD
+    ('operator', a real page — never swallowed). The backstop is keyed on the
+    architect being settled-idle (`eng._worker_working` absent on MiniEng -> reads
+    not-working under the dry rig, so it arms across the idle debounce), NOT a
+    wall-clock tick count. It also HOLDS while the architect is provably mid-turn
+    (PT3 below)."""
     root = build_root()
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
     tron_ctx = Ctx(inst)
     eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
 
+    # PT1 — low-confidence phantom -> BENIGN 'answer' backstop.
     mA = {"architect": {"status": "busy"}, "triage_verdicts": {}}
     jobA = {"kind": "triage", "triage_id": "triage-1", "source": "classify.unclassified",
             "block": None, "worker_id": "engineer-01-03", "ordered": True,
             "verdict": None, "resolved": False}
     mA["architect"]["current_job"] = jobA
-    for _ in range(architect._PHANTOM_TRIAGE_GRACE_TICKS + 1):
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
         architect._advance_triage(eng, mA, jobA)
-    ok("PT1 (PHANTOM-TRIAGE GRACE LOCK — must be GREEN): a classify.unclassified "
-       "phantom triage with no verdict auto-resolves benignly after the grace "
-       "window — never wedges the architect/session-end",
+    ok("PT1 (LOW-CONFIDENCE BENIGN BACKSTOP, R1b — must be GREEN): a "
+       "classify.unclassified phantom with no verdict auto-resolves BENIGN "
+       "('answer') once the architect settles idle — never wedges session-end",
        jobA.get("resolved") is True and jobA.get("verdict") == "answer",
        f"resolved={jobA.get('resolved')} verdict={jobA.get('verdict')} "
-       f"ticks={jobA.get('await_ticks')}")
+       f"idle_ticks={jobA.get('idle_ticks')}")
 
-    mB = {"architect": {"status": "busy"}, "triage_verdicts": {}}
+    # PT2 — GENUINE worker.wall the architect could not verdict -> LOUD 'operator'
+    # (blocker B fixed: it no longer wedges; M1 fixed: it is never swallowed benign).
+    mB = {"architect": {"status": "busy"}, "triage_verdicts": {},
+          "cases": {"case-01-02-1": {"case_id": "case-01-02-1", "block": "01-02",
+                                     "source": "worker.wall", "worker_id": "engineer-01-02",
+                                     "owner": "architect", "decision": None}}}
     jobB = {"kind": "triage", "triage_id": "triage-2", "source": "worker.wall",
             "block": "01-02", "case_id": "case-01-02-1", "worker_id": "engineer-01-02",
             "ordered": True, "verdict": None, "resolved": False}
     mB["architect"]["current_job"] = jobB
-    for _ in range(architect._PHANTOM_TRIAGE_GRACE_TICKS + 5):
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
         architect._advance_triage(eng, mB, jobB)
-    ok("PT2 (REAL-TRIAGE PARITY — must be GREEN): a real worker.wall triage never "
-       "auto-resolves without a real verdict (still requires architect input)",
-       jobB.get("resolved") is not True and jobB.get("verdict") is None,
-       f"resolved={jobB.get('resolved')} verdict={jobB.get('verdict')}")
+    paged = getattr(eng, "operator_pages", [])
+    ok("PT2 (GENUINE LOUD BACKSTOP, R1b — must be GREEN): a real worker.wall the "
+       "architect never verdicts resolves LOUD to 'operator' (paged), never wedged "
+       "(blocker B) and never swallowed benign (M1)",
+       jobB.get("resolved") is True and jobB.get("verdict") == "operator"
+       and mB["cases"]["case-01-02-1"].get("owner") == "operator"
+       and any(p["case_id"] == "case-01-02-1" for p in paged),
+       f"resolved={jobB.get('resolved')} verdict={jobB.get('verdict')} "
+       f"owner={mB['cases']['case-01-02-1'].get('owner')} paged={paged}")
+
+    # ── ADR-0008 — STALE-WALL REVALIDATION (T2-18 REJECT root fix) ──────────
+    # A genuine landing worker.wall whose block has already CLOSED out on trunk
+    # is moot; the R1b operator verdict (from EITHER the idle backstop OR a
+    # structured triage_verdict) must be downgraded to a benign resolve — never
+    # a page. Durable signal = gate stage 'closed' (survives branch teardown, so
+    # the branch being deleted by close-out is irrelevant here — no branch read).
+    _WALL_LAND = ("land.sh refused: grant minted for commit 98a1347, but worker "
+                  "committed 8f04a86 before landing, causing content mismatch")
+
+    # STALE-A0 — THE LITERAL T2-18 PATH: a BLOCK-LESS worker.wall (case_id=None,
+    # the classify-unclassified variant that minted case-worker-wall-1 in the real
+    # REJECT). Its block gate is CLOSED on trunk. Guard A must downgrade the R1b
+    # backstop operator->answer AND — because case_id is None — the answer arm must
+    # relay to the worker and resolve WITHOUT ever calling open_operator_case: no
+    # page AND no new case minted. This is the production shape on which guard A
+    # actually fires (a case-BEARING wall escalates its own gate to ESCALATED, never
+    # 'closed'), so it is the one that must be locked to the fullest.
+    mS0 = {"architect": {"status": "busy"}, "triage_verdicts": {}, "cases": {},
+           "gates": {"01-03": {"stage": "closed"}}}
+    jobS0 = {"kind": "triage", "triage_id": "triage-stale-0", "source": "worker.wall",
+             "block": None, "case_id": None, "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS0["architect"]["current_job"] = jobS0
+    _pages_before = len(getattr(eng, "operator_pages", []))
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mS0, jobS0)
+    _pages_after = getattr(eng, "operator_pages", [])
+    ok("STALE-A0 (BLOCK-LESS T2-18 PATH, ADR-0008 — must be GREEN): the literal defect "
+       "shape — a case_id=None worker.wall whose block gate is CLOSED — downgrades "
+       "operator->answer, pages NObody, AND mints NO new operator case (open_operator_case "
+       "never called)",
+       jobS0.get("resolved") is True and jobS0.get("verdict") == "answer"
+       and len(_pages_after) == _pages_before and not mS0["cases"],
+       f"resolved={jobS0.get('resolved')} verdict={jobS0.get('verdict')} "
+       f"new_pages={len(_pages_after) - _pages_before} cases={mS0['cases']}")
+
+    # STALE-A1 — the IDLE-BACKSTOP operator verdict, block closed -> answer, NO page.
+    mS1 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-03": {"stage": "closed"}},
+           "cases": {"case-stale-1": {"case_id": "case-stale-1", "block": None,
+                                      "source": "worker.wall", "worker_id": "engineer-01-03",
+                                      "owner": "architect", "decision": None}}}
+    jobS1 = {"kind": "triage", "triage_id": "triage-stale-1", "source": "worker.wall",
+             "block": None, "case_id": "case-stale-1", "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS1["architect"]["current_job"] = jobS1
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mS1, jobS1)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-A1 (IDLE-BACKSTOP STALE-WALL, ADR-0008 — must be GREEN): a genuine "
+       "landing worker.wall whose block gate is CLOSED on trunk downgrades the R1b "
+       "backstop operator->answer and pages NObody",
+       jobS1.get("resolved") is True and jobS1.get("verdict") == "answer"
+       and not any(p["case_id"] == "case-stale-1" for p in paged),
+       f"resolved={jobS1.get('resolved')} verdict={jobS1.get('verdict')} "
+       f"paged_stale1={[p for p in paged if p['case_id']=='case-stale-1']}")
+
+    # STALE-A2 — the STRUCTURED 'operator' verdict path (finding 3): even an
+    # explicit triage_verdict='operator' on a since-closed block is downgraded.
+    mS2 = {"architect": {"status": "busy"},
+           "triage_verdicts": {"triage-stale-2": {"verdict": "operator", "note": "page it"}},
+           "gates": {"01-03": {"stage": "closed"}},
+           "cases": {"case-stale-2": {"case_id": "case-stale-2", "block": None,
+                                      "source": "worker.wall", "worker_id": "engineer-01-03",
+                                      "owner": "architect", "decision": None}}}
+    jobS2 = {"kind": "triage", "triage_id": "triage-stale-2", "source": "worker.wall",
+             "block": None, "case_id": "case-stale-2", "worker_id": "engineer-01-03",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mS2["architect"]["current_job"] = jobS2
+    architect._advance_triage(eng, mS2, jobS2)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-A2 (STRUCTURED-VERDICT STALE-WALL, ADR-0008 — must be GREEN): a "
+       "structured triage_verdict='operator' on a landing wall whose block is CLOSED "
+       "is ALSO downgraded operator->answer, no page (guard covers both operator paths)",
+       jobS2.get("resolved") is True and jobS2.get("verdict") == "answer"
+       and not any(p["case_id"] == "case-stale-2" for p in paged),
+       f"resolved={jobS2.get('resolved')} verdict={jobS2.get('verdict')} "
+       f"paged_stale2={[p for p in paged if p['case_id']=='case-stale-2']}")
+
+    # STALE-NV1 (NON-VACUITY) — SAME wall but block gate NOT closed (merge) -> the
+    # genuine wall STILL pages operator, exactly as PT2. Proves the guard suppresses
+    # ONLY a provably-closed block, never an in-flight one.
+    mN1 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-04": {"stage": "merge"}},
+           "cases": {"case-nv-1": {"case_id": "case-nv-1", "block": "01-04",
+                                   "source": "worker.wall", "worker_id": "engineer-01-04",
+                                   "owner": "architect", "decision": None}}}
+    jobN1 = {"kind": "triage", "triage_id": "triage-nv-1", "source": "worker.wall",
+             "block": "01-04", "case_id": "case-nv-1", "worker_id": "engineer-01-04",
+             "detail": _WALL_LAND, "ordered": True, "verdict": None, "resolved": False}
+    mN1["architect"]["current_job"] = jobN1
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mN1, jobN1)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-NV1 (OPEN-BLOCK STILL PAGES, ADR-0008 non-vacuity — must be GREEN): a "
+       "genuine landing worker.wall on a block whose gate is NOT closed (merge) still "
+       "resolves LOUD to operator and pages — the guard never suppresses an in-flight block",
+       jobN1.get("verdict") == "operator" and any(p["case_id"] == "case-nv-1" for p in paged),
+       f"verdict={jobN1.get('verdict')} paged_nv1={[p for p in paged if p['case_id']=='case-nv-1']}")
+
+    # STALE-NV2 (NON-VACUITY) — block CLOSED but detail is NON-landing (dep cycle):
+    # the landing signature fails -> still pages (a non-landing wall is never suppressed
+    # merely because its worker's block happens to be closed).
+    mN2 = {"architect": {"status": "busy"}, "triage_verdicts": {},
+           "gates": {"01-05": {"stage": "closed"}},
+           "cases": {"case-nv-2": {"case_id": "case-nv-2", "block": None,
+                                   "source": "worker.wall", "worker_id": "engineer-01-05",
+                                   "owner": "architect", "decision": None}}}
+    jobN2 = {"kind": "triage", "triage_id": "triage-nv-2", "source": "worker.wall",
+             "block": None, "case_id": "case-nv-2", "worker_id": "engineer-01-05",
+             "detail": "dependency cycle between 01-06 and 01-07 — cannot proceed",
+             "ordered": True, "verdict": None, "resolved": False}
+    mN2["architect"]["current_job"] = jobN2
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect._advance_triage(eng, mN2, jobN2)
+    paged = getattr(eng, "operator_pages", [])
+    ok("STALE-NV2 (NON-LANDING WALL STILL PAGES, ADR-0008 non-vacuity — must be GREEN): "
+       "a genuine NON-landing worker.wall (dep cycle) on a closed block fails the landing "
+       "signature and STILL pages operator — suppression is landing-scoped by content",
+       jobN2.get("verdict") == "operator" and any(p["case_id"] == "case-nv-2" for p in paged),
+       f"verdict={jobN2.get('verdict')} paged_nv2={[p for p in paged if p['case_id']=='case-nv-2']}")
+
+    # PT3 — the backstop HOLDS while the architect is provably mid-turn: a real
+    # `claude -p` turn posts nothing until it finishes, so a working architect must
+    # NEVER trip the backstop however long the turn (the A3 multi-turn-race fix).
+    class _WorkingEng(MiniEng):
+        def _worker_working(self, wid):
+            return wid == architect.ARCHITECT_WID   # architect always mid-turn
+    engW = _WorkingEng(root, tron_ctx, test_command="true", worker_count=1)
+    mC = {"architect": {"status": "busy"}, "triage_verdicts": {}}
+    jobC = {"kind": "triage", "triage_id": "triage-3", "source": "worker.wall",
+            "block": "01-02", "case_id": "case-01-02-9", "worker_id": "engineer-01-02",
+            "ordered": True, "verdict": None, "resolved": False}
+    mC["architect"]["current_job"] = jobC
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+        architect._advance_triage(engW, mC, jobC)
+    ok("PT3 (WORKING-ARCHITECT HOLD, R1b/A3 — must be GREEN): while the architect is "
+       "provably mid-turn (_worker_working True) the backstop NEVER fires, however "
+       "many ticks — no premature page, no multi-turn race",
+       jobC.get("resolved") is not True and jobC.get("verdict") is None
+       and jobC.get("idle_ticks", 0) == 0,
+       f"resolved={jobC.get('resolved')} verdict={jobC.get('verdict')} "
+       f"idle_ticks={jobC.get('idle_ticks')}")
+
+    # PT4 — R1a enqueue backstop: enqueue_triage from the architect itself creates
+    # nothing (defense-in-depth; the call-site guards in classify/router are primary).
+    engE = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    mD = {"architect_queue": []}
+    architect.enqueue_triage(engE, mD, None, "worker.wall", None,
+                             "architect narration that somehow reached enqueue",
+                             worker_id=architect.ARCHITECT_WID)
+    ok("PT4 (SELF-SOURCE ENQUEUE BACKSTOP, R1a — must be GREEN): enqueue_triage whose "
+       "sender is the architect itself queues NOTHING (defense-in-depth over the "
+       "classify/router call-site guards)",
+       len(mD.get("architect_queue") or []) == 0,
+       f"queue={mD.get('architect_queue')}")
+
+
+def run_reconcile_backstop_scenario():
+    """T2-12 regression: a NO-OP reconcile must not silently WEDGE the fleet. The
+    architect takes its ordered reconcile turn, finds no forward impact, and its
+    free-text ('no forward impact / work complete') is never routed as a structured
+    `architect.reconciled` — so the block never enters `manifest['reconciled']` and,
+    before the fix, `advance` held `current_job` busy FOREVER while the runner sat
+    idle: 01-03's dispatch hung with no wall/page/retry. The shared R1b idle backstop
+    (`_architect_settled_idle`) clears the gate once the architect settles idle after
+    its ordered turn — completion tied to ENGINE STATE, never to parsed prose."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+
+    # RB1 — settled idle, no architect.reconciled -> backstop marks reconciled + clears.
+    eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobA = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mA = {"architect": {"status": "busy", "current_job": jobA, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 1):
+        architect.advance(eng, mA)
+    ok("RB1 (RECONCILE NO-OP BACKSTOP KILLER — must be GREEN): a reconcile the "
+       "architect took its turn on but never reported architect.reconciled clears on "
+       "settled-idle (block marked reconciled, current_job freed, architect idle) — "
+       "never a silent WEDGE of 01-03's dispatch (the T2-12 hang)",
+       "01-03" in (mA.get("reconciled") or [])
+       and mA["architect"].get("current_job") is None
+       and mA["architect"].get("status") == "idle",
+       f"reconciled={mA.get('reconciled')} architect={mA['architect']}")
+
+    # RB2 — the backstop HOLDS while the architect is provably mid-turn (a real
+    # `claude -p` reconcile turn posts nothing until it finishes).
+    class _WorkingEng(MiniEng):
+        def _worker_working(self, wid):
+            return wid == architect.ARCHITECT_WID
+    engW = _WorkingEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobB = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mB = {"architect": {"status": "busy", "current_job": jobB, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 10):
+        architect.advance(engW, mB)
+    ok("RB2 (WORKING-ARCHITECT HOLD — must be GREEN): while the architect is provably "
+       "mid-reconcile-turn (_worker_working True) the backstop NEVER fires — current_job "
+       "held, block never prematurely marked reconciled, however many ticks",
+       "01-03" not in (mB.get("reconciled") or [])
+       and mB["architect"].get("current_job") is not None,
+       f"reconciled={mB.get('reconciled')} architect={mB['architect']}")
+
+    # RB3 — normal path intact: a real architect.reconciled clears via the observed
+    # arm, and the backstop never DOUBLE-adds the block.
+    eng2 = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobC = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True,
+            "idle_ticks": 0}
+    mC = {"architect": {"status": "busy", "current_job": jobC, "spawned": True},
+          "architect_queue": [], "reconciled": ["01-03"]}
+    architect.advance(eng2, mC)
+    ok("RB3 (NORMAL RECONCILE PATH INTACT — must be GREEN): when architect.reconciled "
+       "IS observed (block already in manifest['reconciled']) the gate clears via the "
+       "normal arm and '01-03' appears exactly once (backstop never double-adds)",
+       mC["architect"].get("current_job") is None
+       and (mC.get("reconciled") or []).count("01-03") == 1,
+       f"reconciled={mC.get('reconciled')} architect={mC['architect']}")
+
+    # RB4 — live-like STARTED-then-SETTLED (peer-review #2 hardening): the architect
+    # is observed working (turn genuinely taken), THEN settles idle -> the started-latch
+    # permits the backstop to arm and clear the reconcile.
+    class _StartsThenIdleEng(MiniEng):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._wk = [True, True]      # working for two ticks, then idle
+        def _worker_working(self, wid):
+            if wid != architect.ARCHITECT_WID:
+                return False
+            return self._wk.pop(0) if self._wk else False
+    engS = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobD = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mD = {"architect": {"status": "busy", "current_job": jobD, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 3):
+        architect.advance(engS, mD)
+    ok("RB4 (STARTED-THEN-SETTLED ARMS — must be GREEN): once the architect is observed "
+       "working (turn taken) and THEN settles idle, the backstop arms and clears the "
+       "reconcile — the started-latch permits arming after a genuine turn",
+       "01-03" in (mD.get("reconciled") or []) and mD["architect"].get("current_job") is None,
+       f"reconciled={mD.get('reconciled')} architect={mD['architect']}")
+
+    # RB5 — live-like COLD-START / SILENTLY-DEAD (peer-review #2 KILLER): the architect
+    # is NEVER observed working. The backstop must NEVER arm (no silent false-clear of a
+    # reconcile that never ran); the reconcile HOLDS so the run fails honestly on budget.
+    class _NeverStartsEng(MiniEng):
+        def _worker_working(self, wid):
+            return False                 # architect never comes up
+    engN = _NeverStartsEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobE = {"kind": "reconcile", "block": "01-03", "after": "01-02", "ordered": True}
+    mE = {"architect": {"status": "busy", "current_job": jobE, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 20):
+        architect.advance(engN, mE)
+    ok("RB5 (COLD-START/DEAD HOLD KILLER — must be GREEN): an architect NEVER observed "
+       "working (slow cold-start or silently dead) NEVER arms the reconcile backstop, "
+       "however many ticks — no silent false-clear; the reconcile holds (run fails "
+       "honestly on budget) rather than falsely marking reconciled (peer-review #2)",
+       "01-03" not in (mE.get("reconciled") or [])
+       and mE["architect"].get("current_job") is not None,
+       f"reconciled={mE.get('reconciled')} architect={mE['architect']}")
+
+    # RB6 — ADR-0006 R1c (COLD-START ARCHITECT-LIVENESS KILLER): the same cold-start/
+    # dead architect that RB5 proves the backstop must HOLD is now PAGED exactly once
+    # (the pool-excluded architect finally has a liveness net) — the hold is loud, not
+    # silent-to-budget. Reuses RB5's engN/mE state after its 22-tick drive.
+    arch_pages = [p for p in getattr(engN, "operator_pages", [])
+                  if (p.get("worker_id") == architect.ARCHITECT_WID
+                      or p.get("block") == "01-03")]
+    ok("RB6 (R1c COLD-START ARCHITECT PAGE — must be GREEN): a never-started architect is "
+       "paged the operator EXACTLY ONCE (once-guard holds across the whole drive), while "
+       "the reconcile job is still held (RB5) — a dead architect no longer wedges silently",
+       len(arch_pages) == 1 and mE["architect"]["current_job"].get("stall_paged") is True
+       and mE["architect"]["current_job"].get("cold_ticks", 0)
+           >= architect._ARCHITECT_COLD_START_CAP_TICKS,
+       f"arch_pages={arch_pages} job={mE['architect']['current_job']}")
+
+    # RB7 — ADR-0006 R1d (STARTED-THEN-REFUSED FORWARD/LOG KILLER): the architect
+    # TOOK its ordered forward turn (observed working) then settled idle having
+    # authored NO branch (`land_via_grant` -> "fail-closed" for a never-created
+    # branch). The job must NOT poll to budget nor benign-clear (dropping work) —
+    # it routes LOUD to the operator once and frees the architect. Distinct from
+    # R1c (never-started): here `arch_started` is set, so R1c stays silent and
+    # R1d owns it — the clean partition.
+    engR = _StartsThenIdleEng(root, tron_ctx, test_command="true", worker_count=1)
+    jobF = {"kind": "forward", "block": "09-09", "ordered": False}
+    mF = {"architect": {"status": "busy", "current_job": jobF, "spawned": True},
+          "architect_queue": [], "reconciled": []}
+    # Deterministically model the REFUSAL: the architect authors no branch, so
+    # land_via_grant reports "fail-closed" every poll (a real never-created branch
+    # can spuriously read "landed" off an empty tip in `_observe_landed` — a git
+    # artifact, not the R1d path under test). Stub the ONE grant seam.
+    _real_lvg = architect.landing.land_via_grant
+    architect.landing.land_via_grant = lambda *a, **k: "fail-closed"
+    try:
+        for _ in range(architect._ARCHITECT_IDLE_DEBOUNCE_TICKS + 4):
+            architect.advance(engR, mF)
+    finally:
+        architect.landing.land_via_grant = _real_lvg
+    r1d_pages = [p for p in getattr(engR, "operator_pages", [])
+                 if p.get("block") == "09-09"]
+    ok("RB7 (R1d STARTED-THEN-REFUSED FORWARD — must be GREEN): an architect that took its "
+       "forward turn but authored no branch (fail-closed + settled idle) is routed to the "
+       "operator ONCE and freed — never a silent wedge, never a benign drop; R1c stays quiet "
+       "(arch_started set, so not the cold-start window)",
+       len(r1d_pages) == 1 and mF["architect"].get("current_job") is None
+       and not jobF.get("landed"),
+       f"r1d_pages={r1d_pages} architect={mF['architect']} last_outcome={jobF.get('last_outcome')}")
 
 
 def main():
     run_reconcile_gate_scenario()
     run_forward_scenario()
     run_phantom_triage_grace_scenario()
+    run_reconcile_backstop_scenario()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.architect_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

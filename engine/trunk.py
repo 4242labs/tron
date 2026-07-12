@@ -48,6 +48,7 @@ rev-parse), never dependent on what the working tree happens to hold.
 """
 import os
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -688,10 +689,23 @@ def verify_docs(repo_root, branch, allowlist, main_branch="main", dry=False,
     return "ok", f"clean, ff-able against {main_branch} -- landable under a grant"
 
 
+def _line_names_block(line, block_id):
+    """True iff `line` names `block_id` as a WHOLE token — never a bare substring.
+    A bare `block_id in line` lets one block's own-lane edit smuggle another block's
+    row when one id prefixes another (the scaffold's real scheme: `01-1` vs `01-10`,
+    `S1-1` vs `S1-19`). The id must be bounded by a non-[alnum/underscore/hyphen] char
+    (or string edge) on both sides, so `01-1` matches `| 01-1 |` and `blocks/01-1.md`
+    but NOT `01-10`. Used by BOTH the land-time own-lane check (`_lines_scoped_ok`)
+    and the record-time §6 pipeline check — single source of truth (ADR-0005 R5)."""
+    if not block_id:
+        return False
+    return re.search(r"(?<![\w-])" + re.escape(block_id) + r"(?![\w-])", line) is not None
+
+
 def _lines_scoped_ok(repo_root, branch, path, token, main_branch="main"):
-    """True iff every changed (+/-) line of `path` on the branch contains `token` —
-    the engineer touches only pipeline lines naming its OWN block; the pipeline's
-    shape stays the architect's."""
+    """True iff every changed (+/-) line of `path` on the branch names `token` as a
+    whole block-id token (`_line_names_block`) — the engineer touches only pipeline
+    lines naming its OWN block; the pipeline's shape stays the architect's."""
     rc, out, _ = _run(["git", "-C", repo_root, "diff", "--unified=0",
                        f"{main_branch}...{branch}", "--", path])
     if rc != 0:
@@ -699,25 +713,94 @@ def _lines_scoped_ok(repo_root, branch, path, token, main_branch="main"):
     for ln in out.splitlines():
         if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
             continue
-        if ln.startswith(("+", "-")) and token not in ln:
+        if ln.startswith(("+", "-")) and not _line_names_block(ln, token):
             return False
     return True
 
 
-def record_commit_ok(repo_root, block_file, dry=False, truth_ref="main"):
+def _archive_path(block_file, archive_dir=None):
+    """The §6 close-out archival destination of a block doc. When the project's
+    configured `archive_dir` (repo-relative, e.g. `meta/blocks/archive/`) is supplied
+    it is authoritative — the SAME destination `land`/`verify_docs` use — so record
+    and land never diverge on a non-default project (`archive_dir` is an INDEPENDENT
+    required key in project.schema.yaml; nothing forces it to nest under `blocks_dir`).
+    Absent it, fall back to inserting an `archive/` dir before the basename within the
+    doc's own directory (the default layout the bundled scaffold happens to use)."""
+    if archive_dir:
+        return os.path.join(archive_dir.rstrip("/"), os.path.basename(block_file))
+    d = os.path.dirname(block_file)
+    return os.path.join(d, "archive", os.path.basename(block_file)) if d else \
+        os.path.join("archive", block_file)
+
+
+def _file_lines_at(repo_root, ref):
+    """The lines of `<commit>:<path>` (e.g. `abc123^:blocks/x.md`), or [] if that
+    path does not exist at that commit (a brand-new doc has no parent version)."""
+    rc, out, _ = _run(["git", "-C", repo_root, "show", ref])
+    return out.splitlines() if rc == 0 else []
+
+
+def _non_status_body(lines):
+    """The doc's lines with the `**Status:**`/`**Completed:**` completion fields and
+    blank lines removed — the part a record commit must leave UNCHANGED."""
+    keep = []
+    for ln in lines:
+        s = ln.strip().lower()
+        if not s or s.startswith(("**status:**", "**completed:**")):
+            continue
+        keep.append(ln.rstrip())
+    return keep
+
+
+def _commit_changed_lines(repo_root, sha, *paths):
+    """The stripped +/- content lines of the given path(s) in commit `sha`
+    (unified=0, rename-aware). Returns [] for a pure rename / no content change,
+    or None if the diff is unreadable. Diff/index/hunk/rename-metadata lines are
+    skipped. Pass BOTH sides of a rename (old + new path) so git pairs them —
+    a pathspec naming only the new path shows the file as a fresh add (every line
+    a `+`) and would false-flag a Status-only archival as 'changes more'."""
+    rc, out, _ = _run(["git", "-C", repo_root, "show", "--unified=0", "-M",
+                       "--format=", sha, "--", *paths])
+    if rc != 0:
+        return None
+    lines = []
+    for ln in out.splitlines():
+        if ln.startswith(("+++", "---", "@@", "diff ", "index ", "rename ",
+                          "similarity ", "new file", "deleted file", "old mode",
+                          "new mode")):
+            continue
+        if ln.startswith(("+", "-")):
+            lines.append(ln[1:].strip())
+    return lines
+
+
+def record_commit_ok(repo_root, block_file, dry=False, truth_ref="main",
+                     pipeline_file=None, block_id=None, archive_dir=None):
     """The record-commit content check (01-11 FX-3): inspect the LAST commit that touched the
     block doc — its OWN diff, never a trunk range (with worker_count > 1 another block's merge
     can land between merge-accept and record; a range check would false-positive a legitimate
-    record). Conforming = exactly one file (the block doc, matched on its FULL repo-relative
-    path — a same-named file elsewhere never passes) and every changed line is the
-    `**Status:**` field. Anything else is an out-of-gate change wearing the record's clothes.
-    `block_file` must be the repo-relative path (the caller resolves it from the blocks dir).
+    record). `block_file` must be the repo-relative path (the caller resolves it from the blocks
+    dir).
 
-    T2-parity (01-32 truth-ref rekeying, closed 260708): the log walk is keyed to
-    `truth_ref`, never the bare working checkout — on the D1 detached-root seat a
-    rev-less `git log` walks the STALE detached HEAD's history and reads the base
-    commit as the doc's last toucher (found by the ghost_ladder drill; unreachable
-    live until the record-stage mint arm existed). Returns (ok, detail)."""
+    Conforming (ADR-0005 R5 — the engine conforms to the FROZEN session-end skill §6's bundled
+    close-out rather than forcing a split): the block doc's `**Status:**`/`**Completed:**`
+    completion flip, EITHER
+      • alone (a single-file Status/Completed commit — the split case), OR
+      • bundled with exactly the §6 close-out paperwork the skill prescribes as ONE commit: the
+        block doc's rename to `blocks/archive/` (`_archive_path`) AND the worker's OWN-row
+        `pipeline.md` edit (every changed pipeline line names THIS block id — the same own-lane
+        rule `verify_docs` enforces at land).
+    Anything else — any other file, a code/prose change to the block doc, a rename that isn't the
+    archival, or a pipeline line naming another block — is an out-of-gate change wearing the
+    record's clothes and is REFUSED. (The frozen skill bundles status-flip + archival in one
+    commit; before R5 the exactly-one-file check rejected a §6-faithful worker — the scripted rig
+    masked it by only ever flipping Status. `close` is idempotent: whatever the worker bundled
+    here, the close stage then finds already on trunk.)
+
+    T2-parity (01-32 truth-ref rekeying, closed 260708): the log walk is keyed to `truth_ref`,
+    never the bare working checkout — on the D1 detached-root seat a rev-less `git log` walks the
+    STALE detached HEAD's history and reads the base commit as the doc's last toucher. Returns
+    (ok, detail)."""
     if dry or not repo_root or not block_file:
         return True, "dry/none"
     rc, out, err = _run(["git", "-C", repo_root, "log", "-n", "1", "--format=%H",
@@ -725,31 +808,81 @@ def record_commit_ok(repo_root, block_file, dry=False, truth_ref="main"):
     sha = out.strip()
     if rc != 0 or not sha:
         return False, f"no commit found touching {block_file}"
-    rc, out, _ = _run(["git", "-C", repo_root, "show", "--name-only", "--format=", sha])
-    files = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    if rc != 0 or files != [block_file]:
-        return False, (f"record commit {sha[:8]} touches {files or 'nothing'} "
-                       f"— must be exactly {block_file}")
-    rc, out, _ = _run(["git", "-C", repo_root, "show", "--unified=0", "--format=", sha])
+
+    archive_path = _archive_path(block_file, archive_dir)
+    rc, ns, _ = _run(["git", "-C", repo_root, "show", "-M", "--name-status",
+                      "--format=", sha])
     if rc != 0:
-        return False, f"record commit {sha[:8]}: diff unreadable"
-    for ln in out.splitlines():
-        if ln.startswith(("+++", "---", "@@", "diff ", "index ")):
+        return False, f"record commit {sha[:8]}: name-status unreadable"
+
+    # The §6 archival of the block doc may show as EITHER a detected rename
+    # (`R block_file -> archive_path`) OR — git's rename heuristic is unreliable on
+    # small docs — an unpaired delete+add (`D block_file` + `A archive_path`). Both
+    # are the same archival; anything else is out-of-gate. A DELETE of the block doc
+    # MUST be paired with the archival add — a doc that just vanishes (no archive) is
+    # never conforming, even if its body was empty.
+    archived = False
+    deleted = False
+    for raw in ns.splitlines():
+        raw = raw.strip()
+        if not raw:
             continue
-        if ln.startswith(("+", "-")):
-            stripped = ln[1:].strip().lower()
-            # The record commit is block-doc COMPLETION paperwork: the `**Status:**`
-            # flip AND the `**Completed:**` date the session-end skill (§6) itself
-            # prescribes are BOTH conforming — a real worker records both in one
-            # commit (worker variance: some flip Status alone, some add Completed;
-            # rejecting the latter escalated an otherwise-clean record and wedged
-            # the gate — the s5 first-honest-SIM stall). Blank lines are harmless
-            # formatting. Anything else (code, prose, other fields) is still an
-            # out-of-gate change; other FILES are already caught by the
-            # exactly-one-file check above.
-            if stripped and not stripped.startswith(("**status:**", "**completed:**")):
-                return False, (f"record commit {sha[:8]} changes more than the "
-                               f"Status/Completed fields")
+        cols = raw.split("\t")
+        code = cols[0]
+        if code.startswith("R"):    # a detected rename — only the §6 archival is allowed
+            src, dst = cols[1], cols[2]
+            if src == block_file and dst == archive_path:
+                archived = True
+                continue
+            return False, (f"record commit {sha[:8]} renames {src} -> {dst} — the only "
+                           f"allowed rename is the §6 archival of {block_file} to "
+                           f"{archive_path}")
+        path = cols[1]
+        if path == block_file:
+            if code.startswith("D"):
+                deleted = True      # must be matched by the archive add (checked below)
+            continue                # modified in place, or deleted as the archival source
+        if path == archive_path:
+            archived = True         # added as the archival destination
+            continue
+        if pipeline_file and path == pipeline_file:
+            if not block_id:
+                return False, (f"record commit {sha[:8]} edits {path} but no block id "
+                               f"was supplied to lane-check it — refused (never accept "
+                               f"an un-lane-checkable pipeline edit)")
+            continue               # pipeline own-lane — content-checked below
+        return False, (f"record commit {sha[:8]} touches {path} — a record commit is the "
+                       f"block doc's Status/Completed flip, optionally bundled with its §6 "
+                       f"close-out (archival of {block_file} + this block's own pipeline row); "
+                       f"nothing else")
+
+    if deleted and not archived:
+        return False, (f"record commit {sha[:8]} DELETES {block_file} without archiving it to "
+                       f"{archive_path} — a block doc must never just vanish at record")
+
+    # Block-doc content: the doc's non-completion BODY must be identical before and after
+    # (at its archived path if archived) — so ONLY the Status/Completed fields (and blank
+    # lines) may have changed. Comparing the two versions' bodies directly pairs the §6
+    # archival regardless of git's (unreliable, small-file) rename detection, and needs no
+    # empty-blob object; a brand-new doc simply has an empty `before` body. Never code/prose.
+    new_doc = archive_path if archived else block_file
+    before_body = _non_status_body(_file_lines_at(repo_root, f"{sha}^:{block_file}"))
+    after_body = _non_status_body(_file_lines_at(repo_root, f"{sha}:{new_doc}"))
+    if before_body != after_body:
+        return False, (f"record commit {sha[:8]} changes more than the Status/Completed "
+                       f"fields on the block doc")
+
+    # Pipeline (if bundled): every changed line must name THIS block — the §6 own-row rule.
+    if pipeline_file and block_id:
+        pl_lines = _commit_changed_lines(repo_root, sha, pipeline_file)
+        if pl_lines is None:
+            return False, f"record commit {sha[:8]}: pipeline diff unreadable"
+        for s in pl_lines:
+            if s and not _line_names_block(s, block_id):
+                return False, (f"record commit {sha[:8]} edits a pipeline.md line not "
+                               f"naming block {block_id!r} as a whole token — out-of-lane "
+                               f"(§6: your own row only; a bare substring would let e.g. "
+                               f"'01-1' smuggle a '01-10' row)")
     return True, sha[:8]
 
 

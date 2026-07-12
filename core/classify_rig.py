@@ -556,6 +556,49 @@ def run_scenario_2():
        "positive settle for a case that doesn't exist)",
        tag5 == "operator.status_query", f"tag5={tag5}")
 
+    # ── BRANCH-DECLARATION KILLER (T2-16 REJECT root-fix): a tag-LESS report
+    #     that declares a branch is the canonical branch declaration and
+    #     resolves DETERMINISTICALLY to worker.branch — the fuzzy judge is
+    #     NEVER consulted. The stub is poisoned with the EXACT mis-grade that
+    #     failed T2-16 (worker.wall from the bare declaration message
+    #     "placeholder"); if the fix regresses and the judge is reached, the
+    #     poisoned worker.wall would surface + the stub idx would advance. ──
+    _set_stub(tron_ctx, "worker.wall", {"block": BLOCK})
+    idx_before3 = dict(judge._stub_idx)   # captured AFTER _set_stub's own reset
+    tag6, slots6 = classify.classify(
+        eng, {"text": "placeholder",
+              "slots": {"branch": "feat/01-03-ui"},
+              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        manifest)
+    ok("S2-K8 (BRANCH-DECLARATION KILLER — must be GREEN): a tag-less report "
+       "carrying slots.branch resolves to worker.branch DETERMINISTICALLY — "
+       "the judge is NEVER consulted, so a contentless declaration message "
+       "('placeholder') can no longer be mis-graded worker.wall into a "
+       "phantom operator-paging case (the T2-16 REJECT)",
+       tag6 == "worker.branch" and slots6.get("branch") == "feat/01-03-ui"
+       and dict(judge._stub_idx) == idx_before3,
+       f"tag6={tag6} slots6={slots6} stub_idx_before={idx_before3} "
+       f"stub_idx_after={dict(judge._stub_idx)}")
+
+    # ── the guard NEVER swallows an EXPLICIT wall: a worker that deliberately
+    #     tags `--tag wall` while also carrying a branch still resolves to
+    #     worker.wall (stated intent wins; only the tag-LESS ambiguous case is
+    #     auto-resolved by its branch signal) — structured bypass, no judge. ──
+    _set_stub(tron_ctx, "SHOULD-NEVER-BE-POPPED-WALL", {})
+    idx_before4 = dict(judge._stub_idx)
+    tag7, slots7 = classify.classify(
+        eng, {"tag": "wall",
+              "slots": {"branch": "feat/01-03-ui", "detail": "genuinely blocked"},
+              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        manifest)
+    ok("S2-K9 (EXPLICIT-WALL-STILL-WINS — must be GREEN): an EXPLICIT --tag "
+       "wall carrying a branch still resolves to worker.wall via the "
+       "structured bypass — the branch-declaration auto-resolve never "
+       "overrides a worker's stated wall intent, and never touches the judge",
+       tag7 == "worker.wall" and slots7.get("detail") == "genuinely blocked"
+       and dict(judge._stub_idx) == idx_before4,
+       f"tag7={tag7} slots7={slots7}")
+
     print("\n== SCENARIO 2 (direct unit calls) ==")
     print(f"tron instance dir={tron_ctx.dir}")
     print(f"final architect_queue={manifest.get('architect_queue')}")
@@ -638,10 +681,12 @@ def run_scenario_self_triage_guard():
     classify._triage_unclassified(
         eng, mA, "Sorted: it's a branch declaration, no architect action.",
         {"kind": "worker", "id": arch_id}, ["unclassified"])
-    ok("SG1 (SELF-TRIAGE-GUARD LOCK — must be GREEN): architect narration of "
-       "its own in-flight triage records a benign 'answer' verdict and spawns "
-       "NO new triage (no phantom self-loop, no session-end wedge)",
-       (mA.get("triage_verdicts") or {}).get("triage-1", {}).get("verdict") == "answer"
+    ok("SG1 (SELF-SOURCE CREATION GUARD, R1a — must be GREEN): architect narration "
+       "of its own in-flight triage creates NOTHING — no new triage AND no verdict "
+       "write. The old source-AGNOSTIC benign 'answer' write is deleted: it swallowed "
+       "a GENUINE worker.wall the instant the architect narrated (M1). Resolution of "
+       "the in-flight triage is now the R1b architect-idle backstop, never narration",
+       not (mA.get("triage_verdicts") or {})
        and len(mA.get("architect_queue") or []) == 0,
        f"verdicts={mA.get('triage_verdicts')} queue={mA.get('architect_queue')}")
     mB = {"architect": {"status": "idle", "current_job": None}, "architect_queue": []}

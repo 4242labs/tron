@@ -236,6 +236,53 @@ def proof_E():
        "turn-01" in _stalled_ids(res), f"stalled={res['stalled']}")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# F/G — ADR-0006 R1b: liveness covers a `reviewing` reviewer (the hung-reviewer
+# wedge), and SKIPS a `held` reviewer (sentry._pace_reviewers owns that window).
+# A reviewer's block is a gate-less `review:<type>` pseudo-block.
+# ══════════════════════════════════════════════════════════════════════════
+def _reviewer(manifest, wid, status, last_seen=0.0, typ="code"):
+    """A reviewer worker record — a gate-LESS `review:<type>` block (no gate
+    entry is created, unlike `_worker`)."""
+    manifest.setdefault("workers", {})[wid] = {
+        "block": f"review:{typ}", "last_seen": last_seen, "status": status}
+
+
+def proof_F_reviewing_is_paced():
+    eng = FakeEng()
+    m = {}
+    _reviewer(m, "rev-01", status="reviewing", last_seen=0.0)
+    eng.working["rev-01"] = False                # hung: never produced its first hand-back
+    eng.clock = 100.0
+    res = liveness.sweep(eng, _Snap(m))
+    ok("F1: a silent `reviewing` reviewer IS stalled (was NEITHER-net'd before R1b)",
+       "rev-01" in _stalled_ids(res), f"stalled={res['stalled']}")
+    ok("F2: a parked case opens for the hung reviewer",
+       bool(m.get("cases")), f"cases={m.get('cases')}")
+    ok("F3: the gate-less reviewer's real runner is RELEASED (H5 — no teardown orphan)",
+       "rev-01" in eng.released, f"released={eng.released}")
+    ok("F4: the reviewer's slot is freed (record popped)",
+       "rev-01" not in (m.get("workers") or {}),
+       f"workers={list((m.get('workers') or {}).keys())}")
+
+
+def proof_G_held_is_skipped():
+    eng = FakeEng()
+    m = {}
+    _reviewer(m, "rev-02", status="held", last_seen=0.0)
+    eng.working["rev-02"] = False
+    eng.clock = 100.0                            # far past the cap
+    res = liveness.sweep(eng, _Snap(m))
+    ok("G1: a `held` reviewer is NOT stalled by liveness (sentry._pace_reviewers owns it)",
+       "rev-02" not in _stalled_ids(res), f"stalled={res['stalled']}")
+    ok("G2: a `held` reviewer is NOT pinged by liveness (no double-pace)",
+       not _pinged(eng, "rev-02"), f"orders={eng.orders}")
+    ok("G3: a `held` reviewer is NOT released by liveness (sentry owns its lifecycle)",
+       "rev-02" not in eng.released, f"released={eng.released}")
+    ok("G4: a `held` reviewer's record is left in place for sentry",
+       "rev-02" in (m.get("workers") or {}))
+
+
 def _source_clean():
     src = open(os.path.join(HERE, "liveness.py")).read()
     # real USAGE, not the docstring's own "no git/subprocess" prose
@@ -246,6 +293,7 @@ def _source_clean():
 def main():
     _install_fixed_knobs()
     proof_A(); proof_B(); proof_C(); proof_D(); proof_E()
+    proof_F_reviewing_is_paced(); proof_G_held_is_skipped()
     ok("SRC: core/liveness.py still shells out to no raw git/subprocess of its own",
        _source_clean())
 

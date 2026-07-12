@@ -88,6 +88,7 @@ import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, wave 10's cadence/log-review wiring
 import reviewers              # noqa: E402 — core/reviewers.py, the module under test
 import architect               # noqa: E402 — core/architect.py, the log-review job kind under test
+import router                  # noqa: E402 — core/router.py, the ASSIGN handshake (reviewer-skip under test)
 
 SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
 MAIN = "main"
@@ -876,17 +877,37 @@ def run_scenario_c():
        f"workers={list((final_manifest.get('workers') or {}).keys())} "
        f"eng.workers[{rid}]={eng.workers.get(rid)}")
 
-    # ── the capped review must never wedge the whole drive: keep ticking
-    #     (never re-dispatches — counter already consumed at the ORIGINAL
-    #     dispatch and no new block has landed since) until a clean
-    #     session-end, off just the two ordinary blocks ──
+    # ── R3 (ADR-0005): the sentry.cap escalation opened a GENUINE operator case
+    #     (C-K4/C-K5). Two properties now hold together:
+    #     (a) the run must NOT false-green to session-end while that case is open
+    #         — ending past an unresolved operator escalation was the exact
+    #         false-green R3 closes; and
+    #     (b) the cap must not WEDGE the drive either — once the operator answers,
+    #         the run reaches a clean session-end off the two ordinary blocks.
+    #     (Before R3, session.check ignored open cases, so this drive "ended
+    #     clean" WITH the cap escalation still dangling — the false-green.) ──
+    i2a, held = drive(
+        eng, tron_ctx, hist, max_ticks=10,
+        attest=False, findings_first=finding, findings_second=finding)
+    ok("C-K7a (R3 ESCALATION-HELD KILLER — must be GREEN): the run does NOT reach "
+       "session-end while the sentry.cap operator case is unresolved (no false-green "
+       "past an open escalation)",
+       held is None, f"held={held} ticks={i2a + 1}")
+
+    import casestate   # settle the cap case exactly as the operator's own reply would
+    m = state.load(tron_ctx)
+    cap_case = next(c for c in (m.get("cases") or {}).values()
+                    if c.get("source") == "sentry.cap")
+    casestate.settle(eng, m, cap_case["case_id"], "abandon")
+    state.save(tron_ctx, m)
+
     i2, session_ended_tick2 = drive(
         eng, tron_ctx, hist, max_ticks=60,
         attest=False, findings_first=finding, findings_second=finding)
-    ok("C-K7 (NEVER-WEDGED KILLER — must be GREEN): the run still reaches "
-       "a clean session-end after the sentry cap — a paced/escalated "
-       "review never wedges the whole drive forever",
-       session_ended_tick2 is not None, f"ticks_used_after_cap={i2 + 1}")
+    ok("C-K7 (NEVER-WEDGED KILLER — must be GREEN): once the operator answers the "
+       "cap escalation the run reaches a clean session-end — the cap awaited a "
+       "decision, never wedged the drive (and never false-greened past it, C-K7a)",
+       session_ended_tick2 is not None, f"ticks_used_after_settle={i2 + 1}")
     ok("C-K8: no SECOND 'code' reviewer was ever dispatched after the cap "
        "(the counter stays consumed; no new block landed since)",
        len(hist.reviewer_seen) == 1, f"reviewer_seen={hist.reviewer_seen}")
@@ -920,11 +941,98 @@ def run_scenario_d_review_done_type_derive():
        f"worker={manifest['workers'].get(aid)}")
 
 
+def run_scenario_e_reviewer_never_build_assigned():
+    """T2-10 regression (router build-ASSIGN of a reviewer). A reviewer comes
+    ONLINE carrying its `review:<type>` PSEUDO-block. `router._route_online`
+    must NOT send it the engineer build-ASSIGN ("you own block review:code,
+    read its spec at None and build it end to end, declare a branch") — a
+    read-only reviewer correctly refuses to build and walls the run (the LIVE
+    T2-10 reviewer wall → architect triage → operator page, breaking an
+    otherwise-clean SIM). The reviewer is already ordered at spawn
+    (`reviewers.dispatch`, PMT-SPAWN); the router just marks it assigned."""
+    root = build_root()
+    inst = os.path.join(root, "meta", "agents", "tron")
+    os.makedirs(inst, exist_ok=True)
+    tron_ctx = Ctx(inst)
+    eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
+
+    aid = "reviewer-code-1"
+    workers = {aid: {"block": reviewers.review_block("code"), "type": "code",
+                     "status": "reviewing", "wid": aid}}
+    manifest = {"workers": workers, "gates": {}}
+    router._route_online(eng, manifest, workers, manifest["gates"],
+                        {"tag": "worker.online", "agent_id": aid,
+                         "slots": {"branch": "feat/should-not-be-asked-for"}})
+    to_reviewer = [o for o in eng.orders if o[0] == aid]
+    build_orders = [o for o in to_reviewer
+                    if "ASSIGN" in (o[2] or "") or "build it end to end" in (o[1] or "")]
+    ok("E-K1 (REVIEWER-NEVER-BUILD-ASSIGNED KILLER — must be GREEN): a reviewer's "
+       "worker.online produces NO engineer build-ASSIGN (no PMT-ASSIGN, no 'build "
+       "it end to end' order) — the router never orders a read-only reviewer to "
+       "branch/build, so the T2-10 reviewer wall can't fire",
+       not build_orders,
+       f"orders_to_reviewer={[(o[2], (o[1] or '')[:48]) for o in to_reviewer]}")
+    ok("E-K2: the reviewer is marked assigned (a repeat worker.online is inert) — "
+       "its review order already went out at spawn (PMT-SPAWN)",
+       workers[aid].get("assigned") is True, f"worker={workers[aid]}")
+
+    # CONTRAST: an ordinary ENGINEER online still gets the build-ASSIGN — the
+    # reviewer skip is scoped to `review:<type>` pseudo-blocks (the only worker
+    # block containing a ':'), never weakening the real assign path.
+    eid = "engineer-01-02"
+    ew = {eid: {"block": "01-02", "block_file": "meta/blocks/01-02.md", "status": "spawned"}}
+    m2 = {"workers": ew, "gates": {}}
+    router._route_online(eng, m2, ew, m2["gates"],
+                        {"tag": "worker.online", "agent_id": eid})
+    eng_build = [o for o in eng.orders if o[0] == eid and "build it end to end" in (o[1] or "")]
+    ok("E-K3 (ENGINEER-STILL-ASSIGNED — scope guard): an ordinary engineer's "
+       "worker.online DOES still get the build-ASSIGN + is marked assigned — the "
+       "reviewer skip is scoped to review:<type> pseudo-blocks only",
+       len(eng_build) == 1 and ew[eid].get("assigned") is True,
+       f"eng_orders={[(o[2], (o[1] or '')[:48]) for o in eng.orders if o[0] == eid]}")
+
+    # ── E-K4: the discriminator is the `review:` PREFIX, not a bare ':' — a
+    #    (typo'd) human-authored pipeline ID cell carrying a stray ':' is a real
+    #    ENGINEER block and MUST still get the build-ASSIGN, never silently skipped. ──
+    cid = "engineer-S1-05"
+    cw = {cid: {"block": "S1-05: retry-path", "block_file": "meta/blocks/S1-05.md",
+                "status": "spawned"}}
+    m3 = {"workers": cw, "gates": {}}
+    router._route_online(eng, m3, cw, m3["gates"],
+                        {"tag": "worker.online", "agent_id": cid})
+    colon_build = [o for o in eng.orders if o[0] == cid and "build it end to end" in (o[1] or "")]
+    ok("E-K4 (STRAY-COLON-IS-STILL-A-BUILD KILLER — must be GREEN): an engineer "
+       "block id containing a stray ':' (not a `review:` prefix) still gets the "
+       "build-ASSIGN — the reviewer skip keys off the `review:` prefix, not a bare "
+       "':' anywhere (no silent-default stall on a typo'd pipeline row)",
+       len(colon_build) == 1 and cw[cid].get("assigned") is True,
+       f"colon_orders={[(o[2], (o[1] or '')[:48]) for o in eng.orders if o[0] == cid]}")
+
+    # ── E-K5: _open_gate_if_branch must NEVER open a gate ladder for a reviewer —
+    #    a `review:<type>` living in manifest['gates'] crashes the next tick. Even
+    #    if a (non-deterministic) reviewer report carries slots.branch. ──
+    gates = {}
+    rw = {aid: {"block": reviewers.review_block("code"), "type": "code",
+                "status": "reviewing", "wid": aid, "assigned": True}}
+    router._open_gate_if_branch(eng, rw, gates,
+                               {"tag": "worker.online", "agent_id": aid,
+                                "slots": {"branch": "feat/reviewer-should-not-gate"}})
+    ok("E-K5 (REVIEWER-NEVER-GATED KILLER — must be GREEN): a reviewer report "
+       "carrying a stray branch does NOT open a gate.local — no `review:<type>` "
+       "entry ever lands in manifest['gates'] (which would crash the next tick)",
+       "review:code" not in gates and gates == {}, f"gates={gates}")
+
+    print("\n== SCENARIO E (reviewer never build-ASSIGNed) ==")
+    print(f"root={root}")
+    print(f"orders_to_reviewer={[(o[2], (o[1] or '')[:48]) for o in to_reviewer]}")
+
+
 def main():
     run_scenario_a()
     run_scenario_b()
     run_scenario_c()
     run_scenario_d_review_done_type_derive()
+    run_scenario_e_reviewer_never_build_assigned()
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"\ncore.reviewers_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

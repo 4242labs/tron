@@ -173,6 +173,51 @@ def proof_C():
     ok("C3: nudged_at guards a SECOND nudge while still holding", n2 == 1)
 
 
+# E — ADR-0006 R1e: the reviewer HELD-cap is working-aware too (mirrors the
+# block-gate arm). A held reviewer mid-attest-turn is re-anchored (never caps);
+# a held reviewer that is genuinely idle-at-attest still caps.
+def _held_reviewer(manifest, wid, typ="code"):
+    manifest.setdefault("workers", {})[wid] = {
+        "type": typ, "status": "held", "holding_since": None}
+
+
+def proof_E_reviewer_working_reanchors():
+    eng = FakeEng()
+    m = {}
+    _held_reviewer(m, "rev-01")
+    eng.working["rev-01"] = True                 # long-but-live attest turn
+    capped_ever = False
+    for t in (1.0, 3.0, 6.0, 30.0, 100.0):
+        eng.clock = t
+        res = sentry.pace(eng, _Snap(m))
+        if any(b.startswith("review:") for (b, _d) in res["escalated"]):
+            capped_ever = True
+    ok("E1: a WORKING (long attest) held reviewer is NEVER capped, even past the cap",
+       not capped_ever, f"pages={eng.pages}")
+    ok("E2: the reviewer's slot is not freed while working",
+       "rev-01" in (m.get("workers") or {}) and "rev-01" not in eng.released)
+    ok("E3: holding_since re-anchored fresh to the working clock",
+       m["workers"]["rev-01"].get("holding_since") == 100.0,
+       f"holding_since={m['workers']['rev-01'].get('holding_since')}")
+
+
+def proof_E_reviewer_idle_still_caps():
+    eng = FakeEng()
+    m = {}
+    _held_reviewer(m, "rev-02")
+    eng.working["rev-02"] = False                # idle at attest — the real stall
+    capped = False
+    for t in range(1, CAP + 3):
+        eng.clock = float(t)
+        res = sentry.pace(eng, _Snap(m))
+        if any(b.startswith("review:") for (b, _d) in res["escalated"]):
+            capped = True
+    ok("E4: an IDLE-at-attest held reviewer STILL caps past the cap (fix didn't disable it)",
+       capped)
+    ok("E5: the capped reviewer's real runner is released", "rev-02" in eng.released,
+       f"released={eng.released}")
+
+
 # D — works then idles -> escalates
 def proof_D():
     eng = FakeEng()
@@ -199,6 +244,7 @@ def proof_D():
 
 def main():
     proof_A(); proof_B(); proof_C(); proof_D()
+    proof_E_reviewer_working_reanchors(); proof_E_reviewer_idle_still_caps()
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.sentry_working_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
           f"({passed}/{len(_results)})")

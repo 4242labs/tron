@@ -99,6 +99,30 @@ def _architect_busy(manifest):
     return bool(manifest.get("architect_queue")) or arch.get("status") == "busy"
 
 
+def _open_escalations(manifest):
+    """R3 (ADR-0005) — the run is NOT settled while any operator escalation is
+    still open. A case with `decision is None` in `manifest["cases"]` is an
+    unresolved escalation (a worker.wall/sentry.cap/liveness case the architect
+    has not yet resolved, or an operator-owned case awaiting the operator's own
+    settle). This is the terminal's ONLY escalation gate: a BLOCK-BEARING case
+    already keeps its block in `pending_ids`, but a BLOCK-LESS operator case
+    (`open_operator_case(block=None)`, minted when the architect verdicts
+    `operator` on a case-less triage — R1b's LOUD backstop, or classify's
+    unclassified->operator path) has no pipeline row and is otherwise INVISIBLE
+    to `check` — so the run could end with a live page dangling (the M2/M3
+    false-green). Returns the list of open case-ids (forensic).
+
+    Deliberately NOT gated on `manifest["operator_pages"]`: that is the DURABLE,
+    append-only LOG of every page ever sent (see `core/casestate.py::reping`) —
+    an ANSWERED escalation still has its historical page record there, so gating
+    on it would wedge session-end forever after any page. The case's own
+    `decision` is the single source of truth for "answered". A settled case is
+    popped / its `decision` set by `architect_resolve`/`settle`, so a genuinely
+    clean end has no open case and this never deadlocks a finished run."""
+    cases = manifest.get("cases") or {}
+    return [cid for cid, c in cases.items() if c.get("decision") is None]
+
+
 def check(manifest, view):
     """One pure pass over `view` (a `core.pipeline.read_view(eng)` result,
     caller-fetched) + `manifest` (for in-flight state) — see module
@@ -171,10 +195,13 @@ def check(manifest, view):
             "(a real gap — never silently 'end' on this, surface it): "
             f"{stuck}")
 
-    if pending_ids or inflight or _architect_busy(manifest):
-        return None   # not settled yet — legitimate, no error
+    open_escalations = _open_escalations(manifest)
+    if pending_ids or inflight or _architect_busy(manifest) or open_escalations:
+        return None   # not settled yet — legitimate, no error (R3: an open
+                      # operator escalation, even block-less, keeps the run alive)
 
     done_count = sum(1 for row in view
                      if row.get("has_block_file") and row.get("status") == "done")
     return {"ended_at": _now_iso(),
-           "reason": f"all {done_count} in-scope block(s) done on trunk; nothing in-flight"}
+           "reason": f"all {done_count} in-scope block(s) done on trunk; nothing "
+                     f"in-flight; no open operator escalations"}

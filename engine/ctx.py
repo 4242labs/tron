@@ -219,6 +219,10 @@ class Ctx:
             "blocks": under("blocks_dir", "meta/blocks/"),
             "blocks_rel": ((project or {}).get("blocks_dir") or "meta/blocks/").rstrip("/") + "/",
             "archive": under("archive_dir", "meta/blocks/archive/"),
+            # repo-RELATIVE archive dir (ADR-0005 R5): the record gate derives the §6
+            # archival destination from the SAME configured value land uses, so record
+            # and land never diverge on a project whose archive_dir isn't nested in blocks.
+            "archive_rel": ((project or {}).get("archive_dir") or "meta/blocks/archive/").rstrip("/") + "/",
             "paperwork": [str(p) for p in paperwork],
             # ADR-0002 D4: the project-authored fleet config (roles.yaml) — engine ships
             # none of it. Same override convention as pipeline_path/blocks_dir above.

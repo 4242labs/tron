@@ -71,10 +71,17 @@ def is_ancestor(root, sha, ref, dry=False):
     return trunk.is_ancestor(root, sha, ref, dry)
 
 
-def record_commit_ok(root, block_file, dry=False, truth_ref="main"):
-    """Delegates to `trunk.record_commit_ok` — the record-diff content check
-    (exactly one file, exactly the `**Status:**` field). Returns (ok, detail)."""
-    return trunk.record_commit_ok(root, block_file, dry, truth_ref=truth_ref)
+def record_commit_ok(root, block_file, dry=False, truth_ref="main",
+                     pipeline_file=None, block_id=None, archive_dir=None):
+    """Delegates to `trunk.record_commit_ok` — the record-diff content check.
+    Conforming = the block doc's Status/Completed flip, alone OR bundled with the
+    frozen skill §6 close-out (archival to the configured `archive_dir` + this block's
+    own-row pipeline edit); anything else is refused (ADR-0005 R5). `pipeline_file`/
+    `block_id`/`archive_dir` enable the bundled-close-out acceptance, the own-lane
+    pipeline check, and the configured archival destination. Returns (ok, detail)."""
+    return trunk.record_commit_ok(root, block_file, dry, truth_ref=truth_ref,
+                                  pipeline_file=pipeline_file, block_id=block_id,
+                                  archive_dir=archive_dir)
 
 
 def replica_clean(root, branch, main_branch="main", dry=False):

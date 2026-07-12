@@ -886,21 +886,108 @@ def main():
        and "01-02" not in (m_c.get("reconciled") or []),
        f"reconciled={m_c.get('reconciled')}")
 
-    # ══ Z4 (SELF-WALL GUARD, s6): a worker.wall FROM the architect is narration
-    #    (it can't wall/triage itself) — resolve its in-flight triage benignly,
-    #    open NO new case/triage. ══
+    # ══ Z4 (SELF-SOURCE CREATION GUARD, R1a/ADR-0005): a worker.wall FROM the
+    #    architect is narration (it can never be the SOURCE of a triage/case) —
+    #    the router short-circuits CREATION ahead of open_case and creates NOTHING:
+    #    no case, no triage, AND no verdict write. The old source-agnostic benign
+    #    'answer' write is deleted (it swallowed a genuine escalation — M1); the
+    #    architect's in-flight triage resolves via the R1b idle backstop, never
+    #    from its own prose here. Critically, a mis-tagged narration that carried a
+    #    block must NOT mint a spurious architect-owned case (A4 orphan-case hole). ══
     m_d = {"architect": {"status": "busy",
                         "current_job": {"kind": "triage", "triage_id": "triage-9"}},
            "cases": {}, "architect_queue": [], "workers": {}, "gates": {}}
     router._route_wall(lock_eng, m_d,
         {"tag": "worker.wall", "agent_id": architect.ARCHITECT_WID,
          "text": "Operator's call — grant re-mint, a clean one; worker proceeds."})
-    ok("Z4 (SELF-WALL GUARD — must be GREEN): a worker.wall from the architect "
-       "resolves its in-flight triage benignly and opens NO new case/triage",
-       (m_d.get("triage_verdicts") or {}).get("triage-9", {}).get("verdict") == "answer"
+    ok("Z4 (SELF-SOURCE CREATION GUARD — must be GREEN): a worker.wall from the "
+       "architect creates NOTHING — no case, no triage, no verdict write (R1a); its "
+       "in-flight triage resolves via the R1b idle backstop, never its own prose",
+       not (m_d.get("triage_verdicts") or {})
        and not m_d.get("cases") and len(m_d.get("architect_queue") or []) == 0,
        f"verdicts={m_d.get('triage_verdicts')} cases={list((m_d.get('cases') or {}).keys())} "
        f"queue={len(m_d.get('architect_queue') or [])}")
+
+    # ══ R3 (SESSION-END ESCALATION FIDELITY, ADR-0005): session-end is unreachable
+    #    while any operator escalation is open. A BLOCK-LESS operator case (no
+    #    pipeline row — open_operator_case(block=None), R1b's LOUD backstop path)
+    #    used to be INVISIBLE to session.check, so a run could end with a live page
+    #    dangling (the M2/M3 false-green). Now any case with decision=None holds the
+    #    terminal open; a settled case never deadlocks a genuinely-finished run. ══
+    done_view = [{"id": "01-01", "has_block_file": True, "status": "done",
+                  "archived": False, "depends_on": []}]
+    m_open = {"cases": {"case-op-1": {"case_id": "case-op-1", "block": None,
+                                      "owner": "operator", "decision": None}}}
+    m_settled = {"cases": {"case-op-1": {"case_id": "case-op-1", "block": None,
+                                         "owner": "operator", "decision": "resume"}}}
+    m_none = {}
+    ok("R3-CASE-BLOCKS-END (must be GREEN): all blocks done + nothing in-flight, but "
+       "a BLOCK-LESS OPEN operator case holds session-end OPEN (not settled); once "
+       "the case is settled (or there is none) the run ends — no dangling escalation, "
+       "no deadlock of a finished run",
+       session.check(m_open, done_view) is None
+       and session.check(m_settled, done_view) is not None
+       and session.check(m_none, done_view) is not None,
+       f"open={session.check(m_open, done_view)} "
+       f"settled={session.check(m_settled, done_view)!r} "
+       f"none={session.check(m_none, done_view)!r}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ADR-0008 — REPING-STALE: reping settles a landing worker.wall case that
+    # already paged, once its block closes out on trunk (the open-then-heal
+    # race). NOT a silent drop — a distinct 'stale-resolved-on-trunk' decision.
+    # ══════════════════════════════════════════════════════════════════════
+    engR = MiniEng(root, tron_ctx, test_command="true")
+    _LAND = ("land.sh refused: grant minted for commit 98a1347, but worker "
+             "committed 8f04a86 before landing, causing content mismatch")
+    _paging = lambda: {"attempts": 1, "consecutive_fail": 1, "last_receipt": "failed",
+                       "holding_since": 0, "channel_escalated": False}
+    mR = {
+        "gates": {"01-03": {"stage": "closed"},   # healed → block closed on trunk
+                  "01-04": {"stage": "merge"},     # still in flight
+                  "01-05": {"stage": "closed"}},   # closed but wall is non-landing
+        "cases": {
+            "case-stale": {"case_id": "case-stale", "block": None, "source": "worker.wall",
+                           "worker_id": "engineer-01-03", "detail": _LAND, "owner": "operator",
+                           "decision": None, "paging": _paging()},
+            "case-sentry": {"case_id": "case-sentry", "block": "09-09", "source": "sentry.cap",
+                            "worker_id": "engineer-09-09", "detail": "gate cap", "owner": "operator",
+                            "decision": None, "paging": _paging()},
+            "case-wall-open": {"case_id": "case-wall-open", "block": "01-04", "source": "worker.wall",
+                               "worker_id": "engineer-01-04", "detail": _LAND, "owner": "operator",
+                               "decision": None, "paging": _paging()},
+            "case-wall-nondetail": {"case_id": "case-wall-nondetail", "block": None,
+                                    "source": "worker.wall", "worker_id": "engineer-01-05",
+                                    "detail": "dependency cycle 01-06<->01-07", "owner": "operator",
+                                    "decision": None, "paging": _paging()},
+        },
+    }
+    engR.pages = []
+    casestate.reping(engR, mR, casestate.PAGE_REPING_AFTER + 5)   # past the backoff
+    ok("REPING-STALE (ADR-0008 guard B — must be GREEN): an already-paged landing "
+       "worker.wall case whose block CLOSED on trunk is SETTLED 'stale-resolved-on-trunk' "
+       "and re-paged NObody — a page provably answered by trunk, never a silent drop",
+       mR["cases"]["case-stale"]["decision"] == "stale-resolved-on-trunk"
+       and not any(p[0] == "case-stale" for p in engR.pages),
+       f"decision={mR['cases']['case-stale']['decision']} "
+       f"repaged={[p for p in engR.pages if p[0]=='case-stale']}")
+    ok("REPING-STALE-NV1 (non-vacuity — must be GREEN): a sentry.cap operator case is "
+       "NEVER stale-resolved (not a worker.wall) — stays OPEN and keeps paging",
+       mR["cases"]["case-sentry"]["decision"] is None
+       and any(p[0] == "case-sentry" for p in engR.pages),
+       f"decision={mR['cases']['case-sentry']['decision']} "
+       f"paged={[p for p in engR.pages if p[0]=='case-sentry']}")
+    ok("REPING-STALE-NV2 (non-vacuity — must be GREEN): a landing worker.wall whose block "
+       "is NOT closed (merge) stays OPEN and keeps paging — guard B never suppresses an "
+       "in-flight block",
+       mR["cases"]["case-wall-open"]["decision"] is None
+       and any(p[0] == "case-wall-open" for p in engR.pages),
+       f"decision={mR['cases']['case-wall-open']['decision']}")
+    ok("REPING-STALE-NV3 (non-vacuity — must be GREEN): a NON-landing worker.wall (dep "
+       "cycle) on a closed block fails the landing signature — stays OPEN and keeps paging",
+       mR["cases"]["case-wall-nondetail"]["decision"] is None
+       and any(p[0] == "case-wall-nondetail" for p in engR.pages),
+       f"decision={mR['cases']['case-wall-nondetail']['decision']}")
 
     passed = sum(1 for _, c, _ in _results if c)
     print(f"core.casestate_rig: {'PASS' if passed == len(_results) else 'FAIL'} "
