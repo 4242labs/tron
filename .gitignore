@@ -86,3 +86,12 @@ Thumbs.db
 /.wake.pid
 /.tick.lock
 /wake.out
+
+# Modes: private persona state never enters this public repo.
+# Session logs, plans, the project registry, and the operator backlog name real
+# clients, repos, and machine paths — they live in the private meta repo.
+modes/*/logs/
+modes/*/plans/
+modes/*/retro/
+modes/flynn/projects.md
+modes/flynn/backlog.md
