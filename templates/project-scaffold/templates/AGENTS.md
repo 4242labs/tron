@@ -22,7 +22,7 @@ Invoked from `<WORKSPACE_PATH>` (this directory).
 | Data Architect | `<META_REPO_NAME>/agents/data-architect.md` | Schema design, RLS policy review, PII governance, data contracts |
 | Code Reviewer | `<META_REPO_NAME>/agents/reviewer-code.md` | Code quality audits |
 | Security Reviewer | `<META_REPO_NAME>/agents/reviewer-security.md` | Security posture audits |
-| SUPER-M | `<META_REPO_NAME>/agents/super-m-local.md` | Workflow health monitoring |
+| TRON-FLYNN | `<META_REPO_NAME>/agents/flynn-local.md` | Workflow health monitoring |
 | Product-Designer | _(shared-KB path TBD — see TD-10)_ | Idea → backlog → pipeline block frame (problem framing, market scan, JTBD) |
 | Emily | _(shared-KB path TBD — see TD-10)_ | Marketing & discoverability — positioning, go-to-market, pricing presentation, SEO, GEO/AEO |
 | Analyst-Finance | _(shared-KB path TBD — see TD-10)_ | Pricing strategy, cost analysis, unit economics |

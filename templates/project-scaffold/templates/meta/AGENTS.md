@@ -13,7 +13,7 @@ Project management, agents, skills, and session logs for `<PROJECT_NAME>`.
 | Data Architect | `agents/data-architect.md` | Schema design, RLS policy review, PII governance |
 | Code Reviewer | `agents/reviewer-code.md` | Code quality audits |
 | Security Reviewer | `agents/reviewer-security.md` | Security posture audits |
-| SUPER-M | `agents/super-m-local.md` | Workflow health monitoring |
+| TRON-FLYNN | `agents/flynn-local.md` | Workflow health monitoring |
 
 ## Skills
 

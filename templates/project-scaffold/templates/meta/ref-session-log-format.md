@@ -7,7 +7,7 @@ Standard format for session logs written to `logs/{role}/log-YYMMDD-HHMM-{descri
 ```
 # {Title} — {YYYY-MM-DD HH:MM}
 
-**Role:** {architect / engineer / reviewer-code / reviewer-security / analyst-* / advisor-* / localizer-* / super-m}
+**Role:** {architect / engineer / reviewer-code / reviewer-security / analyst-* / advisor-* / localizer-* / flynn}
 **Executed by Model:** {model name}
 **Block / scope:** {block id or scope description}
 **Duration:** {approximate}

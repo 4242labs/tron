@@ -1,6 +1,6 @@
 # Changelog — 42Labs project-scaffold
 
-Versions the meta/app/workspace template payload. Every entry pairs with the SUPER-M
+Versions the meta/app/workspace template payload. Every entry pairs with the TRON-FLYNN
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 
@@ -92,7 +92,7 @@ that ignores the new fields behaves exactly as before.
   before the block is done; a failed deploy is not-done and must be fixed.
 - **Project deploy default** (`meta/context.md`): a `## Deploy` section (Enabled +
   Success check), inherited by blocks and overridable per block.
-- **Contract sync**: `skill-project-audit`, `skill-project-upgrade`, and `super-m.md → C3`
+- **Contract sync**: `skill-project-audit`, `skill-project-upgrade`, and `flynn.md → C3`
   updated to validate the above (the maintenance rule — skill follows payload).
 
 ## 1.0.0 — baseline

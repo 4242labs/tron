@@ -1,10 +1,10 @@
-# SUPER-M: Project Context — <PROJECT_NAME>
+# TRON-FLYNN: Project Context — <PROJECT_NAME>
 
-Persistent state for SUPER-M sessions on `<PROJECT_NAME>`. Updated after every run.
+Persistent state for TRON-FLYNN sessions on `<PROJECT_NAME>`. Updated after every run.
 
-This is the **canonical project-local template** for `super-m-local.md`. The kit ships it; `{shared_knowledge_path}/agents/super-m/super-m.md §Project-Local Context Template` and `{shared_knowledge_path}/agents/super-m/skills/skill-bootstrap.md` step 4 both defer to this file — it is the single source of the structure.
+This is the **canonical project-local template** for `flynn-local.md`. The kit ships it; `{shared_knowledge_path}/agents/flynn/flynn.md §Project-Local Context Template` and `{shared_knowledge_path}/agents/flynn/skills/skill-bootstrap.md` step 4 both defer to this file — it is the single source of the structure.
 
-**Project-local wrapper.** SUPER-M's full procedure lives in the canonical agent at `{shared_knowledge_path}/agents/super-m/super-m.md` — load that first, then apply the context below. Do not run from this file alone; it only supplies project-specific state.
+**Project-local wrapper.** TRON-FLYNN's full procedure lives in the canonical agent at `{shared_knowledge_path}/agents/flynn/flynn.md` — load that first, then apply the context below. Do not run from this file alone; it only supplies project-specific state.
 
 ---
 
@@ -14,8 +14,8 @@ This is the **canonical project-local template** for `super-m-local.md`. The kit
 - **Meta path:** `<META_REPO_NAME>/`
 - **App repo:** `<APP_REPO_NAME>/`
 - **Workspace path:** `<WORKSPACE_PATH>`
-- **Log path:** `<META_REPO_NAME>/logs/super-m/`
-- **Context path:** `<META_REPO_NAME>/agents/super-m-local.md`
+- **Log path:** `<META_REPO_NAME>/logs/flynn/`
+- **Context path:** `<META_REPO_NAME>/agents/flynn-local.md`
 
 ## Agent Registry
 
@@ -60,14 +60,14 @@ Proposed improvements pending review. Remove when actioned or rejected.
 
 ## Project-Specific Rules
 
-Curated subset of project rules SUPER-M must follow. References canonical sources — does not duplicate them. Update when project conventions change.
+Curated subset of project rules TRON-FLYNN must follow. References canonical sources — does not duplicate them. Update when project conventions change.
 
 - **Git workflow:** <e.g., "PR-only across all repos including meta/ — see `principles.md §Git`. No direct push to a protected branch, ever.">
 - **Naming conventions:** <e.g., "proper service names per `principles.md §Communication`">
 - **Security constraints:** <e.g., "never expose service-role keys — see `principles.md §Security`">
-- **Other:** <any project-specific rule that affects SUPER-M's behavior>
+- **Other:** <any project-specific rule that affects TRON-FLYNN's behavior>
 
 ## Configuration
 
-- **SUPER_META_STALE_DAYS:** 5
-- **shared_knowledge_path:** mirror of `principles.md §Configuration` (the single canonical home) — keep identical. Blank there means SUPER-M skips all shared-KB steps.
+- **FLYNN_STALE_DAYS:** 5
+- **shared_knowledge_path:** mirror of `principles.md §Configuration` (the single canonical home) — keep identical. Blank there means TRON-FLYNN skips all shared-KB steps.

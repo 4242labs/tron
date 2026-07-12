@@ -1,0 +1,2 @@
+# Operator credentials (Telegram bot token + chat id) — provided at boot, never committed.
+.env

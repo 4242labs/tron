@@ -72,7 +72,7 @@ When writing or editing a block spec (uses `blocks/block-template.md`):
 
 - [ ] Every acceptance criterion has a fixed `Verification method`. Vague criteria ("works correctly", "looks good") are rejected — translate them into a runnable test, command, screenshot, or named manual check.
 - [ ] `Reviewer class:` is set based on what the block touches: schema/RLS/PII → `data`; auth/secrets/PII handling → `security`; everything else with code → `code`; trivial / single-criterion → `none`.
-- [ ] `Out of Scope:` is explicit. SUPER-M C3 audits scope creep against this list. Any mid-flow scope change (add or drop) requires user approval and a dated note in the block.
+- [ ] `Out of Scope:` is explicit. TRON-FLYNN C3 audits scope creep against this list. Any mid-flow scope change (add or drop) requires user approval and a dated note in the block.
 - [ ] Single-criterion blocks (typo, one-line config) may set `Reviewer class: none` — engineer self-attests at completion. Anything with ≥2 criteria gets a real reviewer.
 
 Canonical rule: `{shared_knowledge_path}/principles-base.md §11/§12`. Critic procedure: `{shared_knowledge_path}/skills/skill-completion-verify.md`.

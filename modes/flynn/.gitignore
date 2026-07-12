@@ -1,0 +1,5 @@
+# OSS sub-repo (independent git repo)
+oss/
+
+# Claude Code local settings
+.claude/

@@ -45,7 +45,7 @@ Each criterion is a contract. The verification method is fixed at scoping time �
 
 ## Out of Scope
 
-<Explicit exclusions — what this block does NOT cover. SUPER-M flags scope creep against this list. Any mid-flow scope change (add or drop) requires user approval and a note here.>
+<Explicit exclusions — what this block does NOT cover. TRON-FLYNN flags scope creep against this list. Any mid-flow scope change (add or drop) requires user approval and a note here.>
 
 ---
 
