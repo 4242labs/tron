@@ -168,6 +168,23 @@ def is_alive(worker_id, idx=None):
     return _pid_alive(rec.get("pid"))   # a crashed runner leaves a stale state file -> dead
 
 
+def proc_alive(worker_id, idx=None):
+    """OS-TRUTH process liveness — `_pid_alive` on the runner's recorded pid,
+    IGNORING the self-reported `state`. Unlike `is_alive` (which treats a
+    'released'/'killed'/… flag as dead even while the OS process still lingers —
+    correct for LOGICAL liveness: a released worker is done doing work), this
+    answers the PHYSICAL question the fleet-teardown must ask: is the process
+    still on the OS? A runner writes `state:"released"` the instant it catches
+    its SIGTERM but can linger for seconds while its `claude` child dies; teardown
+    keys its hard-kill escalation on THIS so such a runner is SIGKILLed, never
+    left for the OS-truth orphan scan (`core/sim/live.py::_owned_orphans`, a real
+    `pgrep`) to flag as a survivor. (T2-19 REJECT root fix.)"""
+    rec = find(worker_id, idx)
+    if rec is None:
+        return False
+    return _pid_alive(rec.get("pid"))
+
+
 def timeline_tail(worker_id, n=20, idx=None):
     rec = find(worker_id, idx)
     if not rec:

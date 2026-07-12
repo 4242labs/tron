@@ -133,12 +133,32 @@ class real_spawn:
         for wid in ids:
             jobs.release(wid)
         deadline = time.time() + timeout_s
+        # OS-TRUTH liveness (jobs.proc_alive), NOT jobs.is_alive: a runner writes
+        # state:"released" the instant it catches SIGTERM but can linger seconds
+        # while its `claude` child dies. is_alive would call it dead on the flag and
+        # skip the hard-kill, leaving the still-running process for _owned_orphans'
+        # real pgrep to flag -> REJECT (T2-19). Keying on the physical process means
+        # a lingering runner stays in the kill set until SIGKILLed. (T2-19 root fix.)
         still_alive = set(ids)
         while time.time() < deadline and still_alive:
-            still_alive = {wid for wid in still_alive if jobs.is_alive(wid)}
+            still_alive = {wid for wid in still_alive if jobs.proc_alive(wid)}
             if still_alive:
                 time.sleep(0.25)
         escalated = sorted(still_alive)
         for wid in escalated:
             jobs.kill_hard(wid)
+        # Leader-liveness is a COMPLETE proxy here (not just the observed case):
+        # worker_runner.py reaps its own host-CLI/`claude` child on shutdown
+        # (proc.wait(10)->proc.kill(), engine/worker_runner.py) BEFORE it writes
+        # 'released' and exits, so a child never outlives its runner — the only
+        # orphan class is the lingering RUNNER this loop now catches. (The inverse
+        # race, a leader exiting while a grandchild lingers, is structurally
+        # prevented by that reap; it would be an honest REJECT via the pgrep orphan
+        # scan, never a false-green, if worker_runner's shutdown ever changed.)
+        # Confirm the SIGKILL took before returning (killpg is immediate, but reap
+        # the zombie so the OS-truth orphan scan that runs NEXT sees it gone) —
+        # bounded, never hangs.
+        kdeadline = time.time() + 2.0
+        while time.time() < kdeadline and any(jobs.proc_alive(w) for w in escalated):
+            time.sleep(0.1)
         return escalated
