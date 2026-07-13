@@ -1,14 +1,12 @@
-# Skill: Project Profile
+# Skill: Project Profile (existing)
 
-Shared profiling step for project scaffold and upgrade flows. Determines which templates, services, and audit rows apply.
+Profiling step for the upgrade flow. Determines which templates, services, and audit rows apply to a project that **already exists**.
 
-Two modes:
-- **`fresh`** — new project from zero. Ask the user every question; no inference.
-- **`infer`** — existing project. Read the repo, infer answers, present for confirmation.
+Read the repo, infer the answers, present them for confirmation. Lock the confirmed `{profile, values}` pair before handing off to `skill-project-audit.md`. **No stubs for skipped services** — if a service is not confirmed, its templates, audit rows, and service-setup sections are omitted entirely.
 
-Lock the confirmed profile and value table before handing off to `skill-project-scaffold.md` or `skill-project-audit.md`. **No stubs for skipped services** — if a service is not confirmed, its templates, audit rows, and service-setup sections are omitted entirely.
+**TRON is out of scope.** TRON seeds itself when the operator activates it in a project — the audit and upgrade flows do not ask about it, do not copy `tron.md`/`skill-tg-comms.md`, and do not audit TRON wiring.
 
-**TRON is out of scope.** TRON seeds itself when the operator activates it in a project — scaffold, audit, and upgrade flows do not ask about it, do not copy `tron.md`/`skill-tg-comms.md`, and do not audit TRON wiring. If a project has TRON, that's TRON's own onboarding, not this skill's concern.
+> New projects are not FLYNN's. A project that doesn't exist yet is scaffolded by `/tron-scaffold`, which runs its own fresh-profile skill.
 
 ---
 
@@ -28,18 +26,18 @@ Lock the confirmed profile and value table before handing off to `skill-project-
 | 10 | Slack notifications? (yes / no) | `services-setup.md#slack`, `deploy-notify.yml` |
 | 11 | AI proxy: LiteLLM on Railway? Direct API? None? | `services-setup.md#railway`, `infra/` templates |
 
-### `infer` mode procedure
+### Procedure
 
-Read each of the following before asking the user; fill the table with inferred answers and a confidence note, then ask the user to confirm or correct each row:
+Read each of the following before asking the operator anything; fill the table with inferred answers and a confidence note, then ask them to confirm or correct each row:
 
-- Workspace + app `CLAUDE.md`
+- Workspace + app `AGENTS.md` / `CLAUDE.md`
 - `app/package.json`, `app/.env.example`
 - `app/.github/workflows/`
 - `app/infra/` (if present)
 - `meta/agents/`, `meta/skills/`
 - `meta/principles.md`, `meta/context.md`
 
-Unconfirmed services are excluded from downstream scaffold/audit work.
+Unconfirmed services are excluded from downstream audit and upgrade work.
 
 ---
 
@@ -60,10 +58,10 @@ Unconfirmed services are excluded from downstream scaffold/audit work.
 | `PROD_SUPABASE_URL` | `https://abc.supabase.co` *(if Supabase)* |
 | `VERCEL_PROJECT_NAME` | `myproject` *(if Vercel)* |
 
-`infer` mode fills these from disk; `fresh` mode collects them from the user.
+Fill these from disk; ask the operator only for what the repo can't tell you.
 
 ---
 
 ## Output
 
-A locked `{profile, values}` pair, passed verbatim to the next skill. Re-confirm with the user before handoff — no scaffolding or upgrade work proceeds without explicit lock.
+A locked `{profile, values}` pair, passed verbatim to `skill-project-audit.md`. Re-confirm with the operator before handoff — no upgrade work proceeds without an explicit lock.

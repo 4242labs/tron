@@ -2,7 +2,7 @@
 
 **Purpose:** Canonical gap-analysis checklist for an existing 42Labs project. Scores every applicable item: ✅ present and correct / ⚠️ partial or misconfigured / ❌ missing.
 
-**Prerequisite:** `skills/skill-project-profile.md` has run in `infer` mode and locked the service profile. Audit only for services in the confirmed profile — omit rows for services the project does not use.
+**Prerequisite:** `skills/skill-project-profile.md` has run and locked the service profile. Audit only for services in the confirmed profile — omit rows for services the project does not use.
 
 **Output:** Gap report in the format defined at the end of this skill. Hand off to `skills/skill-project-upgrade.md` for remediation.
 

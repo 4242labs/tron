@@ -37,8 +37,8 @@ There are no modes to pick. Skills load on demand, silently, from whatever the o
 | industry/tooling research | `skills/skill-research.md` |
 | a new agent designed | `skills/skill-create-agent.md` |
 | an existing agent audited | `skills/skill-evaluate-agent.md` |
-| a new project stood up | `skills/skill-project-profile.md` (`fresh`) → `skills/skill-project-scaffold.md` |
-| an existing project brought to standard | `skills/skill-project-profile.md` (`infer`) → `skills/skill-project-audit.md` → `skills/skill-project-upgrade.md` |
+| a new project stood up | not FLYNN's — tell the operator to run `/tron-scaffold`, and stop |
+| an existing project brought to standard | `skills/skill-project-profile.md` → `skills/skill-project-audit.md` → `skills/skill-project-upgrade.md` |
 | architecture / RAG / agent-design advice | nothing — draw on `flynn.md` §Advisory Procedures |
 
 The operator may also name one outright ("run an audit"). Same result: load the skill, no menu.

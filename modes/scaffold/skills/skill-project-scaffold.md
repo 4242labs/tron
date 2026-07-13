@@ -2,11 +2,11 @@
 
 **Purpose:** Exact procedural sequence to scaffold a new 42Labs project from zero.
 
-**Prerequisite:** `skills/skill-project-profile.md` must have run in `fresh` mode and locked `{profile, values}`. Do not proceed without them.
+**Prerequisite:** `skills/skill-project-profile.md` must have run and locked `{profile, values}`. Do not proceed without them.
 
-**Scope:** Scaffolds the workflow infrastructure (meta repo, config, CI, hooks, portable-worktree bootstrap, MCPs, services) around a Next.js application. Does NOT create the Next.js app itself — the user must run `npx create-next-app` in `APP_SUBDIR` either before step 4 (to have a real `package.json` for npm install) or after step 5 (before step 13). Remind the user if they haven't initialized the app yet.
+**Scope:** Scaffolds the workflow infrastructure (meta repo, config, CI, hooks, portable-worktree bootstrap, MCPs, services) around a Next.js application. Does NOT create the Next.js app itself — the operator must run `npx create-next-app` in `APP_SUBDIR` either before step 4 (to have a real `package.json` for npm install) or after step 5 (before step 13). Remind the operator if they haven't initialized the app yet.
 
-**Templates source of truth:** `tron/tron-app/templates/project-scaffold/templates/` — every file copy step below reads from there.
+**Templates source of truth:** the scaffold kit at `tron-app/templates/project-scaffold/templates/` — `$SCAFFOLD_ROOT/../../templates/project-scaffold/templates`, referred to below as `$TPL`. Every file copy step reads from there, and only from there. The kit's current version is in its `CHANGELOG.md`; record that version in the completion report.
 
 ---
 
@@ -23,57 +23,50 @@ mkdir -p WORKSPACE_PATH/worktrees
 
 The workspace-internal `worktrees/` directory is where all per-branch worktrees will live (see step 4b — Portable-worktree bootstrap). Keeping worktrees inside the workspace tree makes the whole project portable as a unit.
 
-### 2. Copy and fill workspace-level templates
+### 2. Copy the kit — whole tree, then trim
 
-Copy from `tron/tron-app/templates/project-scaffold/templates/`:
+The kit is the payload; copy **all of it**, then remove what the profile excludes. Never hand-pick a
+file list — a list drifts the moment the kit gains a file, and a project scaffolded from a stale list
+is silently missing canon.
 
-| Source | Destination | Fill |
-|--------|-------------|------|
-| `templates/AGENTS.md` | `WORKSPACE_PATH/AGENTS.md` | `<PROJECT_NAME>`, `<META_REPO_NAME>`, `<APP_REPO_NAME>`, 42Agents paths |
-| `templates/.claude/settings.json` | `WORKSPACE_PATH/.claude/settings.json` | `<ABSOLUTE_PATH_TO_APP_SUBDIR>` → `APP_SUBDIR`; remove Vercel plugin if non-Vercel; use `npm test --if-present` so the hook doesn't error on projects without a test script yet |
-| `templates/.mcp.json` | `WORKSPACE_PATH/.mcp.json` | Verbatim — wires GitHub MCP (always) plus one devtools-class and one automation-class browser MCP (always); add per-profile MCPs (Supabase, Plain) if confirmed |
+```bash
+cp -R $TPL/AGENTS.md $TPL/.mcp.json  WORKSPACE_PATH/
+cp -R $TPL/.claude/.                 WORKSPACE_PATH/.claude/
+cp -R $TPL/meta/.                    META_REPO_ROOT/
+cp -R $TPL/app/.                     APP_REPO_ROOT/
+```
 
-### 3. Copy and fill meta repo templates
+Everything the kit ships now exists in the new project — agents, skills, hooks, scripts, CI workflows,
+log directories (`.gitkeep`-tracked), the lens, `meta/tron/roles.yaml`, the block and pipeline
+templates. Steps 3–5 fill it, trim it, and delete the parts this project doesn't use.
 
-Copy from `templates/meta/`:
+Verify the copy: `diff -r $TPL/meta META_REPO_ROOT` and `diff -r $TPL/app APP_REPO_ROOT` should report
+only files you have not filled yet — nothing "only in `$TPL`".
 
-| Source | Destination |
-|--------|-------------|
-| `templates/meta/AGENTS.md` | `META_REPO_ROOT/AGENTS.md` |
-| `templates/meta/pipeline.md` | `META_REPO_ROOT/pipeline.md` |
-| `templates/meta/context.md` | `META_REPO_ROOT/context.md` |
-| `templates/meta/principles.md` | `META_REPO_ROOT/principles.md` |
-| `templates/meta/agents/architect.md` | `META_REPO_ROOT/agents/architect.md` |
-| `templates/meta/agents/engineer.md` | `META_REPO_ROOT/agents/engineer.md` |
-| `templates/meta/agents/data-architect.md` | `META_REPO_ROOT/agents/data-architect.md` |
-| `templates/meta/agents/reviewer-code.md` | `META_REPO_ROOT/agents/reviewer-code.md` |
-| `templates/meta/agents/reviewer-security.md` | `META_REPO_ROOT/agents/reviewer-security.md` |
-| `templates/meta/agents/flynn-local.md` | `META_REPO_ROOT/agents/flynn-local.md` |
-| `templates/meta/skills/*.md` (all 10 core) | `META_REPO_ROOT/skills/` |
-| `templates/meta/blocks/block-template.md` | `META_REPO_ROOT/blocks/block-template.md` |
-| `templates/meta/ref-*.md` (all 3) | `META_REPO_ROOT/` |
+### 3. Fill the workspace + meta files
 
-Log directories ship with the kit — `templates/meta/logs/{architecture,data-architect,engineering,review-code,review-security,flynn}/` each carry a tracked `.gitkeep`, so the copy step above brings them over as structure. No `mkdir` needed; verify all six exist after copy.
+| File | Fill |
+|--------|------|
+| `WORKSPACE_PATH/AGENTS.md` | `<PROJECT_NAME>`, `<META_REPO_NAME>`, `<APP_REPO_NAME>`, agent paths |
+| `WORKSPACE_PATH/.claude/settings.json` | `<ABSOLUTE_PATH_TO_APP_SUBDIR>` → `APP_SUBDIR`; drop the Vercel plugin if non-Vercel; use `npm test --if-present` so the hook doesn't error before the app has tests |
+| `WORKSPACE_PATH/.mcp.json` | Verbatim — GitHub MCP (always) plus one devtools-class and one automation-class browser MCP (always); add per-profile MCPs (Supabase, Plain) if confirmed |
+| `META_REPO_ROOT/**` | Every `<PROJECT_NAME>` and `<PLACEHOLDER>` token, in every copied file |
+| `META_REPO_ROOT/tron/roles.yaml` | The project's fleet — role → model, persona path, capability class. Leave the shipped default if the project has no TRON fleet decision yet |
 
-Fill all `<PROJECT_NAME>` and `<PLACEHOLDER>` tokens.
+Confirm the six log directories survived the copy: `meta/logs/{architecture,data-architect,engineering,review-code,review-security,flynn}/`.
 
-> TRON is out of scope here. If the project uses TRON, TRON seeds its own `tron.md` and `skill-tg-comms.md` via its own onboarding — do not pre-create them in scaffold.
+> TRON's own onboarding is out of scope. TRON seeds `tron.md` and `skill-tg-comms.md` itself when the operator activates it — do not pre-create them.
 
-### 4. Copy and fill app repo templates
+### 4. Fill and trim the app files
 
-Copy from `templates/app/`:
+| File | Fill |
+|--------|-------|
+| `APP_REPO_ROOT/.nvmrc` | `<NODE_LTS_VERSION>` → `NODE_LTS_VERSION` |
+| `APP_REPO_ROOT/.env.example` | Project-specific vars |
+| `APP_REPO_ROOT/docs/playbook-infra.md` | Project-specific URLs |
+| `APP_SUBDIR/AGENTS.md` | Tech stack, project name |
 
-| Source | Destination | Notes |
-|--------|-------------|-------|
-| `templates/app/.nvmrc` | `APP_REPO_ROOT/.nvmrc` | Replace `<NODE_LTS_VERSION>` → `NODE_LTS_VERSION` |
-| `templates/app/lefthook.yml` | `APP_REPO_ROOT/lefthook.yml` | Verbatim |
-| `templates/app/.env.example` | `APP_REPO_ROOT/.env.example` | Add project-specific vars |
-| `templates/app/mcp-setup.md` | `APP_REPO_ROOT/mcp-setup.md` | Omit non-applicable sections |
-| `templates/app/services-setup.md` | `APP_REPO_ROOT/services-setup.md` | Omit non-applicable sections |
-| `templates/app/docs/playbook-infra.md` | `APP_REPO_ROOT/docs/playbook-infra.md` | Fill project-specific URLs |
-| `templates/app/docs/playbook-browser-testing.md` | `APP_REPO_ROOT/docs/playbook-browser-testing.md` | Verbatim; required by the always-applicable browser-validation audit row |
-| `templates/app/app/commitlint.config.js` | `APP_SUBDIR/commitlint.config.js` | Verbatim |
-| `templates/app/app/AGENTS.md` | `APP_SUBDIR/AGENTS.md` | Fill tech stack, project name |
+`lefthook.yml`, `commitlint.config.js`, `docs/playbook-browser-testing.md`, `docs/guidelines-coding.md`, `.githooks/`, and `scripts/` are taken verbatim — do not edit them per project. A per-project deviation belongs in the kit, not in the copy.
 
 **Profile-trim pass.** Four files ship with all-service content and MUST be trimmed to the confirmed profile before continuing:
 
@@ -84,13 +77,13 @@ Copy from `templates/app/`:
 | `APP_REPO_ROOT/services-setup.md` | Remove sections for unconfirmed services (Railway/LiteLLM, Slack, Brevo, Polar, Sentry, Matomo, FirstPromoter, Pipedream) |
 | `APP_REPO_ROOT/docs/playbook-infra.md` | Remove service sections (Supabase, Vercel, Slack, Brevo, Polar, Sentry, etc.) not in profile; collapse Secrets Reference to only the secrets the project actually owns |
 
-Add a banner at the top of each trimmed file naming the active profile: "**Profile at scaffold:** \<list\>. Other services intentionally omitted — added via `UPGRADE PROJECT` if introduced."
+Add a banner at the top of each trimmed file naming the active profile: "**Profile at scaffold:** \<list\>. Other services intentionally omitted — add them later through the upgrade flow if the project takes them on."
 
-**Conditional — Railway/LiteLLM only:**
-```
-APP_REPO_ROOT/infra/Dockerfile.litellm
-APP_REPO_ROOT/infra/litellm_config.yaml
-APP_REPO_ROOT/infra/litellm-entrypoint.sh
+**Delete what the profile excludes.** The whole kit was copied in step 2; now remove what this project doesn't use:
+
+```bash
+# LiteLLM on Railway not in profile → the infra templates have no business here
+rm -rf APP_REPO_ROOT/infra
 ```
 
 ### 4b. Portable-worktree bootstrap
@@ -103,38 +96,18 @@ Implements `42hq/knowledge-base/principles-base.md §14 Portability — Relative
 git --version
 ```
 
-If older, fail loudly — the user must `brew upgrade git` (or platform equivalent) before continuing.
+If older, fail loudly — the operator must `brew upgrade git` (or platform equivalent) before continuing.
 
-**Copy bootstrap script to each repo.** Source: the TRON scaffold templates (`tron/tron-app/templates/project-scaffold/templates/` — the single source of truth for all scaffold payload; see §Templates source of truth). Body must remain byte-identical to the template so a future fix reapplies with `diff` confidence.
-
-| Source | Destination | chmod |
-|--------|-------------|-------|
-| `templates/app/scripts/setup-repo.sh` | `APP_REPO_ROOT/scripts/setup-repo.sh` | 755 |
-| `templates/meta/scripts/setup-repo.sh` | `META_REPO_ROOT/scripts/setup-repo.sh` | 755 |
-
-The leading comment block and final echo line **may** be project-localized (e.g. mention `<APP_REPO_NAME>` / `<META_REPO_NAME>`); the executable body **must remain byte-identical** to the template.
+**Make the copied scripts and hooks executable.** Step 2 brought `scripts/setup-repo.sh` and `.githooks/` into both repos; `cp` does not always preserve the mode bit.
 
 ```bash
-TPL=tron/tron-app/templates/project-scaffold/templates
-mkdir -p APP_REPO_ROOT/scripts META_REPO_ROOT/scripts
-cp $TPL/app/scripts/setup-repo.sh  APP_REPO_ROOT/scripts/setup-repo.sh
-cp $TPL/meta/scripts/setup-repo.sh META_REPO_ROOT/scripts/setup-repo.sh
-chmod +x APP_REPO_ROOT/scripts/setup-repo.sh META_REPO_ROOT/scripts/setup-repo.sh
+chmod +x APP_REPO_ROOT/scripts/*.sh  META_REPO_ROOT/scripts/*.sh
+chmod +x APP_REPO_ROOT/.githooks/*   META_REPO_ROOT/.githooks/*
 ```
 
-The app repo wires the script into `package.json prepare` — done in step 13 (after `npx create-next-app` creates `package.json`). The meta repo has no Node package manager, so it runs manually once per clone.
+Their bodies stay **byte-identical to the kit** — a future kit fix must reapply with `diff` confidence. Only the leading comment and final echo may name the project.
 
-**Copy canon hook scripts into both repos.** Required for the worktree-mandatory + no-direct-integration-branch enforcement.
-
-```bash
-TPL=tron/tron-app/templates/project-scaffold/templates
-mkdir -p APP_REPO_ROOT/.githooks META_REPO_ROOT/.githooks
-cp $TPL/app/.githooks/pre-commit  APP_REPO_ROOT/.githooks/
-cp $TPL/app/.githooks/pre-push    APP_REPO_ROOT/.githooks/
-cp $TPL/meta/.githooks/pre-commit META_REPO_ROOT/.githooks/
-cp $TPL/meta/.githooks/pre-push   META_REPO_ROOT/.githooks/
-chmod +x APP_REPO_ROOT/.githooks/* META_REPO_ROOT/.githooks/*
-```
+The app repo wires `setup-repo.sh` into `package.json prepare` — step 13, once `npx create-next-app` has produced a `package.json`. The meta repo has no Node package manager, so it runs the script manually once per clone.
 
 **Write repo-class + integration-branch markers** (read by the hooks at runtime — without them hooks are no-op, per `principles-base.md §14`):
 
@@ -147,29 +120,27 @@ echo "staging" > APP_REPO_ROOT/.integration-branch
 
 Per `principles-base.md §14` integration branch convention: canon + meta use `main`; apps use `staging` (canonical, not optional).
 
-### 5. Copy CI workflow templates
+### 5. Trim the CI workflows
 
-Always include:
-- `ci.yml`
-- `pr-base-guard.yml`
+All workflows came over in step 2. Keep `ci.yml` and `pr-base-guard.yml` always; **delete** every one below the project didn't confirm:
 
-Include only if confirmed:
-
-| Workflow | Condition |
-|----------|-----------|
+| Workflow | Keep only if |
+|----------|----------|
 | `staging-db.yml` | Supabase |
 | `deploy-notify.yml` | Vercel + Slack |
-| `release-please.yml` | Public changelog |
+| `release-please.yml` | Public changelog (also delete `release-please-config.json` + `.release-please-manifest.json` if dropped) |
 | `release-notify.yml` | Subscriber emails + Brevo |
 | `e2e.yml` | Playwright |
 | `stress.yml` | Load requirements |
 
-Destination: `APP_REPO_ROOT/.github/workflows/`
+They live in `APP_REPO_ROOT/.github/workflows/`. A workflow left behind for a service the project doesn't have will fail on the first push — an unused workflow is a defect, not a spare.
 
 ### 6. Verify no `<PLACEHOLDER>` tokens remain
 
+Catch every token, not just the ones this skill happens to name — the kit's full token list is in `$TPL/../tokens.md`, and a seed is not complete while any `<ALL_CAPS>` token survives:
+
 ```bash
-grep -r "<PLACEHOLDER>\|<PROJECT_NAME>\|<APP_SUBDIR>\|<APP_REPO_ROOT>\|<NODE_LTS_VERSION>\|<ABSOLUTE_PATH_TO_APP_SUBDIR>" WORKSPACE_PATH/
+grep -rnE "<[A-Z][A-Z0-9_]+>" WORKSPACE_PATH/ --exclude-dir=.git
 ```
 
 Fix all hits before continuing.
@@ -303,7 +274,7 @@ git -C META_REPO_ROOT config --local --get worktree.useRelativePaths   # → tru
 
 The `.claude/settings.json` was already written in step 2 with the correct absolute `APP_SUBDIR` path.
 
-Instruct user: **Open `/hooks` in Claude Code, then dismiss.** The settings watcher only reloads files present when the session started — this dismissal forces a config reload within the current session.
+Tell the operator: **open the `/hooks` panel, then dismiss it.** The settings watcher only reloads files that were present when the session started — the dismissal forces a config reload inside the current session.
 
 ### 15. Walk mcp-setup.md
 
@@ -323,7 +294,7 @@ Go through `APP_REPO_ROOT/services-setup.md` section by section. Complete only s
 
 ### 17. Seed pipeline.md
 
-Open `META_REPO_ROOT/pipeline.md`. Prompt user to fill:
+Open `META_REPO_ROOT/pipeline.md`. Prompt the operator to fill:
 - Project context (1-2 sentences)
 - First active block (name, status, first task)
 
@@ -392,4 +363,4 @@ Add a row to `modes/flynn/projects.md`:
 | <PROJECT_NAME> | <META_REPO_NAME>/agents/flynn-local.md | <META_REPO_NAME>/logs/flynn/ | <YYYY-MM-DD> |
 ```
 
-This makes the project discoverable for future `AUDIT` and `UPGRADE PROJECT` sessions.
+FLYNN's registry is what makes the project discoverable for later audit and upgrade sessions. A scaffold is not finished until the row is there.
