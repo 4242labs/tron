@@ -120,11 +120,13 @@
   .flowhead .logo__type{fill:var(--logo);}
   .flowhead .hsep{width:1px; height:18px; background:var(--border-cool);}
   /* version+build stamp (M-06) — reads VERSION/BUILD_DATE synced alongside this page; corner overlay, never blocks the canvas */
-  /* Sits ABOVE the bpmn.io watermark, never on top of it: the watermark is
-     anchored bottom-right (15px inset, ~22px tall) and its licence requires it
-     stay "fully visible and not visually overlapped by other elements".
-     bottom:45px clears it. If the watermark ever moves, move this too. */
-  .verstamp{position:fixed; right:14px; bottom:45px; z-index:15; pointer-events:none;
+  /* Bottom-LEFT, deliberately. Two reasons, in order:
+     1. The bpmn.io watermark owns the bottom-right corner, and its licence
+        requires it stay "fully visible and not visually overlapped by other
+        elements" — so nothing else may sit there.
+     2. Stacking TRON's version directly above the bpmn.io logo read as though
+        it were bpmn.io's version. The opposite corner removes the ambiguity. */
+  .verstamp{position:fixed; left:14px; bottom:10px; z-index:15; pointer-events:none;
     font-family:var(--font-mono); font-size:11px; color:var(--mid-stone); letter-spacing:.02em;}
 </style>
 </head>
