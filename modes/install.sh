@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install TRON's modes. One command, fresh machine to working /tron-flynn + /tron-clu.
+# Install TRON's modes. One command, fresh machine to working /tron-flynn + /tron-clu + /tron-scaffold.
 #
 #   modes/install.sh              → slash commands available in every project, PATH shortcuts wired
 #   modes/install.sh <project>    → slash commands scoped to one project (<project>/.claude/commands/)
@@ -42,16 +42,15 @@ mkdir -p "$DEST"
 # `&` and `\` are special on sed's replacement side — a path containing them would silently
 # corrupt the baked-in root rather than fail. Escape before substituting.
 sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
-FLYNN_ESC="$(sed_escape "${MODES_DIR}/flynn")"
-CLU_ESC="$(sed_escape "${MODES_DIR}/clu")"
 
-sed "s|<FLYNN_ROOT>|${FLYNN_ESC}|g" \
-  "${MODES_DIR}/flynn/install/tron-flynn-command.md" > "${DEST}/tron-flynn.md"
-sed "s|<CLU_ROOT>|${CLU_ESC}|g" \
-  "${MODES_DIR}/clu/install/tron-clu-command.md" > "${DEST}/tron-clu.md"
-
-echo "installed: ${DEST}/tron-flynn.md  → /tron-flynn"
-echo "installed: ${DEST}/tron-clu.md    → /tron-clu"
+# mode → the <ROOT> placeholder its command file carries
+for mode in flynn clu scaffold; do
+  root_esc="$(sed_escape "${MODES_DIR}/${mode}")"
+  placeholder="$(printf '%s' "$mode" | tr '[:lower:]' '[:upper:]')_ROOT"
+  sed "s|<${placeholder}>|${root_esc}|g" \
+    "${MODES_DIR}/${mode}/install/tron-${mode}-command.md" > "${DEST}/tron-${mode}.md"
+  echo "installed: ${DEST}/tron-${mode}.md → /tron-${mode}"
+done
 
 # 2. Terminal shortcuts — one PATH line in the shell rc, idempotent.
 if [ "$WIRE_PATH" -eq 1 ]; then
@@ -72,8 +71,8 @@ if [ "$WIRE_PATH" -eq 1 ]; then
   elif grep -qF -e "$BIN_ABS" -e "$BIN_HOME" -e "$BIN_TILDE" "$RC" 2>/dev/null; then
     echo "shortcuts: already on PATH via ${RC}"
   else
-    printf '\n# TRON modes — tron-flynn (advisor) / tron-clu (supervisor)\n%s\n' "$LINE" >> "$RC"
-    echo "shortcuts: PATH line added to ${RC} → tron-flynn / tron-clu (open a new shell)"
+    printf '\n# TRON modes — tron-flynn (advisor) / tron-clu (supervisor) / tron-scaffold (new project)\n%s\n' "$LINE" >> "$RC"
+    echo "shortcuts: PATH line added to ${RC} → tron-flynn / tron-clu / tron-scaffold (open a new shell)"
   fi
 fi
 

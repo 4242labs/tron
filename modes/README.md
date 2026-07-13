@@ -5,11 +5,12 @@ doc, its skills, and whatever state it owns.
 
 | Mode | Boot | What it is |
 |:--|:--|:--|
-| [`flynn/`](flynn/) | `/tron-flynn` | **Advisor.** Workflow health, process audit, canon custody, agent design, project scaffold/upgrade. Reports; the operator decides. |
+| [`flynn/`](flynn/) | `/tron-flynn` | **Advisor.** Workflow health, process audit, canon custody, agent design, project upgrade. Reports; the operator decides. |
 | [`clu/`](clu/) | `/tron-clu` | **Supervisor.** Runs a fleet of worker agents against a project's pipeline — dispatch, gates, merge, escalation. |
+| [`scaffold/`](scaffold/) | `/tron-scaffold` | **Scaffold.** Stands a new project up on the canon kit — profile, two wired repos, CI, hooks, services. New projects only. |
 
-Planned: **SCAFFOLD** (stand a project up to the canon scaffold) and **NEW** (scope a project from
-zero) — see the TRON operating-modes card.
+Planned: **NEW** (scope a project from zero, before it's stood up) and **AUDIT** (bring an existing
+project up to standard — currently FLYNN's) — see the TRON operating-modes card.
 
 ## Boundary
 
@@ -25,15 +26,16 @@ tron-app/modes/install.sh
 ```
 
 That is the whole fresh-machine setup: the slash commands land in Claude's `commands/` directory
-with the mode's absolute path baked in, and the `tron-flynn` / `tron-clu` terminal shortcuts get
-wired onto your PATH. Re-running is safe. `install.sh <project>` scopes the commands to a single
-project instead of the machine; `--no-path` skips the shell-rc line.
+with the mode's absolute path baked in, and the `tron-flynn` / `tron-clu` / `tron-scaffold` terminal
+shortcuts get wired onto your PATH. Re-running is safe. `install.sh <project>` scopes the commands to
+a single project instead of the machine; `--no-path` skips the shell-rc line.
 
-The command file and one PATH line are the **only** things written. No pointer files, no
+The command files and one PATH line are the **only** things written. No pointer files, no
 environment variables, no other machine state. Secrets (CLU's Telegram token) live in the
 gitignored `.env` at the tron-app repo root — never outside the project.
 
 ```zsh
 tron-flynn "audit this project"   # → claude "/tron-flynn audit this project"
 tron-clu                          # → claude "/tron-clu"
+tron-scaffold                     # → claude "/tron-scaffold"
 ```

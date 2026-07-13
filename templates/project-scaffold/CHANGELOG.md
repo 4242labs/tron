@@ -1,6 +1,6 @@
 # Changelog — 42Labs project-scaffold
 
-Versions the meta/app/workspace template payload. Every entry pairs with the TRON-FLYNN
+Versions the meta/app/workspace template payload. Every entry pairs with the mode
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 

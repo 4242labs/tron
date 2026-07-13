@@ -20,7 +20,7 @@ First-run setup when TRON-FLYNN touches a project for the first time. Called aut
 
 4. **Create** `flynn-local.md` in `meta/agents/` from the **canonical kit template** at `tron/tron-app/templates/project-scaffold/templates/meta/agents/flynn-local.md` (the single source — `flynn.md §Project-Local Context Template` defers to it), substituting the kit placeholders (`<PROJECT_NAME>`, `<META_REPO_NAME>`, `<APP_REPO_NAME>`, `<WORKSPACE_PATH>`) with the paths confirmed in step 2. If the project was scaffolded from the kit, the file already exists — adopt it as-is and only fill runtime values.
 
-5. **Add** the project to `modes/flynn/projects.md`.
+5. **Add** the project to `$FLYNN_ROOT/projects.md` — same row shape as `skill-session-start.md` §2, creating the file with that header if it doesn't exist yet.
 
 6. **Run a full initial audit** — execute `skills/skill-audit.md` in FULL AUDIT mode to establish baseline.
 
