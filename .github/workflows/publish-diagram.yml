@@ -29,13 +29,18 @@ jobs:
       - name: Sync diagram into public/workflow/ (with generated banner)
         run: |
           set -euo pipefail
-          mkdir -p tron-www/public/workflow
+          mkdir -p tron-www/public/workflow/vendor
           banner='<!-- GENERATED from 4242labs/tron workflow/ — DO NOT EDIT. Edit the source, then re-sync (see docs/bpmn.md). -->'
           cp workflow/workflow.html          tron-www/public/workflow/index.html
           cp workflow/flow-description.html   tron-www/public/workflow/flow-description.html
           cp workflow/favicon-32x32.png       tron-www/public/workflow/favicon-32x32.png
           cp workflow/favicon-192x192.png     tron-www/public/workflow/favicon-192x192.png
           cp workflow/nyan-cat.gif            tron-www/public/workflow/nyan-cat.gif
+          # U-TRN-7: workflow.html's <script src="vendor/..."> is a same-origin, relative
+          # path — the sync must carry the vendored bpmn-js build with it, or the synced
+          # page 404s on its own script and the diagram dies on tron.42labs.io.
+          cp workflow/vendor/bpmn-viewer.production.min.js  tron-www/public/workflow/vendor/bpmn-viewer.production.min.js
+          cp workflow/vendor/bpmn-js.LICENSE.txt            tron-www/public/workflow/vendor/bpmn-js.LICENSE.txt
           # M-06: the page's version+build-date corner stamp reads these two files, synced fresh every publish.
           cp VERSION                          tron-www/public/workflow/VERSION
           date -u +%Y-%m-%d > tron-www/public/workflow/BUILD_DATE

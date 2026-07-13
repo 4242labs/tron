@@ -2,18 +2,47 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<!-- U-TRN-5: CSP via <meta> — GitHub Pages can't set response headers. Ignores
+     frame-ancestors/report-uri/sandbox (browsers drop those 3 outside a real
+     header — frame-ancestors needs the operator's Cloudflare/edge config, see
+     the PR description). Looser than the homepage's: this page's diagram
+     renderer is one large inline <script> plus a handful of onclick=""
+     handlers (both need 'unsafe-inline' for script-src — there is no nonce/
+     hash story that survives this file's automated re-sync from 4242labs/tron
+     without breaking on every sync) and an inline <style> block (same
+     reasoning, 'unsafe-inline' for style-src). script-src/style-src stay
+     'self'-scoped otherwise — no third-party script origin remains after
+     U-TRN-4 vendored bpmn-js locally.
+       script-src  'self' 'unsafe-inline'   — vendor/bpmn-viewer.production.min.js
+         (self) + this page's inline diagram script and onclick handlers.
+       style-src   'self' 'unsafe-inline' + fonts.googleapis.com — the inline
+         <style> block + the Google Fonts CSS.
+       font-src    fonts.gstatic.com        — the woff2 files it resolves to.
+       img-src     'self'                   — nyan-cat.gif, favicons, all local.
+       connect-src 'self'                   — same-origin VERSION/BUILD_DATE
+         fetches only; no external API calls.
+       frame-src   'self'                   — the same-origin annotations
+         iframe (flow-description.html).
+     object-src 'none', base-uri 'self', form-action 'self' — hardening
+     defaults; no <object>/<embed>/<form> on this page. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TRON | 42labs</title>
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="192x192" href="favicon-192x192.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<script src="https://unpkg.com/bpmn-js@17.11.1/dist/bpmn-viewer.development.js"></script>
+<!-- Self-hosted, production build (U-TRN-4): was an unpinned, no-SRI, dev-build
+     load from unpkg.com. Vendored 1:1 from the bpmn-js@17.11.1 npm package
+     (sha256 verified against the registry tarball) — see vendor/bpmn-js.LICENSE.txt.
+     Re-vendor on any bpmn-js version bump; do not hand-edit. -->
+<script src="vendor/bpmn-viewer.production.min.js"></script>
 <style>
   :root{
     --canvas-warm:#FDFAF5; --cream:#FEF3E2; --border-cool:#E7E5E4;
     --mid-stone:#B8AFA8; --stone:#756D68; --graphite:#433E3A; --charcoal:#1C1917;
     --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8; --copper-border:#F5C9A1;
+    --copper-deep:#AA4D08;   /* U-TRN-7: darker than --copper-dark specifically for #annot-btn text/hover-fill — --copper-dark only cleared 3.53:1/3.18:1 against --copper-soft/white, both under the 4.5:1 text bar */
     --blue-dark:#2563EB; --sky:#EFF6FF;
     --emerald:#16A34A; --emerald-dark:#166534; --emerald-soft:#F0FDF4;   /* LLM / AIDE nodes */
     --amber:#EAB308; --amber-dark:#854D0E; --amber-soft:#FEFCE8;          /* sub-process drill-downs */
@@ -44,11 +73,14 @@
   .zoomctl button{width:32px; height:32px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:18px; line-height:1; color:var(--graphite); cursor:pointer; font-family:var(--font-body); box-shadow:0 1px 3px rgba(28,25,23,.08);}
   .zoomctl button:hover{background:var(--cream); border-color:var(--copper-border);}
   /* annotations toggle — same control style as the zoom buttons, but accent (copper) */
+  /* U-TRN-7: text/hover-fill use --copper-deep, not --copper-dark/--copper — resting was
+     3.53:1 and hover was 3.18:1 against normal-text's 4.5:1 bar. --copper-deep on --copper-soft
+     is 4.81:1; #fff on --copper-deep is 5.56:1. */
   .annotbtn{height:32px; padding:0 14px;
-    border:1px solid var(--copper-border); background:var(--copper-soft); color:var(--copper-dark);
+    border:1px solid var(--copper-border); background:var(--copper-soft); color:var(--copper-deep);
     border-radius:8px; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;
     text-transform:uppercase; letter-spacing:.03em; box-shadow:0 1px 3px rgba(28,25,23,.08);}
-  .annotbtn:hover{background:var(--copper); color:#fff; border-color:var(--copper);}
+  .annotbtn:hover{background:var(--copper-deep); color:#fff; border-color:var(--copper-deep);}
   /* annotations — sliding right panel (hosts the flow notes); hidden off-canvas until toggled. Covers the header too. */
   .notes-panel{position:fixed; top:0; right:0; width:460px; max-width:92vw; height:100vh; z-index:60;
     background:#fff; border-left:1px solid var(--border-cool); box-shadow:-8px 0 24px rgba(28,25,23,.10);
