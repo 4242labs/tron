@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # replay_lock_test.py's A/B differential reads a NAMED historical commit
-          # (`git show 28224cb:engine/fsm.py`) out of this repo's own history — a
+          # replay_lock_test.py's A/B differential reads a historical commit
+          # (block 01-26's parent, engine/fsm.py) out of this repo's own history — a
           # shallow clone (actions/checkout's default) doesn't carry that object.
           fetch-depth: 0
 

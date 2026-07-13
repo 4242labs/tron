@@ -19,9 +19,11 @@ past-defect stream produces the SAME outcome pre- and post-consolidation"):
   2. `t_ab_*` — the genuine A/B BEHAVIOR DIFFERENTIAL. Each of the SAME recorded
      scenarios is run through BOTH engine versions IN-PROCESS: the post-consolidation
      `fsm.Engine` (this checkout) and the pre-consolidation `Engine` loaded fresh from
-     `git show 28224cb:engine/fsm.py` (28224cb is exactly 01-26's parent commit,
-     28224cb — the fsm.py as it stood immediately before this block's T1/T2/T5 touched
-     it). The pre-version is written to a throwaway file and loaded via `importlib`
+     `git show <01-26's parent>:engine/fsm.py` — the fsm.py as it stood immediately
+     before this block's T1/T2/T5 touched it. The parent is resolved from the log at
+     run time (`_pre_01_26_sha`), never pinned as a raw SHA: a rewrite of history
+     changes every SHA and would silently take the differential down with it.
+     The pre-version is written to a throwaway file and loaded via `importlib`
      under a DISTINCT module name (`fsm_pre_01_26`), never replacing `fsm` in
      `sys.modules` — the two Engine classes coexist and are driven side by side. Every
      other engine module (util/jobs/judge/reader/trunk/eventlog/state/render) is
@@ -43,11 +45,12 @@ past-defect stream produces the SAME outcome pre- and post-consolidation"):
      explicitly rather than silently reconciling it (see
      `t_ab_treadmill_identical_pre_post`).
 
-  `git show 28224cb:...` reads a LOCAL git object already fetched into this repo's
-  ODB (no network at test time — same "no tokens, no network" guarantee as every other
-  block_NN_test.py). If that read ever fails (28224cb ref missing, no git present),
-  the affected t_ab_* case fails LOUDLY (via main()'s per-test capture below) rather
-  than silently skipping the differential.
+  `git show` reads a LOCAL git object already in this repo's ODB (no network at test
+  time — same "no tokens, no network" guarantee as every other block_NN_test.py). It
+  needs full history: a shallow clone carries no 01-26 parent, which is why the engine
+  workflow checks out with `fetch-depth: 0`. If the read ever fails (commit unreachable,
+  no git present), the affected t_ab_* case fails LOUDLY (via main()'s per-test capture
+  below) rather than silently skipping the differential.
 
 PROVENANCE of the recorded scenarios (unchanged from the original cut): `at`
 timestamps, case ids, block ids, and `detail` strings below are transcribed VERBATIM
@@ -96,11 +99,27 @@ def ok(name, cond, detail=""):
     _results.append((name, bool(cond), detail))
 
 
-# ── load the pre-consolidation engine (28224cb:engine/fsm.py — 01-26's own parent
-# commit) as an independent module, so t_ab_* can drive it side by side with the
-# post-consolidation `fsm.Engine` above ──
+# ── load the pre-consolidation engine (01-26's own parent commit, engine/fsm.py) as an
+# independent module, so t_ab_* can drive it side by side with the post-consolidation
+# `fsm.Engine` above ──
 _PRE_MODULE_NAME = "fsm_pre_01_26"
 _pre_module_cache = []
+
+
+def _pre_01_26_sha():
+    """The commit 01-26 was built on: the parent of the FIRST commit that touched
+    engine/fsm.py for block 01-26. Resolved from the log rather than pinned as a raw
+    SHA — a pinned SHA does not survive a history rewrite, and a rewrite is exactly
+    what silently broke this differential once."""
+    first = subprocess.run(
+        ["git", "-C", ROOT, "log", "--format=%H", "--grep=block 01-26",
+         "--", "engine/fsm.py"],
+        capture_output=True, text=True, check=True).stdout.split()
+    if not first:
+        raise RuntimeError(
+            "no commit for block 01-26 touching engine/fsm.py — the A/B differential "
+            "has nothing to compare against (shallow clone? rewritten messages?)")
+    return first[-1] + "^"   # oldest 01-26 commit; its parent is the pre-state
 
 
 def _pre_engine_module():
@@ -109,7 +128,7 @@ def _pre_engine_module():
     if _pre_module_cache:
         return _pre_module_cache[0]
     blob = subprocess.run(
-        ["git", "-C", ROOT, "show", "28224cb:engine/fsm.py"],
+        ["git", "-C", ROOT, "show", _pre_01_26_sha() + ":engine/fsm.py"],
         capture_output=True, text=True, check=True).stdout
     tmpdir = tempfile.mkdtemp(prefix="tron-fsm-pre-01-26-")
     path = os.path.join(tmpdir, _PRE_MODULE_NAME + ".py")
@@ -314,7 +333,7 @@ def _replay_gate_step_cap(engine_cls):
 
 def t_ab_treadmill_identical_pre_post():
     """The genuine A/B differential (AC-4): the recorded 9-case treadmill stream run
-    through BOTH the pre-01-26 engine (28224cb:engine/fsm.py, loaded fresh) and the
+    through BOTH the pre-01-26 engine (its parent's engine/fsm.py, loaded fresh) and the
     post-01-26 engine (this checkout) must collapse to the exact same outcome — one
     case, one page, one hold. No T2 kind divergence is possible here (a plain
     worker.wall never reaches _gate_giveup), so this one is byte-identical, no carve-out."""
