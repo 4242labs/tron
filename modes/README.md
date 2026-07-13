@@ -37,16 +37,3 @@ gitignored `.env` at the tron-app repo root — never outside the project.
 tron-flynn "audit this project"   # → claude "/tron-flynn audit this project"
 tron-clu                          # → claude "/tron-clu"
 ```
-
-The command file — with the mode's absolute path baked in — is the **only** thing written. No
-pointer files, no environment variables, no machine-level state of ours. Secrets (the Telegram bot
-token) live in the gitignored `.env` at the tron-app repo root, never outside the project.
-
-Terminal shortcuts, one line in your shell rc:
-
-```zsh
-export PATH="<tron-app>/modes/bin:$PATH"
-
-tron-flynn "audit this project"   # → claude "/tron-flynn audit this project"
-tron-clu                          # → claude "/tron-clu"
-```

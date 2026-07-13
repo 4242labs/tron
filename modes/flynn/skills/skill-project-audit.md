@@ -32,7 +32,7 @@
 - [ ] `agents/data-architect.md` present
 - [ ] `agents/reviewer-code.md` present
 - [ ] `agents/reviewer-security.md` present
-- [ ] `agents/flynn-local.md` present (thin wrapper pointing to 42hq canonical)
+- [ ] `agents/flynn-local.md` present (thin wrapper pointing to `<tron-app>/modes/flynn/flynn.md`)
 - [ ] `skills/skill-validate.md` present
 - [ ] `skills/skill-review-cycle.md` present
 - [ ] `skills/skill-review-code.md` present

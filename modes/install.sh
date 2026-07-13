@@ -10,7 +10,18 @@
 # no environment variables, no other machine state. Re-running is safe.
 set -euo pipefail
 
-MODES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve this script's real directory, following symlinks — a convenience symlink on PATH must
+# still find the modes/ tree, not the symlink's own directory.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  link="$(readlink "$SELF")"
+  case "$link" in
+    /*) SELF="$link" ;;
+    *)  SELF="$(cd "$(dirname "$SELF")" && pwd)/$link" ;;
+  esac
+done
+MODES_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
 TARGET=""
 WIRE_PATH=1
 for arg in "$@"; do
@@ -28,9 +39,15 @@ else
 fi
 mkdir -p "$DEST"
 
-sed "s|<FLYNN_ROOT>|${MODES_DIR}/flynn|g" \
+# `&` and `\` are special on sed's replacement side — a path containing them would silently
+# corrupt the baked-in root rather than fail. Escape before substituting.
+sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+FLYNN_ESC="$(sed_escape "${MODES_DIR}/flynn")"
+CLU_ESC="$(sed_escape "${MODES_DIR}/clu")"
+
+sed "s|<FLYNN_ROOT>|${FLYNN_ESC}|g" \
   "${MODES_DIR}/flynn/install/tron-flynn-command.md" > "${DEST}/tron-flynn.md"
-sed "s|<CLU_ROOT>|${MODES_DIR}/clu|g" \
+sed "s|<CLU_ROOT>|${CLU_ESC}|g" \
   "${MODES_DIR}/clu/install/tron-clu-command.md" > "${DEST}/tron-clu.md"
 
 echo "installed: ${DEST}/tron-flynn.md  → /tron-flynn"
@@ -44,10 +61,15 @@ if [ "$WIRE_PATH" -eq 1 ]; then
     *)    RC="" ;;
   esac
   LINE="export PATH=\"${MODES_DIR}/bin:\$PATH\""
+  # The rc may already carry the line in $HOME- or ~-relative form; match those too, or we append
+  # a duplicate on every run.
+  BIN_ABS="${MODES_DIR}/bin"
+  BIN_HOME="${BIN_ABS/#$HOME/\$HOME}"
+  BIN_TILDE="${BIN_ABS/#$HOME/\~}"
   if [ -z "$RC" ]; then
-    echo "note: unknown shell (${SHELL}) — add this to your rc yourself:"
+    echo "note: unknown shell (${SHELL:-none}) — add this to your rc yourself:"
     echo "  ${LINE}"
-  elif grep -qF "${MODES_DIR}/bin" "$RC" 2>/dev/null; then
+  elif grep -qF -e "$BIN_ABS" -e "$BIN_HOME" -e "$BIN_TILDE" "$RC" 2>/dev/null; then
     echo "shortcuts: already on PATH via ${RC}"
   else
     printf '\n# TRON modes — tron-flynn (advisor) / tron-clu (supervisor)\n%s\n' "$LINE" >> "$RC"
