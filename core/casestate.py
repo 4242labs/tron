@@ -137,6 +137,7 @@ both now respect ownership: `reping` skips any case still `owner="architect"`
 `owner="architect"` — the operator can never bypass the architect's own
 triage, structurally.
 """
+import copy
 import datetime
 import os
 import sys
@@ -147,6 +148,7 @@ if _HERE not in sys.path:
 
 import gate   # noqa: E402 — core/gate.py, STAGE_ESCALATED/STAGE_CLOSED terminal vocabulary (read-only)
 import pipeline   # noqa: E402 — core/pipeline.py, ADR-0008 stale_landing_wall (read-only; pipeline imports only gitobs — no cycle)
+import vocab   # noqa: E402 — core/vocab.py, TPL_TERMINAL_SAFE_PARK (block 01-38 T2)
 
 VERBS = ("resume", "amend", "abandon")
 
@@ -159,6 +161,24 @@ VERBS = ("resume", "amend", "abandon")
 #     stays open, forever, exactly like before the cap. ──
 PAGE_REPING_AFTER = 1             # pace units an un-delivered page holds before a forced re-ping (bounded — at most once per pace() call, never a busy-loop)
 PAGE_CHANNEL_ESCALATE_AFTER = 3   # consecutive failed/absent deliveries -> escalate the CHANNEL — never terminal, never stops the ladder
+
+# ── R8 (block 01-38 T2/T3) — the TWO receipt levels' own budgets. `delivered`
+#    (transport acknowledged) alone no longer satisfies the floor outright —
+#    the historical failure was a page sitting delivered-but-UNSEEN for 36
+#    minutes — but a delivered-and-unseen page is a DIFFERENT problem (an
+#    inattentive human, not a broken transport) and gets its OWN, deliberately
+#    LONGER-cadence nag ladder (`SEEN_REPING_AFTER`, below) rather than being
+#    folded into `PAGE_REPING_AFTER`'s tight transport-failure cadence. ──
+SEEN_REPING_AFTER = 30            # pace units a delivered-but-UNSEEN page waits before one more nudge (a separate, longer budget than PAGE_REPING_AFTER — never as tight as the undelivered-transport ladder)
+# THE TERMINAL FLOOR (R8): if the floor itself permanently fails — the
+# transport keeps failing well past the channel-escalation point — the run
+# enters safe-park-and-halt (`_trip_safe_park`, below) rather than re-pinging
+# forever into a log nobody reads. Must exceed PAGE_CHANNEL_ESCALATE_AFTER by
+# a wide, genuinely-bounded margin (R7: "every wait is bounded") — chosen
+# comfortably above `core/opfloor_rig.py`'s own FLOOR_OBSERVE_TICKS=12-tick
+# observe window (a pre-existing, still-green proof that a failing transport
+# must NOT trip a terminal state within an ordinary observe window).
+PAGE_PERMANENT_FAIL_AFTER = 25
 
 
 def _now_iso():
@@ -464,6 +484,84 @@ def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kin
     return case_id
 
 
+def mark_seen(manifest, case_id, at=None):
+    """R8 (block 01-38 T2/T3) — the SECOND receipt level: the operator has
+    demonstrably READ/replied to this case, independent of whether their
+    reply parses into a valid verb (a malformed reply still proves a human
+    looked — `core/snapshot.py::build` calls this for every operator-inbox
+    line that names an open case_id, BEFORE classify/door validation, since
+    the door refusing a reply's CONTENT must never also erase the fact that
+    the operator engaged with it at all). Marks EVERY still-open
+    `operator_pages` record for `case_id`, plus the case's own paging
+    ladder, `seen=True` — idempotent (never overwrites an existing `seen_at`)
+    and a silent no-op for an unknown case_id (never guessed, never
+    raises — mirrors `settle`'s own forgiving discipline for an unresolved
+    id)."""
+    at = at or _now_iso()
+    cases = manifest.get("cases") or {}
+    case = cases.get(case_id)
+    if case is not None:
+        paging = case.setdefault("paging", {
+            "attempts": 0, "consecutive_fail": 0, "last_receipt": None,
+            "holding_since": None, "channel_escalated": False,
+        })
+        if not paging.get("seen"):
+            paging["seen"] = True
+            paging["seen_at"] = at
+    pages = manifest.get("operator_pages") or {}
+    for p in pages.values():
+        if p.get("case_id") == case_id and not p.get("seen"):
+            p["seen"] = True
+            p["seen_at"] = at
+
+
+def _trip_safe_park(eng, manifest, case_id, case, now):
+    """THE TERMINAL FLOOR (R8, block 01-38 T2/AC-4): the operator-page
+    transport has permanently failed for `case_id` — `PAGE_PERMANENT_FAIL_
+    AFTER` consecutive failed/absent deliveries, well past the (non-
+    terminal) channel-escalation point. Idempotent — a manifest already
+    carrying `safe_park` is left untouched (the FIRST permanent failure
+    wins; `core/tick.py` reads this flag once, this SAME tick, and halts —
+    a second trip has nothing left to do). Counts a must-be-zero counter
+    (`operator_floor_permanent_fail` — 01-39 owns the partition/acceptance
+    read; this call is the WRITE side only) and records a full state
+    snapshot (cases/gates/workers/operator_pages, deep-copied so it is
+    never mutated by whatever the engine does AFTER this trip) — never
+    "fails loudly into a log nobody reads"."""
+    if manifest.get("safe_park"):
+        return
+    counters = manifest.setdefault("counters", {})
+    counters["operator_floor_permanent_fail"] = counters.get(
+        "operator_floor_permanent_fail", 0) + 1
+    detail = (f"case {case_id!r} (block={case.get('block')!r}): the operator "
+             f"page transport failed {PAGE_PERMANENT_FAIL_AFTER}+ consecutive "
+             f"times — the floor itself has permanently failed.")
+    try:
+        text = eng.emit(vocab.TPL_TERMINAL_SAFE_PARK, detail, slots={"detail": detail})
+    except Exception:   # noqa: BLE001 — a template fault must never block the trip itself
+        text = detail
+    manifest["safe_park"] = {
+        "case_id": case_id,
+        "reason": text,
+        "at": now if isinstance(now, str) else _now_iso(),
+        "snapshot": {
+            "cases": copy.deepcopy(manifest.get("cases")),
+            "gates": copy.deepcopy(manifest.get("gates")),
+            "workers": copy.deepcopy(manifest.get("workers")),
+            "operator_pages": copy.deepcopy(manifest.get("operator_pages")),
+        },
+    }
+    eng.events.event("must_be_zero", counter="operator_floor_permanent_fail",
+                     case_id=case_id, block=case.get("block"))
+    # Best-effort — the transport is already known broken; this is a last
+    # attempt, never load-bearing (safe_park is already durably on file
+    # regardless of its outcome).
+    eng._page_operator(case_id, case.get("block"), text,
+                       worker_id=case.get("worker_id"), manifest=manifest,
+                       page_kind="operator_page_safe_park")
+    eng.log("operator", f"casestate: SAFE-PARK-AND-HALT tripped — {text}")
+
+
 def reping(eng, manifest, now):
     """THE FLOOR (GAP-A, wave 17) — the #2 historical failure
     (`operator-page-failed::page-receipt-permanent-fail`, 13x) made
@@ -537,7 +635,28 @@ def reping(eng, manifest, now):
         })
 
         if paging.get("last_receipt") == "delivered":
-            continue   # satisfied — no more pings than the backoff dictates
+            if paging.get("seen"):
+                continue   # satisfied — delivered AND acknowledged, no more pings
+            # R8 (block 01-38 T2/AC-3): delivered but genuinely UNSEEN — "a
+            # page once sat delivered-but-unseen for 36 minutes". A SEPARATE,
+            # deliberately LONGER-cadence nag ladder than the undelivered-
+            # transport one above (never as tight — this catches an
+            # inattentive HUMAN, not a broken transport; opfloor_rig.py's own
+            # 12-tick observe window relies on this being a wider budget).
+            delivered_since = paging.get("delivered_since")
+            if delivered_since is None:
+                paging["delivered_since"] = now
+                continue
+            if (now - delivered_since) < SEEN_REPING_AFTER:
+                continue
+            paging["delivered_since"] = now   # reset the anchor — bounded, never a busy-loop
+            receipt = eng._page_operator(case_id, case.get("block"), case.get("detail"),
+                                         worker_id=case.get("worker_id"), manifest=manifest,
+                                         page_kind="operator_page_unseen")
+            paging["attempts"] += 1
+            paging["last_receipt"] = receipt or paging["last_receipt"]
+            repinged.append(case_id)
+            continue
 
         if paging.get("holding_since") is None:
             # First sighting of this ladder for this case (the same tick it
@@ -580,6 +699,14 @@ def reping(eng, manifest, now):
                 "kind": "operator-page-failed", "level": "warning",
                 "consecutive_fail": paging["consecutive_fail"], "detail": detail, "at": now})
             eng.log("operator", f"casestate: CHANNEL ESCALATED for case {case_id!r} — {detail}")
+
+        # THE TERMINAL FLOOR (R8, block 01-38 T2/AC-4): well past the
+        # (non-terminal) channel-escalation point — the transport has
+        # PERMANENTLY failed. Trips exactly once per run (idempotent —
+        # `_trip_safe_park` no-ops if `manifest["safe_park"]` is already
+        # set); `core/tick.py` reads the flag this SAME tick and halts.
+        if paging["consecutive_fail"] >= PAGE_PERMANENT_FAIL_AFTER:
+            _trip_safe_park(eng, manifest, case_id, case, now)
 
     return repinged
 

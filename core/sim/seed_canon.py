@@ -71,16 +71,33 @@ def install_canon(inst_dir, app_root=_APP_ROOT):
         installed.append(d + "/")
 
     # scripts/report.sh — the worker->engine channel. Lands at <instance>/
-    # scripts/report.sh so its own `../worker-inbox.jsonl` == ctx.worker_inbox.
-    src_report = os.path.join(app_root, "scripts", "report.sh")
-    if not os.path.isfile(src_report):
-        raise CanonError(f"seed_canon: report.sh missing: {src_report}")
+    # scripts/report.sh so its own `../worker-inbox.jsonl` == ctx.worker_inbox
+    # (the LEGACY resolution — unchanged); it is ALSO the byte-identical
+    # SOURCE `core/engine.py::Engine._install_agent_channel` copies per-agent
+    # at spawn (block 01-38 T1, R6).
+    #
+    # scripts/tg-send.sh / scripts/operator-reply.sh — R8 (block 01-38 T2/T3):
+    # the operator channel's real transport SEAMS. `core/engine.py::Engine.
+    # _deliver_page` (outbound) and `core/sim/operator_proxy.py`/a real human
+    # (inbound) both resolve these off `ctx.p("scripts", ...)` — without this
+    # seed step a real project would never HAVE them installed, silently
+    # degrading every page to "failed" and every operator reply to a missing
+    # binary. Optional sources (a project predating R8 may not carry
+    # tg-send.sh yet) — installed when present, never fail-loud for their
+    # absence the way report.sh's own genuinely load-bearing absence is.
     inst_scripts = os.path.join(inst_dir, "scripts")
     os.makedirs(inst_scripts, exist_ok=True)
-    dst_report = os.path.join(inst_scripts, "report.sh")
-    shutil.copy2(src_report, dst_report)
-    _mkexec(dst_report)
-    installed.append("scripts/report.sh")
+    for name in ("report.sh", "tg-send.sh", "operator-reply.sh"):
+        src = os.path.join(app_root, "scripts", name)
+        required = name == "report.sh"
+        if not os.path.isfile(src):
+            if required:
+                raise CanonError(f"seed_canon: {name} missing: {src}")
+            continue
+        dst = os.path.join(inst_scripts, name)
+        shutil.copy2(src, dst)
+        _mkexec(dst)
+        installed.append(f"scripts/{name}")
 
     # T2 (block 01-37): the generated vocab schema — NEVER copied from a
     # static file (there is none to copy; `core/vocab.py` is the only

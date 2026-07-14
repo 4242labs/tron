@@ -114,6 +114,7 @@ Keeps ALL git observation inside `core.gitobs` (via `core.gate`/
 git/subprocess call of any kind — it only orchestrates `core.snapshot` +
 `core.router` + `core.gate` + `core.switchboard` + `core.state`.
 """
+import datetime
 import os
 import sys
 
@@ -294,6 +295,34 @@ def tick(eng):
     state.save(eng.ctx, snap.manifest)
     # Only now is it safe to drop the drained inbox sidecar (persist-gated release).
     snapshot.release(snap)
+
+    # ── R8 (block 01-38 T2/AC-4) — THE TERMINAL FLOOR: `casestate.reping`
+    #     (inside `sentry.pace`, above) may have just tripped safe-park-and-
+    #     halt (`snap.manifest["safe_park"]`, set exactly once). This is a
+    #     DIFFERENT terminal than a clean session-end — it can fire with
+    #     blocks still pending/in-flight — so it is checked BEFORE, and
+    #     instead of, `session.check` (below), which would otherwise either
+    #     return None (not settled) or fail-loud RAISE on a genuinely stuck
+    #     block; neither is the right answer once the operator page channel
+    #     itself is provably dead. Persisted the SAME way a clean
+    #     session-end is (below) — `session.already_ended` reads either
+    #     shape identically, so the NEXT tick is a true no-op either way. ──
+    if snap.manifest.get("safe_park") and not session.already_ended(snap.manifest):
+        safe_park = snap.manifest["safe_park"]
+        marker = {"ended_at": safe_park.get("at")
+                            or datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                 "reason": f"SAFE-PARK-AND-HALT: {safe_park.get('reason')}",
+                 "safe_park": True}
+        result["session_end"] = marker
+        # Overwrite, never merge — the SAME plain-replace discipline the
+        # clean session-end path (below) already uses for `manifest
+        # ["session"]`, so a later no-op re-tick's `manifest0.get("session")`
+        # (engine.tick()'s idempotent-terminal short-circuit, top of this
+        # function) reads back byte-identical to what THIS tick returned.
+        snap.manifest["session"] = marker
+        state.save(eng.ctx, snap.manifest)
+        eng.log("flow", f"tick: SAFE-PARK-AND-HALT — {marker['reason']}")
+        return result
 
     # ── session-end (wave 6): a PURE read, AFTER this tick's real
     #     observe/route/act/fill progress is already durable — so a
