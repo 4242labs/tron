@@ -38,7 +38,9 @@ import grants     # noqa: E402 — respected contract, real, unmodified
 import trunk       # noqa: E402 — respected contract, real, unmodified
 import landing       # noqa: E402 — core/landing.py, the module under test
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 BRANCH = "arch/01-03-forward"     # same branch naming the diagnostic rig / live SIM use
 ROLE = "architect"
 BLOCK = "01-03"

@@ -7,46 +7,112 @@ produce. A harness that writes a report claiming any OTHER sender kind into
 that same file asserts an identity nothing real produced (R6: "identity is
 ambient, not asserted") and proves a channel that does not exist (R8: "the
 current harness injects into the worker channel and lies exactly the way the
-old rigs lied") — exactly the failure ADR-0012 §1 names ("the proof surface
-lied ... proved a channel the live engine never had"). Likewise, a harness
-that mutates persisted engine state (`manifest[...]`) directly, instead of
-letting the real drain (tick -> classify -> router) apply the effect, skips
-the door entirely.
+old rigs lied"). There is also no real OPERATOR transport yet at all (R8) — a
+rig that writes `ctx.operator_inbox` fabricates a channel wholesale. Likewise,
+a harness that mutates persisted engine state (`manifest[...]`) directly,
+instead of letting the real drain (tick -> classify -> router) apply the
+effect, skips the door entirely.
 
-Two illegal-ingress shapes, checked statically (AST) over the proof-harness
-surface (`core/*_rig.py`, every module under `core/sim/`):
+DESIGN (rebuilt, block 01-40 T1 REQUIRED CHANGE 2): the first version of this
+lint pattern-matched a small, ENUMERATED set of illegal-write SHAPES (a
+specific `open(<path with "inbox">, "a")` + `.write(...)` idiom, a specific
+`append_jsonl(...)` call idiom). A hostile review proved 10/10 plain
+(non-adversarial) rewrites of the exact same violation defeat shape-matching:
+renaming the path variable, passing the path as a `file=` kwarg, writing via
+`json.dump` instead of `.write`, opening without `with`, hiding the write
+inside a same-file helper function, shelling out with `>>` instead of calling
+Python's `open`, aliasing `manifest` to a short name before subscripting it,
+overwriting `manifest["cases"]` wholesale at depth 1 instead of depth >= 2,
+calling `.update()` instead of assigning a subscript, and building the
+`sender` dict via a helper call instead of an inline literal.
 
-  INBOX_FABRICATED_SENDER — a dict written to something that looks like the
-    inbox file (`open(<path with "inbox">, "a")` + `.write(...)`, or a call
-    to `append_jsonl`/`util.append_jsonl` whose first argument mentions
-    "inbox") declares `sender.kind` as a string literal other than
-    `"worker"`.
+The rebuild inverts the default: DENY BY DEFAULT, allow a small, explicit,
+statically-provable legal surface — never enumerate illegal shapes and chase
+the next rewrite. Concretely:
 
-  MANIFEST_DIRECT_WRITE — an assignment into a `manifest[...][...]`-shaped
-    subscript chain (2+ levels deep, root name containing "manifest"),
-    instead of going through the real effect functions.
+  1. Any file-write-capable operation (`open(...)` in a write/append mode —
+     whether opened with `with` or bound to a bare name, whether the path is
+     positional or a `file=` kwarg —, `.write`/`.writelines` on the resulting
+     handle, `json.dump` to it, or an equivalent `subprocess`/`os.system`
+     shell command containing a `>`/`>>` redirect) whose TARGET resolves,
+     via a whole-file "nearest prior assignment" alias trace (see below), to
+     `ctx.worker_inbox` or `ctx.operator_inbox` — OR the recognized
+     `append_jsonl(path, obj)` primitive called with such a target — is
+     IN SCOPE, regardless of which function in the file it lives inside
+     (this is exactly what closes the "helper-function indirection" evasion:
+     detection is whole-file and mechanism-based, never tied to a specific
+     call site or enclosing function name).
+
+  2. Within scope, `ctx.operator_inbox` is ALWAYS illegal
+     (`OPERATOR_INBOX_WRITE`) — there is no real operator transport a rig or
+     driver may legitimately use yet (R8), so no payload shape makes this
+     legal.
+
+  3. Within scope, `ctx.worker_inbox` is legal ONLY if the write's JSON
+     payload is a statically-resolvable dict literal that either carries NO
+     `sender` key at all (ambient — the shape `scripts/report.sh`'s own
+     free-text/structured lines and `core.sim.live`'s courier fallback both
+     use) or carries `sender.kind` as the string literal `"worker"`. ANY
+     other outcome — a literal non-"worker" kind, OR a `sender`/payload that
+     cannot be resolved to a literal at all (a helper-call result, an
+     unresolved name, a dict built through indirection) — is DENIED
+     (`INBOX_FABRICATED_SENDER`). Denying the unresolvable case (rather than
+     only the provably-bad case) is the deliberate inversion: it closes
+     "sender built via helper call" without needing to understand what the
+     helper does.
+
+  4. `manifest[...]` direct-write is unchanged in kind but alias-aware: any
+     assignment (or `AugAssign`, or `.update()` call) into a subscript chain
+     — of ANY depth (>= 1, not >= 2) — whose ROOT resolves, via the SAME
+     whole-file alias trace, to a name literally containing "manifest" (a
+     bare `manifest` reference, an attribute ending in `.manifest`, or an
+     alias of either assigned earlier in the file: `m = eng.manifest`) is
+     `MANIFEST_DIRECT_WRITE`.
+
+Two illegal-ingress classes remain the visible violation vocabulary
+(`INBOX_FABRICATED_SENDER` + `OPERATOR_INBOX_WRITE` for the reporting door;
+`MANIFEST_DIRECT_WRITE` for direct state mutation), matching R3's own
+framing — only the DETECTION underneath them was rebuilt.
 
 NOT flagged: calling an internal function directly with a constructed
 argument (e.g. `classify.classify(eng, {...}, manifest)` to unit-test
-`classify` itself, or seeding a scenario's initial `manifest = {...}` whole-
-dict fixture). Those are ordinary whitebox unit tests / fixture setup — they
-never claim to drive the real inbox -> drain path, so they cannot lie about
-one. Only harnesses that construct what looks like a wire report AND hand it
-to the real inbox-file surface are in scope.
+`classify` itself, or seeding a scenario's initial `manifest = {...}`
+whole-dict fixture, or reading `manifest[...]`/`ctx.worker_inbox` anywhere).
+Only a WRITE-capable operation whose target resolves to ingress state is in
+scope — ordinary whitebox unit tests and fixture setup never claim to drive
+the real inbox -> drain path, so they cannot lie about one.
 
-Resolution of a write's payload, when it is a bare Name rather than an inline
-dict literal, uses a flat, whole-file "last prior assignment of that name"
-lookup — not real scope-aware data flow. That is a documented, deliberate
-simplification: it is sufficient for every current harness (verified against
-the whole `core/` proof surface when this lint was written) and for this
-lint's own CI fixtures. A harness deliberately written to defeat it (e.g.
-reusing a generic name across unrelated scopes) would need a follow-up rule;
-this lint catches the direct, literal violations every current rig actually
-writes, not obfuscated ones.
+REAL, HONESTLY-DISCLOSED REMAINING LIMITS (not closed by this rebuild):
+
+  - Alias/name resolution is a flat, whole-file "nearest prior assignment
+    before this line" walk — NOT real scope-aware/interprocedural data flow.
+    A function PARAMETER named `manifest` is treated as tainted by its
+    literal name (not by call-graph analysis of what's passed in); a
+    parameter with some OTHER name that receives `ctx.worker_inbox` from a
+    caller is invisible to this lint (no cross-function taint). This is
+    sufficient for every current harness (re-verified against the whole
+    `core/` proof surface + the 10 adversarial fixtures below when this
+    rebuild landed) but is not a general dataflow prover.
+  - The recognized ingress-state markers are exactly `worker_inbox`,
+    `operator_inbox`, and `manifest` — the concrete real doors/state this
+    ADR names. Other `ctx` fields the engine also owns and appends to
+    (`event_log`, `home_log`, `message_log`, ...) are NOT covered; a rig
+    writing directly to one of those would not be caught by this lint.
+  - The subprocess/shell-redirect check is a textual/AST pattern match for a
+    `>`/`>>` operator plus an ingress-marker reference inside a
+    `subprocess.*`/`os.system`/`os.popen` call — it is not a shell parser
+    (e.g. redirects hidden behind further indirection, like a `.sh` script
+    file the rig writes and then executes, are out of scope).
+  - This is a static AST lint, not a dynamic/runtime enforcement layer — a
+    sufficiently obfuscated adversarial rewrite (e.g. `getattr`/`exec`-based
+    indirection) can still defeat static analysis in principle. The design
+    goal is to catch the ILLEGAL CLASS as it is actually written by a
+    developer trying to pass CI, not to be a covert-channel-proof sandbox.
 """
 import ast
 import glob
 import os
+import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -94,8 +160,14 @@ def harness_files():
     return files
 
 
+# ─────────────────────────── shared alias tracing ───────────────────────────
+# Every trace below is the SAME documented simplification: a flat,
+# whole-file, line-ordered "nearest prior binding" walk — not real
+# scope-aware data flow (see module docstring).
+
 def _dict_literal_str_value(dict_node, key):
-    """`{key: "literal"}` -> `"literal"`; `None` if absent or non-literal."""
+    """`{key: "literal"}` -> `"literal"`; `None` if absent, `"<non-literal>"`
+    if present but not a string constant."""
     if not isinstance(dict_node, ast.Dict):
         return None
     for k, v in zip(dict_node.keys, dict_node.values):
@@ -106,10 +178,9 @@ def _dict_literal_str_value(dict_node, key):
     return None
 
 
-def _collect_name_bindings(tree):
+def _collect_dict_bindings(tree):
     """Flat, whole-file `(lineno, Name, Dict-literal-node)` list, sorted by
-    line. See module docstring: a documented simplification, not real
-    scope-aware data flow."""
+    line — resolves a bare Name payload/sender back to its dict literal."""
     assigns = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
@@ -120,33 +191,93 @@ def _collect_name_bindings(tree):
     return assigns
 
 
-def _nearest_binding(assigns, name, before_lineno):
+def _nearest_binding(bindings, name, before_lineno):
     best = None
-    for lineno, nm, dict_node in assigns:
+    for lineno, nm, node in bindings:
         if nm == name and lineno <= before_lineno:
-            best = dict_node
+            best = node
     return best
 
 
-def _path_mentions_inbox(expr):
-    try:
-        text = ast.unparse(expr)
-    except Exception:
-        return False
-    return "inbox" in text.lower()
+def _build_parent_function_map(tree):
+    """AST node -> its nearest enclosing `ast.FunctionDef` (or `None` at
+    module level). Powers the bounded, same-file call-site trace below —
+    NOT a general interprocedural analysis (see module docstring)."""
+    parent_func = {}
+
+    def visit(node, current_func):
+        parent_func[node] = current_func
+        nxt = node if isinstance(node, ast.FunctionDef) else current_func
+        for child in ast.iter_child_nodes(node):
+            visit(child, nxt)
+
+    visit(tree, None)
+    return parent_func
 
 
-def _open_append_mode(call):
-    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
-        return call.args[1].value
-    for kw in call.keywords:
-        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-            return kw.value.value
+_MAX_INDIRECTION_DEPTH = 3
+
+
+def _param_index(funcdef, name):
+    for i, a in enumerate(funcdef.args.args):
+        if a.arg == name:
+            return i
     return None
+
+
+def _call_arg_for_param(call, idx, name):
+    if idx < len(call.args):
+        return call.args[idx]
+    for kw in call.keywords:
+        if kw.arg == name:
+            return kw.value
+    return None
+
+
+def _resolve_payload_dicts(expr, dict_bindings, lineno, parent_func, tree, depth=0):
+    """Resolve a payload expression to `[(dict_node_or_None, effective_lineno), ...]`
+    — normally one candidate. Closes the "helper-function indirection"
+    evasion for the specific shape it actually takes in this codebase: a
+    same-file helper whose payload argument is a bare pass-through
+    parameter (`def inject(obj): append_jsonl(path, obj)`), never itself
+    locally bound to a dict literal. Rather than declaring every such
+    parameter unresolvable (which would falsely redden every legitimate
+    thin wrapper), this walks every call site of the enclosing function
+    (exact name match, same file) and resolves what was ACTUALLY passed
+    there, recursively (bounded depth) — so a wrapper is judged by what
+    every one of its call sites really sends, not by its own signature."""
+    if isinstance(expr, ast.Dict):
+        return [(expr, lineno)]
+    if isinstance(expr, ast.Name):
+        direct = _nearest_binding(dict_bindings, expr.id, lineno)
+        if direct is not None:
+            return [(direct, lineno)]
+        if depth < _MAX_INDIRECTION_DEPTH:
+            enclosing = parent_func.get(expr)
+            if enclosing is not None:
+                idx = _param_index(enclosing, expr.id)
+                if idx is not None:
+                    sites = [n for n in ast.walk(tree)
+                             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                             and n.func.id == enclosing.name]
+                    if sites:
+                        out = []
+                        for call in sites:
+                            arg = _call_arg_for_param(call, idx, expr.id)
+                            if arg is None:
+                                out.append((None, call.lineno))
+                            else:
+                                out.extend(_resolve_payload_dicts(
+                                    arg, dict_bindings, call.lineno, parent_func, tree, depth + 1))
+                        return out
+        return [(None, lineno)]
+    return [(None, lineno)]
 
 
 def _unwrap_json_dumps(arg):
     """`json.dumps(X) + "\\n"` or `json.dumps(X)` -> `X`; else `arg` as-is."""
+    if arg is None:
+        return None
     target = arg.left if isinstance(arg, ast.BinOp) else arg
     if (isinstance(target, ast.Call) and isinstance(target.func, ast.Attribute)
             and target.func.attr == "dumps" and target.args):
@@ -154,82 +285,315 @@ def _unwrap_json_dumps(arg):
     return target
 
 
-def _sender_kind_violation(payload_expr, assigns, path, lineno, violations):
-    dict_node = payload_expr
-    if isinstance(dict_node, ast.Name):
-        dict_node = _nearest_binding(assigns, dict_node.id, lineno)
-    if not isinstance(dict_node, ast.Dict):
-        return
-    sender = None
-    for k, v in zip(dict_node.keys, dict_node.values):
-        if isinstance(k, ast.Constant) and k.value == "sender":
-            sender = v
-            break
-    if sender is None:
-        return  # no sender asserted at all — ambient/implicit, not flagged
-    kind = _dict_literal_str_value(sender, "kind")
-    if kind is None or kind == "worker":
-        return
-    violations.append(Violation(
-        path, lineno, "INBOX_FABRICATED_SENDER",
-        f'writes sender.kind={kind!r} into the inbox file — report.sh (the '
-        f'one real door) can only ever emit sender.kind="worker"'))
+def _classify_path_expr(expr, path_bindings, before_lineno):
+    """Does `expr` resolve to `ctx.worker_inbox` / `ctx.operator_inbox`
+    (directly, or via a traced alias)? Returns "worker" / "operator" / None.
+    Falls back to a textual match ONLY as a last resort (documented in the
+    module docstring) — the primary mechanism is the alias trace, which is
+    what actually defeats a renamed variable."""
+    if expr is None:
+        return None
+    if isinstance(expr, ast.Attribute):
+        if expr.attr == "worker_inbox":
+            return "worker"
+        if expr.attr == "operator_inbox":
+            return "operator"
+    if isinstance(expr, ast.Name):
+        best = None
+        for lineno, nm, kind in path_bindings:
+            if nm == expr.id and lineno <= before_lineno:
+                best = kind
+        if best:
+            return best
+        return None
+    try:
+        text = ast.unparse(expr).lower()
+    except Exception:
+        return None
+    if "worker_inbox" in text or "worker-inbox" in text:
+        return "worker"
+    if "operator_inbox" in text or "operator-inbox" in text:
+        return "operator"
+    if "inbox" in text:
+        return "worker"
+    return None
 
 
-def _check_inbox_fabricated_sender(tree, path):
-    violations = []
-    assigns = _collect_name_bindings(tree)
+def _collect_path_bindings(tree):
+    """`(lineno, Name, "worker"|"operator")` list: names assigned (anywhere
+    in the file, single-hop-per-pass but processed in line order, so chains
+    like `p = ctx.worker_inbox; q = p` resolve in one forward sweep) from an
+    inbox-path-shaped expression."""
+    bindings = []
+    assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+    assigns.sort(key=lambda n: n.lineno)
+    for node in assigns:
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        kind = _classify_path_expr(node.value, bindings, node.lineno)
+        if kind:
+            bindings.append((node.lineno, node.targets[0].id, kind))
+    return bindings
 
+
+def _open_call_path_mode(call):
+    """`open(<path>, <mode>)` — path/mode resolved from EITHER positional
+    args OR `file=`/`mode=` kwargs (closes the kwarg-only evasion)."""
+    path_arg = call.args[0] if len(call.args) >= 1 else None
+    mode_arg = call.args[1] if len(call.args) >= 2 else None
+    for kw in call.keywords:
+        if kw.arg == "file" and path_arg is None:
+            path_arg = kw.value
+        if kw.arg == "mode" and mode_arg is None:
+            mode_arg = kw.value
+    if mode_arg is None:
+        mode = "r"          # open()'s own default
+    elif isinstance(mode_arg, ast.Constant) and isinstance(mode_arg.value, str):
+        mode = mode_arg.value
+    else:
+        mode = "<non-literal>"
+    return path_arg, mode
+
+
+def _is_write_mode(mode):
+    return isinstance(mode, str) and any(c in mode for c in "wax+")
+
+
+def _is_open_call(node):
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open"
+
+
+def _collect_handle_bindings(tree, path_bindings):
+    """`(lineno, Name, "worker"|"operator")` for a file HANDLE bound to a
+    write-capable `open(<inbox path>, ...)` — via `with ... as X:` OR a bare
+    `X = open(...)` (closes the "no `with`" evasion; both shapes covered by
+    a single scan)."""
+    events = []
     for node in ast.walk(tree):
-        # shape 1: `with open(<path>, "a") as ib: ib.write(<payload>)`
-        if isinstance(node, ast.With):
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                continue
+            if not _is_open_call(node.value):
+                continue
+            path_arg, mode = _open_call_path_mode(node.value)
+            if not _is_write_mode(mode):
+                continue
+            kind = _classify_path_expr(path_arg, path_bindings, node.lineno)
+            if kind:
+                events.append((node.lineno, node.targets[0].id, kind))
+        elif isinstance(node, ast.With):
             for item in node.items:
-                ctx = item.context_expr
-                if not (isinstance(ctx, ast.Call) and isinstance(ctx.func, ast.Name)
-                        and ctx.func.id == "open"):
+                if not _is_open_call(item.context_expr):
                     continue
-                if _open_append_mode(ctx) not in ("a", "ab", "a+"):
+                if not isinstance(item.optional_vars, ast.Name):
                     continue
-                if not ctx.args or not _path_mentions_inbox(ctx.args[0]):
+                path_arg, mode = _open_call_path_mode(item.context_expr)
+                if not _is_write_mode(mode):
                     continue
-                var = item.optional_vars.id if isinstance(item.optional_vars, ast.Name) else None
-                if not var:
-                    continue
-                for sub in ast.walk(node):
-                    if not (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                            and sub.func.attr == "write" and isinstance(sub.func.value, ast.Name)
-                            and sub.func.value.id == var and sub.args):
-                        continue
-                    payload = _unwrap_json_dumps(sub.args[0])
-                    _sender_kind_violation(payload, assigns, path, sub.lineno, violations)
+                kind = _classify_path_expr(path_arg, path_bindings, node.lineno)
+                if kind:
+                    events.append((node.lineno, item.optional_vars.id, kind))
+    events.sort(key=lambda t: t[0])
+    return events
 
-        # shape 2: `append_jsonl(<path>, <payload>)` (util.append_jsonl or bare import)
+
+def _resolve_handle_kind(expr, handle_bindings, path_bindings, before_lineno):
+    """The object a `.write`/`.writelines`/`json.dump` call targets: a
+    traced handle Name, OR an inline `open(<inbox path>, <write mode>)`
+    (the chained-call shape, no intermediate variable at all)."""
+    if isinstance(expr, ast.Name):
+        best = None
+        for lineno, nm, kind in handle_bindings:
+            if nm == expr.id and lineno <= before_lineno:
+                best = kind
+        return best
+    if _is_open_call(expr):
+        path_arg, mode = _open_call_path_mode(expr)
+        if _is_write_mode(mode):
+            return _classify_path_expr(path_arg, path_bindings, before_lineno)
+    return None
+
+
+_SUBPROC_ATTRS = {"run", "call", "check_call", "check_output", "Popen", "system", "popen"}
+
+
+def _is_subprocess_like_call(call):
+    func = call.func
+    return (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+            and func.value.id in ("subprocess", "os") and func.attr in _SUBPROC_ATTRS)
+
+
+_REDIRECT_RE = re.compile(r">>|(?<!-)>(?!=)")
+
+
+def _find_dumps_payload(node):
+    """The first `json.dumps(X)` call anywhere inside `node`'s subtree ->
+    `X`; used to recover a payload embedded in a shelled-out command
+    string."""
+    for sub in ast.walk(node):
+        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "dumps" and isinstance(sub.func.value, ast.Name)
+                and sub.func.value.id == "json" and sub.args):
+            return sub.args[0]
+    return None
+
+
+def _emit_channel_violation(kind, payload_expr, dict_bindings, path, lineno, violations, mechanism,
+                             parent_func, tree):
+    if kind == "operator":
+        violations.append(Violation(
+            path, lineno, "OPERATOR_INBOX_WRITE",
+            f"writes to ctx.operator_inbox via {mechanism} — there is no real operator "
+            "transport a rig or driver may use yet (ADR-0012 R8); this channel is illegal "
+            "to write at all, regardless of payload"))
+        return
+    # kind == "worker"
+    candidates = (_resolve_payload_dicts(payload_expr, dict_bindings, lineno, parent_func, tree)
+                  if payload_expr is not None else [(None, lineno)])
+    for dict_node, at_lineno in candidates:
+        if not isinstance(dict_node, ast.Dict):
+            violations.append(Violation(
+                path, at_lineno, "INBOX_FABRICATED_SENDER",
+                f"writes to ctx.worker_inbox via {mechanism} with a payload that is not a "
+                "statically-resolvable dict literal — cannot verify sender.kind, denied by "
+                "default (see module docstring: this is the deliberate deny-unless-provable "
+                "inversion, not a false positive on an unrelated write)"))
+            continue
+        sender = None
+        for k, v in zip(dict_node.keys, dict_node.values):
+            if isinstance(k, ast.Constant) and k.value == "sender":
+                sender = v
+                break
+        if sender is None:
+            continue  # no sender asserted — ambient/implicit, matches report.sh's own shape
+        sender_dict = sender
+        if isinstance(sender_dict, ast.Name):
+            sender_dict = _nearest_binding(dict_bindings, sender_dict.id, at_lineno)
+        kind_val = (_dict_literal_str_value(sender_dict, "kind")
+                    if isinstance(sender_dict, ast.Dict) else "<non-literal>")
+        if kind_val == "worker":
+            continue
+        violations.append(Violation(
+            path, at_lineno, "INBOX_FABRICATED_SENDER",
+            f'writes to ctx.worker_inbox via {mechanism} asserting sender.kind={kind_val!r} — '
+            f'report.sh (the one real door) can only ever emit sender.kind="worker"'))
+
+
+def _check_inbox_writes(tree, dict_bindings, path_bindings, handle_bindings, path, parent_func):
+    violations = []
+    for node in ast.walk(tree):
+        # shape A: `<handle>.write(...)` / `.writelines(...)` — traced
+        # handle OR an inline `open(<path>, <mode>).write(...)` chain.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("write", "writelines")):
+            kind = _resolve_handle_kind(node.func.value, handle_bindings, path_bindings, node.lineno)
+            if kind:
+                payload = _unwrap_json_dumps(node.args[0]) if node.args else None
+                _emit_channel_violation(kind, payload, dict_bindings, path, node.lineno,
+                                         violations, "a raw open()/.write()", parent_func, tree)
+
+        # shape B: `json.dump(<obj>, <handle>)`.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "dump" and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "json"):
+            obj_arg = node.args[0] if len(node.args) >= 1 else next(
+                (kw.value for kw in node.keywords if kw.arg == "obj"), None)
+            fp_arg = node.args[1] if len(node.args) >= 2 else next(
+                (kw.value for kw in node.keywords if kw.arg == "fp"), None)
+            kind = _resolve_handle_kind(fp_arg, handle_bindings, path_bindings, node.lineno) if fp_arg else None
+            if kind:
+                _emit_channel_violation(kind, obj_arg, dict_bindings, path, node.lineno,
+                                         violations, "json.dump()", parent_func, tree)
+
+        # shape C: `append_jsonl(<path>, <obj>)` — the recognized real
+        # primitive; still checked, since the DOOR itself can be called
+        # with an illegal target/payload.
         if (isinstance(node, ast.Call)
                 and ((isinstance(node.func, ast.Name) and node.func.id == "append_jsonl")
-                     or (isinstance(node.func, ast.Attribute) and node.func.attr == "append_jsonl"))
-                and len(node.args) >= 2):
-            if not _path_mentions_inbox(node.args[0]):
-                continue
-            _sender_kind_violation(node.args[1], assigns, path, node.lineno, violations)
+                     or (isinstance(node.func, ast.Attribute) and node.func.attr == "append_jsonl"))):
+            path_arg = node.args[0] if len(node.args) >= 1 else next(
+                (kw.value for kw in node.keywords if kw.arg == "path"), None)
+            payload_arg = node.args[1] if len(node.args) >= 2 else next(
+                (kw.value for kw in node.keywords if kw.arg == "obj"), None)
+            kind = _classify_path_expr(path_arg, path_bindings, node.lineno) if path_arg is not None else None
+            if kind:
+                _emit_channel_violation(kind, payload_arg, dict_bindings, path, node.lineno,
+                                         violations, "append_jsonl()", parent_func, tree)
 
+        # shape D: a shelled-out `subprocess`/`os.system` command containing
+        # a `>`/`>>` redirect into an inbox-shaped target — never a real
+        # production shape (report.sh is always invoked via argv, never
+        # shell-redirected into).
+        if isinstance(node, ast.Call) and _is_subprocess_like_call(node):
+            try:
+                text = ast.unparse(node)
+            except Exception:
+                continue
+            if not _REDIRECT_RE.search(text):
+                continue
+            low = text.lower()
+            if "operator_inbox" in low or "operator-inbox" in low:
+                kind = "operator"
+            elif "worker_inbox" in low or "worker-inbox" in low or "inbox" in low:
+                kind = "worker"
+            else:
+                kind = None
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Name):
+                        for lineno, nm, k in path_bindings:
+                            if nm == sub.id and lineno <= node.lineno:
+                                kind = k
+                if kind is None:
+                    continue
+            payload = _find_dumps_payload(node)
+            _emit_channel_violation(kind, payload, dict_bindings, path, node.lineno,
+                                     violations, "a shelled-out subprocess redirect (>>/>)",
+                                     parent_func, tree)
     return violations
 
 
-def _subscript_root_and_depth(node):
-    depth = 0
-    cur = node
+# ─────────────────────────── manifest direct-write ───────────────────────────
+
+def _is_direct_manifest_ref(node):
+    if isinstance(node, ast.Name):
+        return "manifest" in node.id.lower()
+    if isinstance(node, ast.Attribute):
+        return "manifest" in node.attr.lower()
+    return False
+
+
+def _manifest_rooted(expr, manifest_bindings, before_lineno):
+    """Is `expr` (an assignment target, or the object of a `.update()`
+    call) rooted at a manifest reference — literal `manifest`, `<x>.
+    manifest`, or a traced alias of either (`m = eng.manifest`, `cases =
+    manifest["cases"]`, `q = m`)? Subscripts are unwound to find the root;
+    any depth >= 1 counts (closes the "depth-1 wholesale overwrite"
+    evasion — the OLD lint required depth >= 2)."""
+    cur = expr
     while isinstance(cur, ast.Subscript):
-        depth += 1
         cur = cur.value
-    root_name = None
+    if _is_direct_manifest_ref(cur):
+        return True
     if isinstance(cur, ast.Name):
-        root_name = cur.id
-    elif isinstance(cur, ast.Attribute):
-        root_name = cur.attr
-    return root_name, depth
+        for lineno, nm in manifest_bindings:
+            if nm == cur.id and lineno <= before_lineno:
+                return True
+    return False
 
 
-def _check_manifest_direct_write(tree, path):
+def _collect_manifest_bindings(tree):
+    bindings = []
+    assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+    assigns.sort(key=lambda n: n.lineno)
+    for node in assigns:
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        if _manifest_rooted(node.value, bindings, node.lineno):
+            bindings.append((node.lineno, node.targets[0].id))
+    return bindings
+
+
+def _check_manifest_direct_write(tree, manifest_bindings, path):
     violations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -237,18 +601,32 @@ def _check_manifest_direct_write(tree, path):
         elif isinstance(node, ast.AugAssign):
             targets = [node.target]
         else:
-            continue
-        for tgt in targets:
-            if not isinstance(tgt, ast.Subscript):
-                continue
-            root_name, depth = _subscript_root_and_depth(tgt)
-            if depth >= 2 and root_name and "manifest" in root_name.lower():
-                violations.append(Violation(
-                    path, node.lineno, "MANIFEST_DIRECT_WRITE",
-                    f"assigns into {root_name}[...][...] directly (depth={depth}) "
-                    f"— bypasses the real drain (tick -> classify -> router)"))
+            targets = None
+        if targets:
+            for tgt in targets:
+                if isinstance(tgt, ast.Subscript) and _manifest_rooted(tgt, manifest_bindings, node.lineno):
+                    try:
+                        shape = ast.unparse(tgt)
+                    except Exception:
+                        shape = "<subscript>"
+                    violations.append(Violation(
+                        path, node.lineno, "MANIFEST_DIRECT_WRITE",
+                        f"assigns into manifest-rooted `{shape}` directly — bypasses the "
+                        "real drain (tick -> classify -> router)"))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update" and _manifest_rooted(node.func.value, manifest_bindings, node.lineno)):
+            try:
+                shape = ast.unparse(node.func.value)
+            except Exception:
+                shape = "<expr>"
+            violations.append(Violation(
+                path, node.lineno, "MANIFEST_DIRECT_WRITE",
+                f"calls `.update()` on manifest-rooted `{shape}` directly — bypasses the "
+                "real drain (tick -> classify -> router)"))
     return violations
 
+
+# ─────────────────────────────── driver ───────────────────────────────
 
 def lint_file(path):
     with open(path, encoding="utf-8") as fh:
@@ -258,7 +636,13 @@ def lint_file(path):
 
 def lint_source(source, path="<fixture>"):
     tree = ast.parse(source, filename=path)
-    return _check_inbox_fabricated_sender(tree, path) + _check_manifest_direct_write(tree, path)
+    dict_bindings = _collect_dict_bindings(tree)
+    path_bindings = _collect_path_bindings(tree)
+    handle_bindings = _collect_handle_bindings(tree, path_bindings)
+    manifest_bindings = _collect_manifest_bindings(tree)
+    parent_func = _build_parent_function_map(tree)
+    return (_check_inbox_writes(tree, dict_bindings, path_bindings, handle_bindings, path, parent_func)
+            + _check_manifest_direct_write(tree, manifest_bindings, path))
 
 
 class LintResult:

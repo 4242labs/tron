@@ -55,6 +55,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(APP_ROOT, "core"))   # scaffold_src.py lives here
 
 import util             # noqa: E402
 import jobs              # noqa: E402
@@ -62,8 +63,9 @@ import trunk              # noqa: E402
 import grants              # noqa: E402
 from ctx import Ctx         # noqa: E402
 from fsm import Engine       # noqa: E402
+import scaffold_src           # noqa: E402 — core/scaffold_src.py, the ONE resolver
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+SCAFFOLD_SRC = scaffold_src.resolve()
 BRANCH = "arch/01-03-forward"          # matches the live SIM's own branch naming
 
 _results = []

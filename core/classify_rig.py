@@ -72,7 +72,9 @@ import classify                       # noqa: E402 — core/classify.py, the mod
 import architect                       # noqa: E402 — core/architect.py, log-review job (triage reuse)
 import casestate                        # noqa: E402 — core/casestate.py, VERBS + case-id shape
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 CODE_FILE_REL = "src/lib/tip.ts"
 BLOCK = "01-01"

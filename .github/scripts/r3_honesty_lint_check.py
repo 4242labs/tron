@@ -2,15 +2,28 @@
 """r3_honesty_lint_check.py — AC-2 (block 01-40 T1) CI proof.
 
 `core/r3_lint.py` is the R3 honesty lint: a harness may not fabricate a
-sender kind the real door (scripts/report.sh) could never produce, nor
-mutate `manifest[...]` state directly. Proves, live:
+sender kind the real door (scripts/report.sh) could never produce, write
+`ctx.operator_inbox` at all (no real operator transport exists yet), nor
+mutate `manifest[...]` state directly. This is the REBUILT version (a hostile
+review proved the original pattern-matched a fingerprint of the one known
+offender, not the illegal CLASS — 10/10 plain evasions defeated it). Proves,
+live:
 
-  RED        a seeded direct-write fixture trips BOTH illegal shapes named
-             in the block ("manifest[...] / ctx inboxes"): a fabricated
-             non-worker sender written to the inbox file, and a
-             manifest[...][...] direct assignment.
-  GREEN      a door-only fixture (the real report.sh shape: worker sender,
-             or no sender key at all) is clean.
+  RED (x10)  each of the 10 evasions the review demonstrated against the OLD
+             lint is caught by the rebuilt one: a renamed inbox-path
+             variable, a `file=` kwarg path, `json.dump` to the inbox
+             handle, a bare `open()` with no `with`, a same-file helper
+             function hiding the actual write, a `subprocess` shell `>>`
+             append, a `manifest` alias before subscripting, a depth-1
+             `manifest["cases"] = ...` wholesale overwrite, a `.update()`
+             call instead of a subscript assignment, and a `sender` dict
+             built via a helper call instead of an inline literal.
+  GREEN      two legal shapes stay clean: a door-only report (worker sender,
+             or no sender key at all — report.sh's own shape) written
+             straight, AND the identical "helper indirection" MECHANISM used
+             legitimately (a thin same-file wrapper whose every real call
+             site sends a safe payload) — proving the lint tells indirection
+             APART from a violation, rather than reddening all indirection.
   GREEN/tree the real `core/` proof-harness tree is clean except the
              explicit, visible KNOWN_RED list (core/sim/operator_proxy.py
              at minimum) — every KNOWN_RED entry is re-verified genuinely
@@ -30,19 +43,92 @@ sys.path.insert(0, os.path.join(ROOT, "core"))
 
 import r3_lint  # noqa: E402
 
-DIRECT_WRITE_FIXTURE = '''
+# ─────────────────── the 10 evasions (each must stay RED) ───────────────────
+# Every one of these is a DIRECT rewrite of the SAME violation the original
+# lint caught (an operator-sender fabrication into worker_inbox, or a direct
+# manifest mutation) — only the SYNTACTIC SHAPE changed. The old lint pattern-
+# matched one shape per rule; these proved it caught none of the other nine.
+
+EVASION_FIXTURES = {
+    "1_renamed_inbox_path_variable": '''
 import json
 
+def bad(eng):
+    p = eng.ctx.worker_inbox
+    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}}
+    with open(p, "a") as ib:
+        ib.write(json.dumps(rep) + "\\n")
+''',
+    "2_path_as_file_kwarg": '''
+import json
 
-def inject(eng):
-    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "proxy"}}
+def bad(eng):
+    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}}
+    with open(file=eng.ctx.worker_inbox, mode="a") as ib:
+        ib.write(json.dumps(rep) + "\\n")
+''',
+    "3_json_dump_to_inbox_handle": '''
+import json
+
+def bad(eng):
+    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}}
+    with open(eng.ctx.worker_inbox, "a") as ib:
+        json.dump(rep, ib)
+''',
+    "4_bare_open_no_with": '''
+import json
+
+def bad(eng):
+    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}}
+    ib = open(eng.ctx.worker_inbox, "a")
+    ib.write(json.dumps(rep) + "\\n")
+    ib.close()
+''',
+    "5_helper_function_indirection": '''
+import json
+
+def _emit(eng, obj):
+    with open(eng.ctx.worker_inbox, "a") as ib:
+        ib.write(json.dumps(obj) + "\\n")
+
+def bad(eng):
+    _emit(eng, {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}})
+''',
+    "6_subprocess_shell_append": '''
+import json
+import subprocess
+
+def bad(eng):
+    rep = {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}}
+    subprocess.run(["bash", "-c", f"echo '{json.dumps(rep)}' >> {eng.ctx.worker_inbox}"])
+''',
+    "7_manifest_alias": '''
+def bad(manifest, case_id, verb):
+    m = manifest
+    m["cases"][case_id]["decision"] = {"verb": verb}
+''',
+    "8_depth1_wholesale_overwrite": '''
+def bad(manifest, new_cases):
+    manifest["cases"] = new_cases
+''',
+    "9_update_call": '''
+def bad(manifest, case_id, decision):
+    manifest["cases"][case_id].update({"decision": decision})
+''',
+    "10_sender_built_via_helper_call": '''
+import json
+
+def _build_sender():
+    return {"kind": "operator", "id": "x"}
+
+def bad(eng):
+    rep = {"tag": "operator.decision", "sender": _build_sender()}
     with open(eng.ctx.worker_inbox, "a") as ib:
         ib.write(json.dumps(rep) + "\\n")
+''',
+}
 
-
-def mutate(manifest, case_id, verb):
-    manifest["cases"][case_id]["decision"] = {"verb": verb}
-'''
+# ─────────────────────── legal shapes (must stay GREEN) ───────────────────────
 
 DOOR_ONLY_FIXTURE = '''
 from util import append_jsonl
@@ -53,19 +139,38 @@ def report_online(tron_ctx, agent_id, branch):
                  {"tag": "worker.online", "agent_id": agent_id, "slots": {"branch": branch}})
 '''
 
+# The SAME mechanism as evasion #5 (a same-file helper wrapping the actual
+# write) — but every real call site sends a safe payload (no `sender` key at
+# all, matching core/casestate_rig.py's own real `inject()` helper). Proves
+# the lint judges a wrapper by what its call sites ACTUALLY send, not by
+# reddening all indirection on sight.
+LEGAL_HELPER_INDIRECTION_FIXTURE = '''
+from util import append_jsonl
+
+
+def inject(tron_ctx, obj):
+    append_jsonl(tron_ctx.worker_inbox, obj)
+
+
+def use_it(tron_ctx):
+    inject(tron_ctx, {"tag": "operator.decision", "slots": {"case_id": "c1", "verb": "resume"}})
+    inject(tron_ctx, {"tag": "operator.decision", "slots": {"case_id": "c2", "verb": "abandon"}})
+'''
+
 
 def main():
     failed = False
 
-    # ── RED: the direct-write fixture must trip BOTH named illegal shapes ──
-    violations = r3_lint.lint_source(DIRECT_WRITE_FIXTURE, path="<direct-write-fixture>")
-    rules_hit = {v.rule for v in violations}
-    if {"INBOX_FABRICATED_SENDER", "MANIFEST_DIRECT_WRITE"} <= rules_hit:
-        print(f"RED proof confirmed: {[str(v) for v in violations]}")
-    else:
-        print("AC-2 REGRESSION: the direct-write fixture was NOT fully caught "
-              f"(expected both illegal shapes, got {rules_hit}).", file=sys.stderr)
-        failed = True
+    # ── RED x10: every evasion must still be caught ──
+    for name, fixture in EVASION_FIXTURES.items():
+        violations = r3_lint.lint_source(fixture, path=f"<evasion:{name}>")
+        if violations:
+            print(f"RED proof confirmed [{name}]: {[str(v) for v in violations]}")
+        else:
+            print(f"AC-2 REGRESSION: evasion fixture [{name}] was NOT caught "
+                  "(expected RED, got GREEN — the lint is fingerprinting a shape again, "
+                  "not the illegal class).", file=sys.stderr)
+            failed = True
 
     # ── control: a door-only fixture (real report.sh shape) must be clean ──
     clean_violations = r3_lint.lint_source(DOOR_ONLY_FIXTURE, path="<door-only-fixture>")
@@ -76,6 +181,20 @@ def main():
         failed = True
     else:
         print("GREEN proof (fixture) confirmed: a door-only report is clean.")
+
+    # ── control: legal helper indirection (same mechanism as evasion #5,
+    #     safe payloads at every real call site) must ALSO be clean ──
+    legal_indirection_violations = r3_lint.lint_source(
+        LEGAL_HELPER_INDIRECTION_FIXTURE, path="<legal-helper-indirection-fixture>")
+    if legal_indirection_violations:
+        print("AC-2 REGRESSION: a legitimate same-file helper wrapper (every call site "
+              f"sends a safe, sender-less payload) was flagged: "
+              f"{[str(v) for v in legal_indirection_violations]}", file=sys.stderr)
+        failed = True
+    else:
+        print("GREEN proof (fixture) confirmed: legal helper indirection (safe payload "
+              "at every call site) is clean — the lint judges call sites, not the mere "
+              "presence of indirection.")
 
     # ── GREEN on tree, modulo the explicit KNOWN_RED list ──
     result = r3_lint.run()

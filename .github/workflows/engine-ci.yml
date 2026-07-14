@@ -17,6 +17,15 @@ concurrency:
 jobs:
   test-and-lint:
     runs-on: ubuntu-latest
+    # Block 01-40 T1 (ADR-0012 §3 P1): every core/*_rig.py + core/sim/*.py that
+    # copies the REAL trivial-tip-converter scaffold (never a synthetic stand-in
+    # — see core/scaffold_src.py) needs it present on disk. It lives in the
+    # (private, cross-org) 42piratas/tron-meta repo, checked out below into
+    # `tron-meta/` alongside this checkout — core/scaffold_src.py's ONE resolver
+    # reads this exact env var, so setting it once here (job-level) is the only
+    # CI-side wiring every rig needs; nothing else changes per-rig.
+    env:
+      TRON_REAL_SCAFFOLD_SRC: ${{ github.workspace }}/tron-meta/sims/_sources/trivial-tip-converter
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,6 +33,18 @@ jobs:
           # (block 01-26's parent, engine/fsm.py) out of this repo's own history — a
           # shallow clone (actions/checkout's default) doesn't carry that object.
           fetch-depth: 0
+
+      - name: Checkout tron-meta (real scaffold source, block 01-40 T1)
+        # 42piratas/tron-meta is private and lives in a different org from this
+        # repo (4242labs/TRON) — the default GITHUB_TOKEN has no access to it, so
+        # this uses a dedicated PAT (repo secret TRON_META_CHECKOUT_TOKEN, same
+        # cross-repo-token pattern publish-diagram.yml already uses for
+        # WWW_SYNC_TOKEN). Read-only: nothing in this job ever pushes here.
+        uses: actions/checkout@v4
+        with:
+          repository: 42piratas/tron-meta
+          token: ${{ secrets.TRON_META_CHECKOUT_TOKEN }}
+          path: tron-meta
 
       - name: Set up Python
         uses: actions/setup-python@v5

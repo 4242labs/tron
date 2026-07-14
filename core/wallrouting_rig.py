@@ -112,7 +112,9 @@ import classify                       # noqa: E402 — core/classify.py, the unc
 import router                          # noqa: E402 — core/router.py, ADR-0010 Invariant B (_route_wall)
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, the REAL Engine (_page_operator UNSTUBBED)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"

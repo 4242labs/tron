@@ -69,7 +69,9 @@ import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, the module under test (+ its wave-6 wiring)
 import session                # noqa: E402 — core/session.py, the wave-6 clean SESSION-END terminal
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 CODE_FILE_REL = "src/lib/tip.ts"          # a real, non-meta/ source file — the "real code change"
 PIPELINE_REL = "meta/pipeline.md"

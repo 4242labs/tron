@@ -70,7 +70,9 @@ import sentry                 # noqa: E402 — core/sentry.py, the cap-escalatio
 import casestate               # noqa: E402 — core/casestate.py, the module under test
 import architect               # noqa: E402 — core/architect.py, ARCHITECT_WID (self-wall guard lock)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 CODE_FILE_REL = "src/lib/tip.ts"          # a real, non-meta/ source file — the "real code change"
 PIPELINE_REL = "meta/pipeline.md"

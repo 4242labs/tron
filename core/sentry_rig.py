@@ -98,7 +98,9 @@ import sentry                 # noqa: E402 — core/sentry.py, the module under 
 import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, wired to call sentry.pace
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 CODE_FILE_REL = "src/lib/tip.ts"          # a real, non-meta/ source file — the "real code change"
 BLOCK_S, BRANCH_S, WID_S = "stuck-01", "feat/stuck-01", "engineer-stuck-01"

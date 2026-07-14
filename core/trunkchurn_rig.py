@@ -105,7 +105,9 @@ import gate                  # noqa: E402 — core/gate.py, the DONE ladder core
 import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, the WAKE daemon this rig drives via
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"

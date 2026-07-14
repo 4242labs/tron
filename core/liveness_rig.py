@@ -112,7 +112,9 @@ import liveness                # noqa: E402 — core/liveness.py, the module und
 import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, wired to call liveness.sweep after route
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"

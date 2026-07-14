@@ -93,7 +93,9 @@ import architect              # noqa: E402 — core/architect.py, the module und
 from engine import Engine as CoreEngine  # noqa: E402 — core/engine.py, R-A's REAL implementation
 import jobs                    # noqa: E402 — engine/jobs.py, the runner-consumption seam (HWM file)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 CODE_FILE_REL = "src/lib/tip.ts"
 PIPELINE_REL = "meta/pipeline.md"

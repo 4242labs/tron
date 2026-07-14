@@ -93,7 +93,9 @@ import knobs as knobs_mod           # noqa: E402 — core/knobs.py, THE MODULE U
 import state                         # noqa: E402 — core/state.py
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, real bootup/tick wiring (unedited)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"

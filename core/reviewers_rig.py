@@ -90,7 +90,9 @@ import reviewers              # noqa: E402 — core/reviewers.py, the module und
 import architect               # noqa: E402 — core/architect.py, the log-review job kind under test
 import router                  # noqa: E402 — core/router.py, the ASSIGN handshake (reviewer-skip under test)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"

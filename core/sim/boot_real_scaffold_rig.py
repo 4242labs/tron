@@ -77,10 +77,9 @@ import architect                     # noqa: E402 — core/architect.py, ARCHITE
 import state                          # noqa: E402 — core/state.py
 
 import real_tier                       # noqa: E402 — core/sim/real_tier.py, the echo-smoke's own wiring
+import scaffold_src                     # noqa: E402 — core/scaffold_src.py, the ONE resolver
 
-SCAFFOLD_SRC = os.environ.get(
-    "TRON_REAL_SCAFFOLD_SRC",
-    "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter")
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 
 _results = []

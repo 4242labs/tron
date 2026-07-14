@@ -105,7 +105,9 @@ import casestate                    # noqa: E402 — core/casestate.py, THE FLOO
 import architect                     # noqa: E402 — core/architect.py, wave 18's triage job (KILLER 4)
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, THE MODULE UNDER TEST (real _page_operator)
 
-SCAFFOLD_SRC = "/home/anderson/42labs/tron/tron-meta/sims/_sources/trivial-tip-converter"
+import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
+
+SCAFFOLD_SRC = scaffold_src.resolve()
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
 BLOCKS_REL = "meta/blocks"
