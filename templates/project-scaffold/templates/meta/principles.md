@@ -1,6 +1,6 @@
 # Principles — <PROJECT_NAME>
 
-Apply `{shared_knowledge_path}/principles-base.md` first. Below are <PROJECT_NAME>-specific additions and overrides. **When a rule here conflicts with the shared base, this file wins.**
+Apply `{shared_knowledge_path}/principles-base.md` first, then `{shared_knowledge_path}/codex.md` — the fleet engineering **Codex** (core canon: change-flow & branch protection, the LGTM CI gate, design-system compliance). Both are core canon for every project. Below are <PROJECT_NAME>-specific additions and overrides. **When a rule here conflicts with the shared base or the Codex, this file wins** — the Codex itself defers to project rulebooks and TRON's mode rulebook.
 
 Agent behavior rules for this project. All agents must read and internalize this file before any session.
 
@@ -12,7 +12,7 @@ Single source for project-level paths. Every agent reads this file at session st
 
 | Variable | Value | Notes |
 |:--|:--|:--|
-| `{shared_knowledge_path}` | _(blank — set per project; TBD in canon, see TD-10)_ | The canonical shared knowledge base (principles-base, shared skills, `meta/agent.md` notifications/warnings). Every `{shared_knowledge_path}/…` reference resolves against this. If this project has **no** shared KB, set blank — then skip every `{shared_knowledge_path}/…` step. |
+| `{shared_knowledge_path}` | _(blank — set per project; TBD in canon, see TD-10)_ | The canonical shared knowledge base (principles-base, the engineering **codex**, shared skills, `meta/agent.md` notifications/warnings). Every `{shared_knowledge_path}/…` reference resolves against this. If this project has **no** shared KB, set blank — then skip every `{shared_knowledge_path}/…` step. |
 
 Keep this value in sync with `agents/flynn-local.md → Configuration → shared_knowledge_path`.
 

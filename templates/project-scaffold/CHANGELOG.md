@@ -4,6 +4,16 @@ Versions the meta/app/workspace template payload. Every entry pairs with the mod
 skill that reads it (`skill-project-scaffold` / `-audit` / `-upgrade`) — the skill is the
 contract, the template is the payload (see `README.md → Maintenance`).
 
+## 1.6.0 — 2026-07-14
+
+Wires the **fleet engineering Codex** (`~/42labs/tortuga/knowledge-base/codex.md`) into the
+scaffold as core canon, so every new project inherits it. `meta/principles.md` now applies the
+Codex right after `principles-base.md` (change-flow & branch protection, the LGTM CI gate,
+design-system compliance); the `{shared_knowledge_path}` note lists it; `AGENTS.md → Key Files`
+points to it alongside `principles.md`. The Codex defers to the project's `principles.md` and
+TRON's mode rulebook on conflict — no behavior change to an un-edited scaffold beyond the added
+canon pointer.
+
 ## 1.5.0 — 2026-07-08
 
 Adds **`meta/tron/roles.yaml`** (ADR-0002 Decision 4, "fleet as config"): the

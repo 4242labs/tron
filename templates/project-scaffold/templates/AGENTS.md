@@ -40,6 +40,7 @@ Single home for the skill ↔ file ↔ trigger registry: `<META_REPO_NAME>/princ
 - `<META_REPO_NAME>/pipeline.md` — Single source of truth for all active work
 - `<META_REPO_NAME>/context.md` — Project context for all agents
 - `<META_REPO_NAME>/principles.md` — Agent behavior rules (includes Skills registry and Core Docs list)
+- **Fleet Engineering Codex (canon, cross-project)** — `{shared_knowledge_path}/codex.md` (canonically `~/42labs/tortuga/knowledge-base/codex.md`). Core canon every project inherits: change-flow & branch protection, the LGTM CI gate, design-system compliance. Read alongside `principles-base.md`; project `principles.md` wins on conflict.
 - `<APP_REPO_NAME>/app/AGENTS.md` — App technical spec
 - **42labs Design System (canon, cross-app)** — <https://42labs.io/design> (repo `github.com/42piratas/42labs`; optional offline mirror at `<DESIGN_SYSTEM_LOCAL_PATH>` if the contributor keeps one — never hardcode a machine-specific absolute path here per `principles-base.md §14`). Color, typography, radius, spacing, base components — shared by all Labs apps. Project-local design guidelines extend but never contradict this canon.
 - `<APP_REPO_NAME>/docs/guidelines-coding.md` — Durable code standards + secure-coding baseline (anyone touching `app/`)
