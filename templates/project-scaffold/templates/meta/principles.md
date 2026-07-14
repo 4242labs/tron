@@ -71,6 +71,7 @@ Mapping:
 | Code Review | `skills/skill-review-code.md` | Code quality audits — dispatched on the review cadence |
 | Security Scan | `skills/skill-security-scan.md` | Security audits — dispatched on the review cadence |
 | Worktree & Branching | `skills/skill-worktree-and-branching.md` | Before creating any branch |
+| Linear Cards | `skills/skill-linear-cards.md` | Any unit of work that needs tracking and is not already in a pipeline block — create / update / retire a Linear card (see `{shared_knowledge_path}/principles-base.md §16`) |
 | Session End | `skills/skill-session-end-{role}.md` | End of every session |
 
 ---
