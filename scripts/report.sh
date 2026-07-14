@@ -2,9 +2,31 @@
 # report.sh — the worker -> engine channel. A worker runs this to deliver a line
 # to TRON; the engine drains it every tick and classifies it.
 #
+# HOSTILE-REVIEW SPLIT (block 01-38, post-review hardening): a REAL spawned
+# agent's OWN installed copy at `<instance>/workers/<agent-id>/report.sh` is
+# NO LONGER a byte-identical copy of THIS file — it is `scripts/report-
+# agent.sh` (`core/engine.py::Engine._install_agent_channel`), an
+# AMBIENT-ONLY variant with NO legacy self-typed-id branch at all. A review
+# found that installing this file (legacy branch included) per-agent left a
+# genuine worker able to invoke its OWN copy with a self-typed id
+# (`./report.sh architect --tag verdict ...`) and reach the shared legacy
+# inbox from a live agent's own reach — the asymmetry named: "refusing
+# ambient-invocation-from-wrong-path but still honoring legacy-shaped
+# argv is the hole." THIS file keeps BOTH branches (below) ONLY because it
+# is also the door the frozen pre-rewrite engine (`engine/fsm.py`) and
+# several pre-01-38 `core/*_rig.py`/`engine/block_01_24_test.py`/
+# `engine/block_01_29_test.py` fixtures still depend on — it is seeded at
+# `<instance>/scripts/report.sh` (the canon path those depend on) but is
+# NEVER copied into a live agent's own installed reach anymore; see
+# `scripts/report-agent.sh`'s own header for the file a real spawn actually
+# gets. Independently, `core/vocab.py::resolve_origin` no longer trusts a
+# self-typed id arriving via the shared legacy inbox for a PRIVILEGED
+# (architect/operator) grant either way — defense in depth, not just this
+# split.
+#
 # Block 01-38 (ADR-0012 R6 — identity is ambient, not asserted): a REAL
 # spawned agent runs its OWN installed copy, `<instance>/workers/<agent-id>/
-# report.sh` — byte-identical to this file, copied verbatim at spawn
+# report.sh` — `scripts/report-agent.sh`, copied verbatim at spawn
 # (`core/engine.py::Engine._install_agent_channel`, never templated). That
 # copy carries NO typed worker-id argv and NO overridable env value for its
 # identity: identity comes ENTIRELY from where the copy physically lives —

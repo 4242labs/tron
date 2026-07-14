@@ -56,22 +56,32 @@ def admit(tag, slots, msg, architect_wid):
     if tag not in vocab.TAGS:
         return False, (f"unknown tag {tag!r} — not in the closed vocabulary. "
                        f"Legal --tag values:\n{vocab.legal_set_text()}")
-    # Minters enforcement (ADR-0011 S-1) closes an IMPERSONATION surface on
-    # the shared report.sh DOOR: a worker-shaped sender claiming an
-    # architect-only verb (`reconciled`/`verdict`) through the SAME door a
-    # worker uses. A tag with NO report.sh verb (`operator.decision`,
-    # `worker.stalled`/`dead`, `unclassified`) never arrives through that
-    # door at all — `operator.decision` is minted ONLY by `core/classify.py`
-    # ::_settle_from_text`'s own trusted regex (which never calls this
-    # function) or, today, a test rig's direct structured injection
-    # simulating the not-yet-built real operator channel (R8/01-38's own
-    # scope); `worker.stalled`/`dead` are engine-produced, never via inbox
-    # classify at all. There is no impersonation surface to close for a
-    # verb-less tag, so minters is not enforced here for one — enforcing it
-    # anyway would refuse every existing operator-settle-adjacent rig
-    # against an identity shape (`sender.kind: "operator"`) the operator
-    # channel doesn't structurally provide yet.
-    if vocab.TAGS[tag].verb is not None and not vocab.minters_ok(tag, msg, architect_wid):
+    # Minters enforcement (ADR-0011 S-1, widened block 01-38 T3 per the
+    # hostile review that found the hole below) closes an IMPERSONATION
+    # surface on the report DOOR: a worker-shaped sender claiming a
+    # restricted-origin tag through the SAME door a worker uses. Enforced
+    # for EVERY tag, unconditionally — a prior version of this check SKIPPED
+    # minters for any tag with no `report.sh` verb (`verb is None`:
+    # `operator.decision`, `worker.stalled`/`dead`, `worker.report_refused`,
+    # `unclassified`), reasoning that a verb-less tag "never arrives through
+    # report.sh's door". That reasoning was WRONG for `operator.decision`
+    # specifically: a STRUCTURED line carrying `{"tag": "operator.decision",
+    # ...}` resolves via `core/vocab.py::verb_to_tag`'s dotted-tag passthrough
+    # (`_structured` in `core/classify.py`) regardless of verb, so it DOES
+    # reach this exact function — and with minters skipped, ANY sender
+    # (including a worker writing into its own ambient channel) could mint a
+    # legitimate-looking `operator.decision` and settle its own parked case,
+    # defeating R8 ("resolved by a real inbound operator command") — the
+    # EXPLOIT this widening closes. `worker.stalled`/`worker.dead`/`worker.
+    # report_refused` are still, in practice, never sent by a real report.sh
+    # (no verb) and `unclassified`'s minters already include every origin —
+    # so enforcing minters uniformly changes nothing for those three, and
+    # closes the operator.decision hole for the fourth. Identity for a
+    # verb-less tag is resolved the SAME way as any other: `vocab.
+    # resolve_origin` off the CHANNEL the message arrived on (R6/R8) — never
+    # a payload field, never `report.sh`'s own (informational-only) verb
+    # gate.
+    if not vocab.minters_ok(tag, msg, architect_wid):
         origin = vocab.resolve_origin(msg, architect_wid)
         return False, (f"tag {tag!r} may not be minted by origin {origin!r} "
                        f"(sender={(msg or {}).get('sender')!r}, "

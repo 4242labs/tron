@@ -72,9 +72,18 @@ def install_canon(inst_dir, app_root=_APP_ROOT):
 
     # scripts/report.sh — the worker->engine channel. Lands at <instance>/
     # scripts/report.sh so its own `../worker-inbox.jsonl` == ctx.worker_inbox
-    # (the LEGACY resolution — unchanged); it is ALSO the byte-identical
-    # SOURCE `core/engine.py::Engine._install_agent_channel` copies per-agent
-    # at spawn (block 01-38 T1, R6).
+    # (the LEGACY resolution — unchanged); kept seeded for the frozen
+    # pre-rewrite engine / old fixtures that still resolve it at this canon
+    # path (see its own header) — it is NO LONGER the source `core/engine.py
+    # ::Engine._install_agent_channel` copies per-agent (that changed to
+    # `report-agent.sh`, below, block 01-38 post-review hardening).
+    #
+    # scripts/report-agent.sh — the AMBIENT-ONLY per-agent door (block 01-38
+    # T1, R6, hostile-review hardening): the byte-identical SOURCE `core/
+    # engine.py::Engine._install_agent_channel` copies to EVERY spawned
+    # agent's own `workers/<agent-id>/report.sh` — required (a real spawn
+    # cannot install an ambient channel without it, exactly like `report.sh`
+    # itself is required).
     #
     # scripts/tg-send.sh / scripts/operator-reply.sh — R8 (block 01-38 T2/T3):
     # the operator channel's real transport SEAMS. `core/engine.py::Engine.
@@ -87,9 +96,9 @@ def install_canon(inst_dir, app_root=_APP_ROOT):
     # absence the way report.sh's own genuinely load-bearing absence is.
     inst_scripts = os.path.join(inst_dir, "scripts")
     os.makedirs(inst_scripts, exist_ok=True)
-    for name in ("report.sh", "tg-send.sh", "operator-reply.sh"):
+    for name in ("report.sh", "report-agent.sh", "tg-send.sh", "operator-reply.sh"):
         src = os.path.join(app_root, "scripts", name)
-        required = name == "report.sh"
+        required = name in ("report.sh", "report-agent.sh")
         if not os.path.isfile(src):
             if required:
                 raise CanonError(f"seed_canon: {name} missing: {src}")

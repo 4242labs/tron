@@ -341,6 +341,73 @@ KNOWN_RED = {
 }
 
 
+# ── ENGINE-OWNED modules (block 01-38 hostile-review Finding 3): the prior
+#    discovery glob was `core/*_rig.py` + `core/sim/*.py` — narrower than
+#    `core/r3_guard.py`'s own runtime write-guard (which protects a path
+#    regardless of WHICH module touches it) and narrower than the channel
+#    this lint now SOLELY guards for OPERATOR_INBOX_WRITE (the runtime
+#    guard stopped protecting `operator_inbox` once a real transport
+#    existed — see `scripts/l1.sh`'s own header). A fabrication landing in
+#    a NEW, non-`_rig.py` `core/*.py` helper was structurally invisible.
+#    `harness_files()` (below) now scans EVERY `core/*.py` module, rigs and
+#    real engine code alike, so the static rule's coverage matches the
+#    channel it now solely guards.
+#
+#    This SURFACES a genuine tension: `OPERATOR_INBOX_WRITE`/
+#    `INBOX_FABRICATED_SENDER`/`MANIFEST_DIRECT_WRITE` exist to catch a RIG
+#    faking a result the real drain (`tick -> classify -> router`) would
+#    produce — never to flag the REAL drain/router/casestate machinery
+#    ITSELF for doing its own job (`core/snapshot.py`'s own inbox
+#    rotate/read/remove, or any real engine module's own direct manifest
+#    mutation, ARE that machinery, not a bypass of it). Rather than weaken
+#    the RULE (which would reopen exactly the false-GREEN class this
+#    module exists to prevent), each genuine engine writer is exempted
+#    EXPLICITLY BY NAME below — never a silent whitelist: `run()`
+#    re-verifies every entry exactly like `KNOWN_RED` (a listed module that
+#    comes back CLEAN under a future refactor is a STALE entry, flagged,
+#    not silently trusted forever; an core/*.py module with a violation
+#    that is NOT listed here and NOT in `KNOWN_RED` is an unlisted
+#    offender — the genuinely new case this widening exists to catch).
+EXEMPT_ENGINE_MODULES = {
+    "core/snapshot.py": (
+        "the REAL inbox drain (`_drain_inbox_at`) rotates/reads/removes "
+        "`ctx.worker_inbox`/`ctx.operator_inbox` every tick (`os.rename`/"
+        "`os.remove`) — this IS the ingress mechanism the door sits behind, "
+        "not a rig faking a drain result."),
+    "core/architect.py": (
+        "the REAL architect job-queue/triage state machine — writes "
+        "`manifest['architect']`/`['triage_verdicts']`/queues directly as "
+        "its own owned state, never a bypass of the real drain."),
+    "core/casestate.py": (
+        "the REAL parked-case FSM — writes `manifest['cases']`/"
+        "`['operator_pages']` directly as its own owned state (open_case/"
+        "settle/reping ARE the state transitions, not a shortcut around "
+        "them)."),
+    "core/engine.py": (
+        "the REAL `Engine` — writes manifest bookkeeping (`mbox_seq`, "
+        "counters) during `start()`/`tick()` as its own owned state."),
+    "core/liveness.py": (
+        "the REAL liveness sweep — writes worker `last_seen`/stall state "
+        "directly as its own owned state (the sweep's whole job)."),
+    "core/reviewers.py": (
+        "the REAL DONE-REVIEW gate — writes reviewer/queue state directly "
+        "as its own owned state."),
+    "core/router.py": (
+        "the REAL structured-report dispatcher — writes gate/worker state "
+        "directly as the ASSIGN/route step ITSELF, not a bypass of it."),
+    "core/sentry.py": (
+        "the REAL pacing/escalation ladder — writes gate/case pacing state "
+        "directly as its own owned state."),
+    "core/switchboard.py": (
+        "the REAL dispatch — writes worker/gate state directly as the "
+        "SPAWN step ITSELF, not a bypass of it."),
+    "core/tick.py": (
+        "the REAL tick orchestrator — persists manifest state via `core."
+        "state.save`, the SAME save every rig's own `run_tick()` already "
+        "wraps, never a second/parallel persistence path."),
+}
+
+
 class Violation:
     def __init__(self, path, lineno, rule, detail):
         self.path = path
@@ -353,10 +420,19 @@ class Violation:
 
 
 def harness_files():
-    """`core/*_rig.py` + every module under `core/sim/` (the whole proof-
-    harness surface: the L1 mutation-proof rigs, plus the SIM apparatus they
-    and the live runner share) — glob-discovered, never hand-maintained."""
-    files = sorted(glob.glob(os.path.join(ROOT, "core", "*_rig.py")))
+    """Block 01-38 Finding 3 widening: EVERY `core/*.py` module (rigs AND
+    real engine code — `core/*_rig.py` is a strict subset of this glob, no
+    longer named separately) + every module under `core/sim/` (the whole
+    proof-harness surface: the L1 mutation-proof rigs, plus the SIM
+    apparatus they and the live runner share) — glob-discovered, never
+    hand-maintained. `run()`'s `EXEMPT_ENGINE_MODULES` check (above) is
+    what keeps a genuine engine module's OWN direct state ownership from
+    being misread as a rig's fabrication; this function's job is only
+    discovery, never filtering."""
+    files = sorted(
+        p for p in glob.glob(os.path.join(ROOT, "core", "*.py"))
+        if os.path.basename(p) != "__init__.py"
+    )
     files += sorted(
         p for p in glob.glob(os.path.join(ROOT, "core", "sim", "*.py"))
         if os.path.basename(p) != "__init__.py"
@@ -1482,11 +1558,13 @@ class LintResult:
     def __init__(self):
         self.violations_by_file = {}   # rel_path -> [Violation]
         self.stale_known_red = []      # KNOWN_RED entries that came back clean
-        self.unlisted_offenders = []   # red rel_paths not in KNOWN_RED
+        self.stale_exempt_engine = []  # EXEMPT_ENGINE_MODULES entries that came back clean
+        self.unlisted_offenders = []   # red rel_paths not in KNOWN_RED or EXEMPT_ENGINE_MODULES
 
     @property
     def ok(self):
-        return not self.stale_known_red and not self.unlisted_offenders
+        return (not self.stale_known_red and not self.stale_exempt_engine
+                and not self.unlisted_offenders)
 
 
 def run(files=None):
@@ -1500,8 +1578,16 @@ def run(files=None):
     for rel in KNOWN_RED:
         if rel not in result.violations_by_file:
             result.stale_known_red.append(rel)
+    # Block 01-38 Finding 3: `EXEMPT_ENGINE_MODULES` gets the SAME
+    # re-verification discipline as `KNOWN_RED` — a listed engine module
+    # that comes back CLEAN (e.g. a future refactor moves its manifest
+    # writes behind a helper) is a stale entry, surfaced, never silently
+    # trusted forever.
+    for rel in EXEMPT_ENGINE_MODULES:
+        if rel not in result.violations_by_file:
+            result.stale_exempt_engine.append(rel)
     for rel in result.violations_by_file:
-        if rel not in KNOWN_RED:
+        if rel not in KNOWN_RED and rel not in EXEMPT_ENGINE_MODULES:
             result.unlisted_offenders.append(rel)
     return result
 
@@ -1514,6 +1600,10 @@ def main():
         print(f"[known-red] {rel}: {status} — owning block {entry['owning_block']}")
         for v in result.violations_by_file.get(rel, []):
             print(f"    {v}")
+    for rel, reason in EXEMPT_ENGINE_MODULES.items():
+        red = rel in result.violations_by_file
+        status = "RED (exempt — real engine code)" if red else "STALE — now clean, remove from EXEMPT_ENGINE_MODULES"
+        print(f"[exempt-engine] {rel}: {status} — {reason}")
     for rel in result.unlisted_offenders:
         print(f"[UNLISTED OFFENDER] {rel}:")
         for v in result.violations_by_file[rel]:
@@ -1521,7 +1611,9 @@ def main():
     ok = result.ok
     print(f"\nr3_lint: {'PASS' if ok else 'FAIL'} "
           f"({len(result.violations_by_file)} file(s) red, "
-          f"{len(result.stale_known_red)} stale, {len(result.unlisted_offenders)} unlisted)")
+          f"{len(result.stale_known_red)} stale-known-red, "
+          f"{len(result.stale_exempt_engine)} stale-exempt-engine, "
+          f"{len(result.unlisted_offenders)} unlisted)")
     return 0 if ok else 1
 
 

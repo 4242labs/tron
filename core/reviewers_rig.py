@@ -531,7 +531,9 @@ class RunHistory:
         cur = arch.get("current_job")
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
-            append_jsonl(self.tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox).
+            append_jsonl(self.tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.reconciled", "block": cur["block"],
                          "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
@@ -569,7 +571,9 @@ class RunHistory:
         cur = arch.get("current_job")
         if (cur and cur.get("kind") == "triage" and cur.get("ordered")
                 and cur.get("triage_id") not in self.triage_answered):
-            append_jsonl(self.tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox).
+            append_jsonl(self.tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.triage_verdict",
                          "triage_id": cur["triage_id"], "verdict": "operator",
                          "agent_id": architect.ARCHITECT_WID})

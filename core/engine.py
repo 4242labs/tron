@@ -580,15 +580,26 @@ class Engine:
     #     channel, created AT SPAWN, never asserted by the agent itself ──
     def _install_agent_channel(self, agent_id):
         """Create `agent_id`'s own private report channel — `inbox/
-        <agent_id>.jsonl` — plus a per-agent COPY of the seeded `report.sh`
-        door at `workers/<agent_id>/report.sh`. NEVER a template
-        substitution: the copy is byte-identical to the seeded source and
-        derives its OWN identity purely from WHERE it is installed (its own
-        `basename`) — nothing here ever writes a typed identity into the
-        script, and nothing the agent does afterward can override it (no
-        argv, no env). A worker physically cannot mint as the architect: it
-        can only ever run ITS OWN copy, which can only ever write to ITS
-        OWN channel.
+        <agent_id>.jsonl` — plus a per-agent COPY of the seeded, AMBIENT-
+        ONLY `scripts/report-agent.sh` door at `workers/<agent_id>/
+        report.sh`. NEVER a template substitution: the copy is byte-
+        identical to the seeded source and derives its OWN identity purely
+        from WHERE it is installed (its own `basename`) — nothing here ever
+        writes a typed identity into the script, and nothing the agent does
+        afterward can override it (no argv, no env). A worker physically
+        cannot mint as the architect: it can only ever run ITS OWN copy,
+        which can only ever write to ITS OWN channel.
+
+        Hostile-review hardening (block 01-38, post-review): the source is
+        `scripts/report-agent.sh`, NEVER `scripts/report.sh` — the latter
+        still carries a LEGACY self-typed-id branch (kept alive only for
+        the frozen pre-rewrite engine + old test fixtures, see its own
+        header) which, if installed per-agent, would let a worker invoke
+        ITS OWN copy with a self-typed id and reach the shared legacy inbox
+        — the exact asymmetry a hostile review found ("refusing ambient-
+        invocation-from-wrong-path but still honoring legacy-shaped argv").
+        `scripts/report-agent.sh` has no such branch at all: there is no
+        argv shape it will ever read as an identity claim.
 
         Idempotent — `retire_stale_dir` (called just above, by every real
         caller) already archived any predecessor's dir before this runs; a
@@ -597,14 +608,14 @@ class Engine:
         at-least-once discipline every other inbox in this stack keeps).
 
         A no-op (inbox dir created, script copy SKIPPED) when this instance
-        ships no seeded `scripts/report.sh` at all — every canon-less
+        ships no seeded `scripts/report-agent.sh` at all — every canon-less
         `core/*_rig.py` fixture, which never spawns a real agent that would
         need to invoke it."""
         os.makedirs(self.ctx.inbox_dir, exist_ok=True)
         inbox = self.ctx.agent_inbox(agent_id)
         if not os.path.exists(inbox):
             open(inbox, "a").close()
-        src = self.ctx.p("scripts", "report.sh")
+        src = self.ctx.p("scripts", "report-agent.sh")
         if os.path.isfile(src):
             dst = self.ctx.agent_report_script(agent_id)
             os.makedirs(os.path.dirname(dst), exist_ok=True)

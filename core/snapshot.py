@@ -119,13 +119,30 @@ def _drain_inbox_at(path, log, label):
 
 def _drain_inbox(ctx, log):
     """LEGACY shared-inbox drain (pre-block-01-38) — `ctx.worker_inbox`,
-    trusted sender-as-written (never overwritten). Kept unchanged for
-    backward compatibility: several pre-01-38 `core/*_rig.py` fixtures
-    still write here directly (none of block 01-38's own Tasks name or
-    touch them — see `engine/ctx.py::worker_inbox`'s own docstring). A REAL
-    spawn never writes here at all (`_drain_agent_channels`, below, is the
-    real, ambient-identity path)."""
-    return _drain_inbox_at(ctx.worker_inbox, log, "worker-inbox")
+    sender-as-written (never overwritten for a NORMAL worker report — see
+    below). Kept for backward compatibility: several pre-01-38 `core/
+    *_rig.py` fixtures still write here directly (none of block 01-38's own
+    Tasks name or touch them — see `engine/ctx.py::worker_inbox`'s own
+    docstring). A REAL spawn never writes here at all (`_drain_agent_
+    channels`, below, is the real, ambient-identity path).
+
+    R6/R8 widening (hostile-review fix, block 01-38): every line drained
+    here is stamped `_channel="legacy"` — UNCONDITIONALLY overwriting any
+    payload-asserted marker of the same name, never trusted from the
+    payload — because this ONE channel is shared and self-typed (any
+    process, a genuine worker abusing `report.sh`'s legacy `<worker-id>
+    ...` branch included, can write a line here claiming ANY `sender.id`,
+    including `architect_wid`). `core/vocab.py::resolve_origin` reads this
+    marker: a line from THIS drain can never resolve to a PRIVILEGED origin
+    (ARCHITECT/OPERATOR) no matter what identity it claims — only the two
+    channels below (filename-derived, unforgeable) can. An ORDINARY worker
+    report (`worker.online`/`worker.wall`/`worker.done`/...) is entirely
+    unaffected — those tags' minters already include WORKER, the only
+    origin a legacy line can ever resolve to now."""
+    reports, sidecar = _drain_inbox_at(ctx.worker_inbox, log, "worker-inbox")
+    for rec in reports:
+        rec["_channel"] = "legacy"
+    return reports, sidecar
 
 
 def _agent_channel_ids(ctx):

@@ -418,7 +418,11 @@ def main():
         cur = arch.get("current_job")
         if (cur and cur.get("kind") == "triage" and cur.get("ordered")
                 and cur.get("triage_id") not in triage_answered):
-            append_jsonl(tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox,
+            # which now resolves to WORKER origin regardless of a claimed
+            # agent_id and is refused for an ARCHITECT-minters-only tag).
+            append_jsonl(tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.triage_verdict",
                          "triage_id": cur["triage_id"], "verdict": "operator",
                          "agent_id": architect.ARCHITECT_WID})

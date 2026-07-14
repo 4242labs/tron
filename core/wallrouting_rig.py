@@ -421,6 +421,18 @@ def append_jsonl(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _install_operator_reply_script(ctx):
+    """This rig is canon-less (no `seed_canon.install_canon`) but DOES need
+    the ONE real operator-inbound door, `scripts/operator-reply.sh` (R3: a
+    rig may never write `ctx.operator_inbox` directly). Installs just that
+    one script, verbatim, exactly like a real seeder would."""
+    src = os.path.join(APP_ROOT, "scripts", "operator-reply.sh")
+    dst = ctx.p("scripts", "operator-reply.sh")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    os.chmod(dst, os.stat(src).st_mode | 0o111)
+
+
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
                                  "(rig-supplied local report, delivered via a structured "
@@ -514,8 +526,13 @@ class RunState:
         own `gen[BLOCK_R] = 1` at resume time)."""
         self.gen[block] = self.gen.get(block, 0) + 1
 
-    def react(self, i, manifest, inbox_path):
-        self.react_architect_triage(manifest, inbox_path)
+    def react(self, i, manifest, inbox_path, arch_inbox_path):
+        # block 01-38: the architect's own report is legitimate ONLY off its
+        # own real ambient channel (`arch_inbox_path`, the caller's
+        # `tron_ctx.agent_inbox(architect.ARCHITECT_WID)`) — never the
+        # legacy `inbox_path` (`worker_inbox`) worker reports below still
+        # correctly use.
+        self.react_architect_triage(manifest, arch_inbox_path)
         self.react_architect_scope_forward(manifest)
 
         # Generic over EVERY worker/gate the manifest currently holds — NOT
@@ -598,6 +615,7 @@ def main():
     write_project_yaml(inst, root)
     write_knobs(inst)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
     # A real `routing.yaml` on disk, copied verbatim from the repo root
     # (never a rig-authored fork) — harmless/vestigial for `core/
@@ -646,7 +664,7 @@ def main():
         for i in range(1, MAX_TICKS + 1):
             res = eng.tick()
             manifest = state.load(tron_ctx)
-            rs.react(i, manifest, tron_ctx.worker_inbox)
+            rs.react(i, manifest, tron_ctx.worker_inbox, tron_ctx.agent_inbox(architect.ARCHITECT_WID))
 
             cs = find_open_case(manifest, BLOCK_SCOPE, "worker.wall")
             if cs is not None:
@@ -671,9 +689,17 @@ def main():
                     case_cap["seen_architect_owned"] = True
                 if cc.get("owner") == "operator" and resumed_cap_tick["i"] is None:
                     rs.gen[BLOCK_CAP] = 1
-                    append_jsonl(tron_ctx.worker_inbox,
-                                {"tag": "operator.decision",
-                                 "slots": {"case_id": cc["case_id"], "verb": "resume"}})
+                    # block 01-38: operator.decision is legitimate ONLY off
+                    # the REAL operator channel — R3 forbids a rig writing
+                    # `ctx.operator_inbox` directly in Python (`core/
+                    # r3_lint.py`'s OPERATOR_INBOX_WRITE rule); the one
+                    # legitimate writer is `scripts/operator-reply.sh`, a
+                    # genuine subprocess.
+                    _r = subprocess.run(
+                        [tron_ctx.p("scripts", "operator-reply.sh"), cc["case_id"], "resume"],
+                        capture_output=True, text=True, timeout=15)
+                    if _r.returncode != 0:
+                        raise RuntimeError(f"operator-reply.sh failed: {_r.stderr!r}")
                     resumed_cap_tick["i"] = i
 
             se = res.get("session_end")

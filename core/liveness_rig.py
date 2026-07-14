@@ -300,6 +300,18 @@ def append_jsonl(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _install_operator_reply_script(ctx):
+    """This rig is canon-less (no `seed_canon.install_canon`) but DOES need
+    the ONE real operator-inbound door, `scripts/operator-reply.sh` (R3: a
+    rig may never write `ctx.operator_inbox` directly). Installs just that
+    one script, verbatim, exactly like a real seeder would."""
+    src = os.path.join(APP_ROOT, "scripts", "operator-reply.sh")
+    dst = ctx.p("scripts", "operator-reply.sh")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    os.chmod(dst, os.stat(src).st_mode | 0o111)
+
+
 class _Events:
     def __init__(self):
         self.log = []
@@ -399,6 +411,7 @@ def main():
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
     write_knobs(tron_ctx)
 
@@ -541,7 +554,9 @@ def main():
         cur = arch.get("current_job")
         if (cur and cur.get("kind") == "triage" and cur.get("ordered")
                 and cur.get("triage_id") not in triage_answered):
-            append_jsonl(tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox).
+            append_jsonl(tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.triage_verdict",
                          "triage_id": cur["triage_id"], "verdict": "operator",
                          "agent_id": architect.ARCHITECT_WID})
@@ -577,9 +592,16 @@ def main():
         # instead of guessing a fixed extra tick count.
         if case.get("owner") != "operator":
             return
-        append_jsonl(tron_ctx.worker_inbox,
-                    {"tag": "operator.decision",
-                     "slots": {"case_id": case["case_id"], "verb": "resume"}})
+        # block 01-38: operator.decision is legitimate ONLY off the REAL
+        # operator channel — R3 forbids a rig writing `ctx.operator_inbox`
+        # directly in Python (`core/r3_lint.py`'s OPERATOR_INBOX_WRITE
+        # rule); the one legitimate writer is `scripts/operator-reply.sh`,
+        # a genuine subprocess.
+        _r = subprocess.run(
+            [tron_ctx.p("scripts", "operator-reply.sh"), case["case_id"], "resume"],
+            capture_output=True, text=True, timeout=15)
+        if _r.returncode != 0:
+            raise RuntimeError(f"operator-reply.sh failed: {_r.stderr!r}")
         resume_sent["at_tick"] = i
         resume_sent["case_id"] = case["case_id"]
         st[BLOCK_SILENT]["active"] = True   # from the NEXT tick's react(), play it live
@@ -815,28 +837,39 @@ def main():
                  "block": "not-a-real-block", "slots": {"detail": "adversarial inbound tag"}})
     tick.tick(eng)   # drains it — must never be routed as a REAL engine-declared stall
     manifest_after_injection = state.load(tron_ctx)
-    # Block 01-37 T4: `core/router.py::route` gained an explicit `else`
-    # catch-all — an unroutable tag that somehow arrives (this one included:
-    # `worker.stalled` has no dispatch arm, exactly as T2 below still
-    # proves) becomes a CASE, never a silent drop. This SUPERSEDES the
-    # pre-01-37 "structural no-op" expectation with a strictly STRONGER
-    # guarantee: the adversarial/malformed inbound line is neither treated
-    # as a real engine-declared stall (no dispatch arm — T2) NOR silently
-    # dropped (the catch-all cases it, bumps the must-be-zero
-    # `router_catch_all` counter) — never both a phantom stall AND never a
-    # silent vanish.
-    ok("T1 (INBOUND-TAG KILLER, re-based on block 01-37 T4 — must be GREEN): "
-       "injecting a well-formed-looking `{\"tag\": \"worker.stalled\", ...}` "
-       "line straight into the worker inbox is NEVER treated as a real "
-       "engine-declared stall (no dispatch arm) AND is NEVER silently "
-       "dropped — the T4 catch-all cases it and bumps the must-be-zero "
-       "counter",
+    # Block 01-37 T4 (SUPERSEDED, re-based again — block 01-38 hostile-review
+    # widening): `core/door.py::admit` used to skip `minters` enforcement
+    # for any verb-less tag (`worker.stalled` included) — a fabricated
+    # `worker.stalled` line reached `core/router.py::route`'s own T4
+    # catch-all (never a dispatch arm, never a silent drop, but only ONE
+    # layer of defense). `minters` is now enforced for EVERY tag,
+    # unconditionally (the hole that let a worker mint `operator.decision`
+    # the SAME way, block 01-38's own EXPLOIT 1) — `worker.stalled`'s
+    # declared minters are `(ENGINE,)` only, so this adversarial line is now
+    # refused ONE LAYER EARLIER, AT THE DOOR itself (`core/classify.py` ->
+    # `core/door.refuse`), never even reaching `router.route`'s catch-all —
+    # a STRICTLY STRONGER closure of the SAME invariant: neither a phantom
+    # stall NOR a silent vanish, now caught at the admission door rather
+    # than the router's own backstop.
+    refused_cases = [c for c in (manifest_after_injection.get("cases") or {}).values()
+                     if c.get("source") == "worker.report_refused"]
+    ok("T1 (INBOUND-TAG KILLER, re-based on block 01-38's minters widening "
+       "— must be GREEN): injecting a well-formed-looking `{\"tag\": "
+       "\"worker.stalled\", ...}` line straight into the worker inbox is "
+       "NEVER treated as a real engine-declared stall (no dispatch arm) "
+       "AND is NEVER silently dropped — REFUSED at the admission door "
+       "itself (WORKER is not a legal minter of an ENGINE-only tag), a "
+       "door_refusal case opened, the router's OWN T4 catch-all never even "
+       "reached (its counter stays UNCHANGED — one layer earlier, not "
+       "double-cased)",
        len(manifest_after_injection.get("cases") or {}) == cases_before_injection + 1
+       and len(refused_cases) >= 1
        and (manifest_after_injection.get("counters") or {}).get(
-           "router_catch_all", 0) == counter_before + 1
+           "router_catch_all", 0) == counter_before
        and "not-a-real-block" not in (manifest_after_injection.get("gates") or {}),
        f"cases_before={cases_before_injection} "
        f"cases_after={len(manifest_after_injection.get('cases') or {})} "
+       f"refused_cases={refused_cases} "
        f"counter_before={counter_before} "
        f"counter_after={(manifest_after_injection.get('counters') or {}).get('router_catch_all')}")
 

@@ -105,12 +105,23 @@ def main():
         ok("A2: the per-agent report.sh copy was installed AT SPAWN, executable",
            os.path.isfile(script_path) and os.access(script_path, os.X_OK),
            f"script_path={script_path}")
-        with open(os.path.join(ctx.p("scripts", "report.sh"))) as f:
+        with open(os.path.join(ctx.p("scripts", "report-agent.sh"))) as f:
             canon_src = f.read()
         with open(script_path) as f:
             installed_src = f.read()
-        ok("A3: the installed copy is BYTE-IDENTICAL to the seeded canon (never templated)",
+        ok("A3: the installed copy is BYTE-IDENTICAL to the seeded AMBIENT-"
+           "ONLY canon `scripts/report-agent.sh` (never templated, and never "
+           "`scripts/report.sh` — that file still carries the legacy "
+           "self-typed branch kept alive only for the frozen pre-rewrite "
+           "engine, see its own header)",
            canon_src == installed_src, "content mismatch" if canon_src != installed_src else "")
+        ok("A3b (HOSTILE-REVIEW KILLER): the installed copy carries NO "
+           "legacy self-typed-id shape at all — there is no code path in "
+           "it that ever reads argv[1] as an identity claim (grep-"
+           "equivalent: the shared canon's own case-dispatch marker is "
+           "absent from the installed copy)",
+           'case "${1:-}" in' not in installed_src and "AMBIENT=1" not in installed_src,
+           f"installed_src head={installed_src[:200]!r}")
 
         # ══ AC-1: the ambient invocation carries NO typed worker-id argv ══
         r = _run(script_path, "--tag", "done", "--block", "01-02", "done - local pass")

@@ -246,6 +246,19 @@ def append_jsonl(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _install_operator_reply_script(ctx):
+    """This rig is canon-less (no `seed_canon.install_canon` — never spawns
+    a real agent) but DOES need the ONE real operator-inbound door,
+    `scripts/operator-reply.sh` (R3: a rig may never write `ctx.
+    operator_inbox` directly — see `inject`, above). Installs just that one
+    script, verbatim, exactly like a real seeder would."""
+    src = os.path.join(APP_ROOT, "scripts", "operator-reply.sh")
+    dst = ctx.p("scripts", "operator-reply.sh")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    os.chmod(dst, os.stat(src).st_mode | 0o111)
+
+
 class _Events:
     def __init__(self):
         self.log = []
@@ -347,6 +360,7 @@ def main():
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
 
     eng = MiniEng(root, tron_ctx, test_command="true", worker_count=3)
@@ -387,7 +401,9 @@ def main():
         cur = arch.get("current_job")
         if (cur and cur.get("kind") == "triage" and cur.get("ordered")
                 and cur.get("triage_id") not in triage_answered):
-            append_jsonl(tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox).
+            append_jsonl(tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.triage_verdict",
                          "triage_id": cur["triage_id"], "verdict": "operator",
                          "agent_id": architect.ARCHITECT_WID})
@@ -475,7 +491,21 @@ def main():
         return res, m
 
     def inject(obj):
-        append_jsonl(tron_ctx.worker_inbox, obj)
+        # block 01-38 hostile-review fix: `operator.decision` is ONLY EVER
+        # legitimate off the REAL operator channel, and R3 (`core/r3_lint.py`
+        # 's OPERATOR_INBOX_WRITE rule) forbids a rig from ever writing
+        # `ctx.operator_inbox` directly in Python — the one legitimate
+        # writer is `scripts/operator-reply.sh`, a genuine subprocess (see
+        # that script's own header). This helper was ONLY ever used for
+        # `operator.decision` (see call sites below), so it moves wholesale
+        # to the real transport rather than any Python file write.
+        slots = obj.get("slots") or {}
+        script = tron_ctx.p("scripts", "operator-reply.sh")
+        r = subprocess.run([script, slots["case_id"], slots["verb"]],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            raise RuntimeError(f"operator-reply.sh failed: rc={r.returncode} "
+                               f"stdout={r.stdout!r} stderr={r.stderr!r}")
 
     # ══ tick 1 — SPAWN all three off the real pipeline (worker_count=3) ══
     res1, m1 = run_tick()

@@ -146,6 +146,7 @@ Exit 0 only if every one of the above holds.
 """
 import os
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "core"))
@@ -931,20 +932,34 @@ def main():
               "instance variable (not self/cls) with tainted arguments is not misread "
               "as a container mutation of the receiver.")
 
-    # ── GREEN on tree, modulo the explicit KNOWN_RED list ──
+    # ── GREEN on tree, modulo the explicit KNOWN_RED + EXEMPT_ENGINE_MODULES
+    #     lists (block 01-38 Finding 3: `harness_files()` now scans EVERY
+    #     core/*.py module, not just `*_rig.py` — `EXEMPT_ENGINE_MODULES`
+    #     is the SAME "explicit, visible, re-verified" discipline as
+    #     KNOWN_RED, for the real engine modules this widening now also
+    #     scans) ──
     result = r3_lint.run()
     if result.stale_known_red:
         print(f"AC-2 FAILURE: KNOWN_RED entries came back CLEAN (stale — "
               f"remove them, or a real regression hid behind a silent "
               f"whitelist): {result.stale_known_red}", file=sys.stderr)
         failed = True
-    if result.unlisted_offenders:
-        print(f"AC-2 FAILURE: dishonest harness(es) NOT in the explicit "
-              f"KNOWN_RED list: {result.unlisted_offenders}", file=sys.stderr)
+    if result.stale_exempt_engine:
+        print(f"AC-2 FAILURE: EXEMPT_ENGINE_MODULES entries came back CLEAN "
+              f"(stale — remove them, or a real regression hid behind a "
+              f"silent whitelist): {result.stale_exempt_engine}", file=sys.stderr)
         failed = True
-    if not result.stale_known_red and not result.unlisted_offenders:
-        print("GREEN proof (tree) confirmed: the proof-harness tree is clean "
-              f"except the tracked KNOWN_RED set: {sorted(r3_lint.KNOWN_RED)}")
+    if result.unlisted_offenders:
+        print(f"AC-2 FAILURE: dishonest harness(es)/fabricating module(s) NOT "
+              f"in the explicit KNOWN_RED or EXEMPT_ENGINE_MODULES lists: "
+              f"{result.unlisted_offenders}", file=sys.stderr)
+        failed = True
+    if not result.stale_known_red and not result.stale_exempt_engine and not result.unlisted_offenders:
+        print("GREEN proof (tree) confirmed: the proof-harness tree "
+              "(block 01-38 Finding 3: EVERY core/*.py module, rigs and "
+              "real engine code alike) is clean except the tracked "
+              f"KNOWN_RED set: {sorted(r3_lint.KNOWN_RED)} and the tracked "
+              f"EXEMPT_ENGINE_MODULES set: {sorted(r3_lint.EXEMPT_ENGINE_MODULES)}")
 
     # ── block 01-38 T4: the ADR's named offender is now genuinely HONEST —
     #     removed from KNOWN_RED, and confirmed clean by this SAME lint (not
@@ -1021,6 +1036,70 @@ def main():
             print("Mechanism proof confirmed: an unlisted offender is caught.")
     finally:
         r3_lint.KNOWN_RED = orig_known_red
+
+    # ── Finding 3 (block 01-38 hostile review): the discovery glob widened
+    #     from `core/*_rig.py` to EVERY `core/*.py` module — a fabrication
+    #     landing in a NEW, non-`_rig.py` helper used to be structurally
+    #     invisible. Prove (a) the widened glob genuinely discovers
+    #     non-`_rig.py` core modules (the OLD glob's own blind spot), and
+    #     (b) a fabrication in a NEW core/*.py-shaped module (never
+    #     KNOWN_RED, never EXEMPT_ENGINE_MODULES) is caught as an unlisted
+    #     offender by `r3_lint.run()` — never silently passed through
+    #     because it doesn't end in `_rig.py`. ──
+    discovered = {os.path.relpath(p, r3_lint.ROOT) for p in r3_lint.harness_files()}
+    non_rig_engine_modules = {p for p in discovered
+                              if p.startswith("core/") and not p.startswith("core/sim/")
+                              and not p.endswith("_rig.py")}
+    if not non_rig_engine_modules:
+        print("AC-2 REGRESSION (Finding 3): harness_files() discovers NO "
+              "non-'_rig.py' core/*.py module — the widening did not "
+              "actually widen the glob.", file=sys.stderr)
+        failed = True
+    else:
+        print(f"Finding 3 proof confirmed: harness_files() discovers "
+              f"{len(non_rig_engine_modules)} non-'_rig.py' core/*.py "
+              f"module(s) the OLD glob would have missed entirely (e.g. "
+              f"{sorted(non_rig_engine_modules)[:3]}...).")
+
+    fabricating_helper_src = (
+        "import json\n"
+        "def leak(eng, case_id, verb):\n"
+        "    rep = {'tag': 'operator.decision', 'sender': {'kind': 'operator', 'id': 'x'},\n"
+        "           'slots': {'case_id': case_id, 'verb': verb}}\n"
+        "    with open(eng.ctx.worker_inbox, 'a') as ib:\n"
+        "        ib.write(json.dumps(rep) + '\\n')\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        # Named to LOOK LIKE a genuine core/*.py module (never `_rig.py`,
+        # never in EXEMPT_ENGINE_MODULES) — the exact NEW-helper shape
+        # Finding 3 named. `r3_lint.run(files=...)` is handed this ONE
+        # synthetic path directly (never the real glob, never touches the
+        # real tree) — proving the RULE + the unlisted-offender mechanism
+        # catch it, independent of disk layout.
+        fake_path = os.path.join(td, "some_new_helper.py")
+        with open(fake_path, "w") as fh:
+            fh.write(fabricating_helper_src)
+        # `os.path.relpath(fake_path, r3_lint.ROOT)` won't literally start
+        # with "core/" (it's under a tempdir) — `run()` only cares whether
+        # the rel path is absent from KNOWN_RED/EXEMPT_ENGINE_MODULES, which
+        # a synthetic tempdir path trivially is, so this still proves the
+        # mechanism (RULE + unlisted-offender detection) fires for a
+        # never-before-seen module shape; the discovery-glob half is
+        # already proven structurally above.
+        finding3_check = r3_lint.run(files=[fake_path])
+        fake_rel = os.path.relpath(fake_path, r3_lint.ROOT)
+        if fake_rel not in finding3_check.unlisted_offenders:
+            print("AC-2 REGRESSION (Finding 3): a fabricating NEW core/*.py-"
+                  "shaped module (not '_rig.py', not KNOWN_RED, not "
+                  "EXEMPT_ENGINE_MODULES) was NOT caught as an unlisted "
+                  "offender.", file=sys.stderr)
+            failed = True
+        else:
+            print("Finding 3 mechanism proof confirmed: a fabricating NEW, "
+                  "non-'_rig.py' module is caught as an unlisted offender — "
+                  "the widened discovery's own RULE coverage, not just the "
+                  "glob, genuinely fires for a module shape the OLD glob "
+                  "structurally could never have reached.")
 
     print(f"\nAC-2: {'PASS' if not failed else 'FAIL'}")
     return 1 if failed else 0

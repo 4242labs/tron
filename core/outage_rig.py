@@ -324,6 +324,18 @@ def append_jsonl(path, obj):
         f.write(json.dumps(obj) + "\n")
 
 
+def _install_operator_reply_script(ctx):
+    """This rig is canon-less (no `seed_canon.install_canon`) but DOES need
+    the ONE real operator-inbound door, `scripts/operator-reply.sh` (R3: a
+    rig may never write `ctx.operator_inbox` directly). Installs just that
+    one script, verbatim, exactly like a real seeder would."""
+    src = os.path.join(APP_ROOT, "scripts", "operator-reply.sh")
+    dst = ctx.p("scripts", "operator-reply.sh")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
+    os.chmod(dst, os.stat(src).st_mode | 0o111)
+
+
 LOCAL_PASS_REPORT = {"verdict": "pass",
                      "evidence": "npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
                                  "(rig-supplied local report, delivered via a structured "
@@ -419,7 +431,9 @@ class EngineerReactor:
         cur = arch.get("current_job")
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
-            append_jsonl(self.tron_ctx.worker_inbox,
+            # block 01-38: the architect's own report is legitimate ONLY off
+            # its own real ambient channel (never the legacy worker_inbox).
+            append_jsonl(self.tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                         {"tag": "architect.reconciled", "block": cur["block"],
                          "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
@@ -439,7 +453,9 @@ class EngineerReactor:
         verdict = verdict_for_source.get(cur.get("source"))
         if not verdict:
             return
-        append_jsonl(self.tron_ctx.worker_inbox,
+        # block 01-38: the architect's own report is legitimate ONLY off its
+        # own real ambient channel (never the legacy worker_inbox).
+        append_jsonl(self.tron_ctx.agent_inbox(architect.ARCHITECT_WID),
                     {"tag": "architect.triage_verdict", "triage_id": triage_id,
                      "verdict": verdict, "agent_id": architect.ARCHITECT_WID})
         self.triage_answered[triage_id] = verdict
@@ -514,6 +530,7 @@ def drive_outage():
     write_project_yaml(inst, root)
     write_knobs(inst, worker_count=1, fleet_outage_deaths=OUTAGE_DEATHS)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
 
     dying = [True]
@@ -584,9 +601,16 @@ def drive_outage():
                     and i >= outage_case["opened_tick"] + OBSERVE_TICKS):
                 pages_at_resume = len(page_counts(manifest, outage_case["id"]))
                 dying[0] = False   # the outage CLEARS — the next spawn attempt succeeds
-                append_jsonl(tron_ctx.worker_inbox,
-                            {"tag": "operator.decision",
-                             "slots": {"case_id": outage_case["id"], "verb": "resume"}})
+                # block 01-38: operator.decision is legitimate ONLY off the
+                # REAL operator channel — R3 forbids a rig writing `ctx.
+                # operator_inbox` directly in Python (`core/r3_lint.py`'s
+                # OPERATOR_INBOX_WRITE rule); the one legitimate writer is
+                # `scripts/operator-reply.sh`, a genuine subprocess.
+                _r = subprocess.run(
+                    [tron_ctx.p("scripts", "operator-reply.sh"), outage_case["id"], "resume"],
+                    capture_output=True, text=True, timeout=15)
+                if _r.returncode != 0:
+                    raise RuntimeError(f"operator-reply.sh failed: {_r.stderr!r}")
                 resumed_tick["i"] = i
 
             se = res.get("session_end")
@@ -724,6 +748,7 @@ def drive_healthy():
     write_project_yaml(inst, root)
     write_knobs(inst, worker_count=2, fleet_outage_deaths=3)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
 
     dying = [False]   # never dies — a genuinely healthy fleet throughout
@@ -810,6 +835,7 @@ def drive_single_death():
     write_knobs(inst, worker_count=2, fleet_outage_deaths=3,
                silence_ping_min=2, silence_escalate_min=4)
     tron_ctx = Ctx(inst)
+    _install_operator_reply_script(tron_ctx)
     grants_dir = tron_ctx.grants_dir
 
     dying = [False]

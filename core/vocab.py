@@ -255,13 +255,40 @@ def resolve_origin(msg, architect_wid):
     `sender` dict at all — just a bare top-level `agent_id`/`worker_id` —
     which resolves to `worker` (or `architect`, on the architect's own id)
     the identical way; this is the SAME ambient identity `core/router.py`/
-    `core/liveness.py` already trust, never a second convention."""
-    sender = (msg or {}).get("sender") or {}
+    `core/liveness.py` already trust, never a second convention.
+
+    R6/R8 (block 01-38), widened after a hostile review found the D8 hole
+    REOPENED: "`sid == architect_wid` grants ARCHITECT" is only honest when
+    `sid` came from a channel that can actually PROVE identity — the
+    architect's own ambient inbox (`core/snapshot.py::_drain_agent_channels`
+    UNCONDITIONALLY overwrites `sender` from the CHANNEL FILENAME, never the
+    payload) or the operator's own dedicated inbox (`_drain_operator_channel`,
+    same discipline). The LEGACY shared `worker-inbox.jsonl`
+    (`_drain_inbox`) is SELF-TYPED and SHARED — any process (a genuine
+    worker abusing `report.sh`'s legacy `<worker-id> ...` branch included)
+    can write a line there claiming ANY `sender.id`, so it proves NOTHING
+    about who actually wrote a given line. `core/snapshot.py` stamps every
+    line THAT drain produces `_channel="legacy"` (overwriting any
+    payload-asserted marker of the same name — never trusted from the
+    payload either); a message carrying that marker NEVER grants ARCHITECT
+    or OPERATOR here, no matter what `sender`/`agent_id` it claims — origin
+    silently falls through to the same WORKER default an unidentified report
+    already gets. A message with NO `_channel` marker at all never passed
+    through a real drain in the first place (a `core/*_rig.py` unit-level
+    fixture calling `classify.classify`/`door.admit` directly with a
+    hand-built `msg` — the pre-existing, documented IDENTITY BRIDGE
+    convenience above) — untouched, exactly as before this widening."""
+    msg = msg or {}
+    sender = msg.get("sender") or {}
     kind = sender.get("kind")
-    sid = sender.get("id") or (msg or {}).get("agent_id") or (msg or {}).get("worker_id")
-    if kind == "operator":
+    sid = sender.get("id") or msg.get("agent_id") or msg.get("worker_id")
+    # Only a message that arrived on a channel PROVEN to be the architect's
+    # own or the operator's own may ever resolve to a privileged origin —
+    # never the shared/self-typed legacy channel (see docstring above).
+    channel_proven = msg.get("_channel") != "legacy"
+    if kind == "operator" and channel_proven:
         return OPERATOR
-    if sid == architect_wid:
+    if sid == architect_wid and channel_proven:
         return ARCHITECT
     if kind == "worker":
         return WORKER
@@ -277,8 +304,8 @@ def resolve_origin(msg, architect_wid):
     # granted for an ARCHITECT/OPERATOR-only tag either way, since `minters_
     # ok` checks WORKER against THAT tag's own narrower declared set —
     # `architect.reconciled`/`architect.triage_verdict` still require
-    # genuine architect identity (`sid == architect_wid`), the actual
-    # impersonation surface ADR-0011 S-1 closes.
+    # genuine, CHANNEL-PROVEN architect identity, the actual impersonation
+    # surface ADR-0011 S-1 (and this widening) closes.
     return WORKER
 
 

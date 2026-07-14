@@ -231,7 +231,12 @@ class MiniEng:
         slots = dict(slots or {})
         if worker_id:
             slots.setdefault("worker_id", worker_id)
-        slots.setdefault("report", self.ctx.p("scripts", "report.sh"))
+            # Mirrors `core/engine.py::Engine.emit` (R6, block 01-38 T1): a
+            # real worker-directed message points `{report}` at THAT
+            # agent's OWN ambient copy, never the shared canon template.
+            slots.setdefault("report", self.ctx.agent_report_script(worker_id))
+        else:
+            slots.setdefault("report", self.ctx.p("scripts", "report.sh"))
         slots.setdefault("contract", self.ctx.worker_contract)
         try:
             line = self._renderer.render(template_id, slots)
@@ -261,12 +266,43 @@ class MiniEng:
         return "delivered"
 
 
+def _install_agent_channel(ctx, agent_id):
+    """Mirrors `core/engine.py::Engine._install_agent_channel` (R6, block
+    01-38 T1) — `MiniEng` (below) is a hand-rolled duck-typed engine that
+    never calls the real `core.engine.Engine`, so it must install the SAME
+    ambient channel a real spawn would: `inbox/<agent_id>.jsonl` + the
+    per-agent AMBIENT-ONLY `scripts/report-agent.sh` copy — NEVER the
+    shared canon `scripts/report.sh`, which still carries the LEGACY
+    self-typed branch kept alive for the frozen pre-rewrite engine (see
+    that script's own header). Idempotent — a repeat call for the SAME
+    agent_id is a harmless no-op (never truncates an existing inbox)."""
+    os.makedirs(ctx.inbox_dir, exist_ok=True)
+    inbox = ctx.agent_inbox(agent_id)
+    if not os.path.exists(inbox):
+        open(inbox, "a").close()
+    src = ctx.p("scripts", "report-agent.sh")
+    dst = ctx.agent_report_script(agent_id)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+    os.chmod(dst, os.stat(src).st_mode)
+
+
 def report_sh(ctx, worker_id, *flag_pairs_and_msg):
-    """Invoke the REAL `report.sh` installed at `ctx.p('scripts',
-    'report.sh')` as a genuine `bash` subprocess — the exact channel a real
-    architect/worker uses, never a hand-written JSONL append."""
-    script = ctx.p("scripts", "report.sh")
-    r = subprocess.run(["bash", script, worker_id, *flag_pairs_and_msg],
+    """Invoke the REAL, per-agent AMBIENT `report.sh` copy — installed here
+    exactly like a real spawn would (`_install_agent_channel`, above) — as
+    a genuine `bash` subprocess: the exact channel a real architect/worker
+    uses post block 01-38, never `scripts/report.sh`'s own LEGACY
+    self-typed branch. A hostile review found that THIS rig previously
+    invoked the shared canon script with a self-typed `worker_id` argv
+    (`bash scripts/report.sh <worker_id> --tag ...`) for BOTH the worker
+    AND the architect — i.e. it 'proved' the verdict wire using the EXACT
+    D8 impersonation shape the review flagged as a live exploit, never a
+    genuine ambient-channel proof. `worker_id` no longer appears on the
+    subprocess argv at all — identity comes entirely from the installed
+    copy's own location, exactly as a real agent's report.sh works."""
+    _install_agent_channel(ctx, worker_id)
+    script = ctx.agent_report_script(worker_id)
+    r = subprocess.run(["bash", script, *flag_pairs_and_msg],
                        capture_output=True, text=True)
     return r.returncode, r.stdout, r.stderr
 
