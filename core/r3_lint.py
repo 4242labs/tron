@@ -1,29 +1,31 @@
 """r3_lint — R3 honesty lint (ADR-0012 §2 R3 / block 01-40 T1).
 
-KNOWN GAP OPENED BY BLOCK 01-38 T1 (the root invariant) — READ BEFORE
-TRUSTING A CLEAN RUN AS "NO FABRICATED-SENDER RIGS EXIST": T1 deleted the
-single shared `ctx.worker_inbox` drop-box from `core/`'s live read path and
-replaced every rig's direct injection with `core.intake.write(ctx,
+KNOWN GAP OPENED BY BLOCK 01-38 T1, CLOSED BY T6 — the reseed: T1 deleted
+the single shared `ctx.worker_inbox` drop-box from `core/`'s live read path
+and replaced every rig's direct injection with `core.intake.write(ctx,
 agent_id, obj)` — a per-agent-intake write, mechanically substituted across
 every `core/*_rig.py`/`core/sim/*.py` fixture, `core/sim/operator_proxy.py`
-(a fabricated `sender.kind="operator"` payload) included. This lint's
-`INBOX_FABRICATED_SENDER` seed (`_INBOX_ATTRS`, below) is keyed EXCLUSIVELY
-on the literal `ctx.worker_inbox`/`ctx.operator_inbox` Attribute shape — a
-call to `core.intake.write` is an entirely different AST shape (a function
-call, not an attribute-write) this taint tracker does not seed on, so it is
-now BLIND to a fabricated-sender payload routed through it, on EVERY rig in
-the tree, not just the one this module used to track (see `KNOWN_RED`,
-below — the `core/sim/operator_proxy.py` entry that used to catch exactly
-this is now STALE and removed, not because the underlying dishonesty is
-fixed, but because this lint can no longer see it). Closing this — teaching
-the SAME taint-union machinery to seed on `core.intake.write`'s own payload
-argument, with the same evasion-resistant rigor `_INBOX_ATTRS` already has
-— is block 01-38 T6's job ("Honest rigs, R3 MODEL A"), not T1's; T1 is
-additive on the identity side only. Until T6 lands, a clean run of this
-lint proves less than it used to: it still catches every `MANIFEST_DIRECT_
-WRITE` and any STRAGGLER still touching `ctx.worker_inbox`/`ctx.
-operator_inbox` directly, but NOT a fabricated sender laundered through
-`core.intake.write`.
+(a fabricated `sender.kind="operator"` payload) included. `core.intake.
+write` is an entirely different AST shape (a function call, not an
+attribute-write) from `ctx.worker_inbox`/`ctx.operator_inbox`'s own
+Attribute shape, so T1 through T5 left this lint BLIND to a
+fabricated-sender payload routed through it. T6 closes this:
+`_intake_write_payload_arg` (below) recognizes `intake.write(ctx, agent_id,
+obj)`/`intake_mod.write(...)` as a write-sink in its own right — every
+agent's own private intake is inescapably a real WORKER-shaped channel
+(T1's own design), so the call itself IS the sink, unconditionally; its
+`obj` argument gets the IDENTICAL `_payload_is_safe` fabricated-sender
+proof a `ctx.worker_inbox` write always had. `core/sim/operator_proxy.py`
+is caught RED again (restored to `KNOWN_RED`, below, with an updated
+reason) for the SAME underlying dishonesty it always had — the mechanism
+(direct injection, never through the real `scripts/report.sh` door) is
+still R3-illegal even though block 01-38 T2 already made the FABRICATED
+IDENTITY itself harmless downstream (a `Report`'s `sender` key is
+stripped/unreadable regardless of what a raw line claims). Rebuilding
+`core/sim/operator_proxy.py` (and any other still-KNOWN_RED-or-undiscovered
+direct-injection rig) onto a real door subprocess is R3 MODEL A's fuller
+rig-by-rig honesty rebuild — open work this reseed does not itself
+complete, tracked via `KNOWN_RED`, never silently declared done.
 
 The only legal ingress into the engine is the real reporting door:
 `scripts/report.sh` writes a JSON line to an agent's own private intake
@@ -301,20 +303,46 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # it regressed silently); a red file NOT listed here is an unlisted offender
 # (FAIL, add it with its owning block or fix it).
 KNOWN_RED = {
-    # REMOVED 01-38 T1 (was: "core/sim/operator_proxy.py", owning_block
-    # "01-38"): `_inject_decision` used to fabricate `sender.kind="operator"`
-    # via a raw write straight to `eng.ctx.worker_inbox` (the WORKER
-    # channel) — a shape this lint's `INBOX_FABRICATED_SENDER` seed caught.
-    # T1 deleted `ctx.worker_inbox` from the live `core/` path entirely and
-    # moved that write (mechanically, like every other rig's) to
-    # `core.intake.write` — this lint's seed does not track that call shape
-    # (see the module docstring's "KNOWN GAP" section), so the fixture now
-    # comes back CLEAN under the CURRENT lint, not because the underlying
-    # dishonesty (still no real operator transport, still not routed
-    # through the real door) is fixed — that remains 01-38 T6's job. Kept
-    # here only as a comment, never re-added as a live KNOWN_RED entry,
-    # because re-adding an entry the lint cannot actually detect would be a
-    # second, worse lie (a tracked-red label the lint no longer earns).
+    # RESTORED 01-38 T6 (was briefly REMOVED across T1-T5, see git history):
+    # T1 deleted `ctx.worker_inbox` from the live `core/` path and moved
+    # every rig's direct injection (this one included) to `core.intake.
+    # write(ctx, agent_id, obj)` — a call shape this lint's
+    # `INBOX_FABRICATED_SENDER` seed (keyed exclusively on the `ctx.
+    # worker_inbox`/`operator_inbox` ATTRIBUTE shape) could not see, so the
+    # fixture read CLEAN for T1-T5, not because the underlying dishonesty
+    # was fixed. T6 reseeds the SAME taint-union machinery onto `core.
+    # intake.write`'s own payload argument (`_intake_write_payload_arg`,
+    # above) — this file is caught again, RED, for the SAME reason it
+    # always was: `_inject_decision` (core/sim/operator_proxy.py:162)
+    # fabricates `sender.kind="operator"` into a real per-agent intake via
+    # `intake.write(eng.ctx, _OPERATOR_PROXY_WID, rep)` — a raw injection
+    # bypassing the real `scripts/report.sh` door (R3 MODEL A: "the only
+    # way anything enters the engine — tests included — is the real
+    # reporting door"). The underlying identity resolution is no longer
+    # forgeable post-T2 (a Report's `sender` key is stripped/unreadable
+    # regardless), but the INJECTION MECHANISM itself is still dishonest by
+    # R3's own letter — this stays KNOWN_RED until `core/sim/operator_
+    # proxy.py` is rebuilt to inject through a real report.sh subprocess
+    # (the not-yet-built real operator TRANSPORT this module's own
+    # docstring already calls out, T5's scope) — the full R3 MODEL A
+    # rig-by-rig rebuild is open work beyond this reseed, tracked
+    # separately, not resolved by this entry.
+    "core/sim/operator_proxy.py": {
+        "owning_block": "01-38",
+        "reason": ("_inject_decision (line ~162) writes a `sender.kind="
+                   "\"operator\"` payload into a real per-agent intake via "
+                   "`intake.write(eng.ctx, _OPERATOR_PROXY_WID, rep)` — a "
+                   "raw injection, never through the real `scripts/report.sh` "
+                   "door a genuine operator reply would use (R3 MODEL A). "
+                   "The identity itself is no longer forgeable downstream "
+                   "(block 01-38 T2's typed Report strips/refuses `sender` "
+                   "regardless of what this line writes), but the injection "
+                   "MECHANISM is still dishonest by R3's own letter. Stays "
+                   "KNOWN_RED until this rig is rebuilt onto a real report.sh "
+                   "subprocess — open work beyond block 01-38's own scope "
+                   "(no real operator transport a genuine reply would arrive "
+                   "on yet lives outside this engine, T5's own scope note)."),
+    },
     "core/architect_rig.py": {
         "owning_block": "01-40",
         "reason": ("RIG2-C2 (run_seq_reconcile_rig) monkeypatches "
@@ -1351,12 +1379,53 @@ def _emit_violation(kind, payload_expr, payload_scope, path, lineno, violations,
             '`sender` key, or `sender.kind == "worker"`; denied by default otherwise'))
 
 
+_INTAKE_MODULE_ALIASES = {"intake", "intake_mod"}
+
+
+def _intake_write_payload_arg(call):
+    """`core.intake.write(ctx, agent_id, obj)` (block 01-38 T1) — a call
+    shape entirely OUTSIDE `_sink_target`'s own enumeration: it's a plain
+    function call, not an attribute-write on a tainted PATH the way
+    `ctx.worker_inbox` is (see this module's own "KNOWN GAP" docstring
+    section — this function closes it, block 01-38 T6). Every agent's own
+    per-agent intake is inescapably a real WORKER-shaped channel (T1's own
+    design: report.sh always stamps `sender.kind:"worker"` literally,
+    regardless of which agent's intake it targets) — so a call matching
+    this shape IS the write-sink itself, unconditionally; never gated on
+    tracing which `ctx` it was handed (T1 never routes `intake.write` at a
+    non-worker-shaped target — the not-yet-built real operator TRANSPORT,
+    T5's own scope, still lands through this SAME per-channel mechanism).
+    Matched by the two literal module aliases this codebase actually binds
+    `core/intake.py` to (`import intake` / `import intake as intake_mod`),
+    the same whole-file bare-name-matching convention this module already
+    uses for function/lambda call-graph resolution elsewhere. Returns the
+    PAYLOAD expression (`obj` — the 3rd positional arg, or an `obj=`
+    keyword) for the SAME `_payload_is_safe` check a `ctx.worker_inbox`
+    write already gets, or `None` if this call isn't this shape at all."""
+    func = call.func
+    if not (isinstance(func, ast.Attribute) and func.attr == "write"
+            and isinstance(func.value, ast.Name) and func.value.id in _INTAKE_MODULE_ALIASES):
+        return None
+    if len(call.args) >= 3:
+        return call.args[2]
+    return next((kw.value for kw in call.keywords if kw.arg == "obj"), None)
+
+
 def _check_calls(tree, nt, rt, bindings, returns, local_classes, parent_scope, path):
     violations = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         scope = parent_scope.get(node)
+        intake_payload = _intake_write_payload_arg(node)
+        if intake_payload is not None:
+            # block 01-38 T6 — the reseed: `core.intake.write`'s own payload
+            # gets the IDENTICAL fabricated-sender proof-of-safety check
+            # `ctx.worker_inbox` writes always have, closing the KNOWN GAP
+            # block 01-38 T1 opened (see module docstring).
+            _emit_violation("worker", _unwrap_json_dumps(intake_payload), scope, path,
+                             node.lineno, violations, _describe_call(node), bindings, returns)
+            continue
         if _is_open_like(node):
             path_arg = _open_path_arg(node)
             kinds = _expr_taint(path_arg, nt, rt, bindings, scope) if path_arg is not None else frozenset()
