@@ -33,17 +33,18 @@ Design record: `tron-meta` `logs/architecture/adr-0004-engine-rewrite.md` + `log
 
 ## Running the rigs (deterministic, ~0 tokens)
 
+`scripts/l1.sh` (repo root) is the ONE command — glob-discovers and runs every
+`core/*_rig.py` + `core/sim/*_rig.py`, no hand-maintained list, so a newly added
+rig is picked up with zero edits anywhere. This is the CI L1 gate (block 01-40 T1,
+ADR-0012 §3 P1; paired with the R3 honesty lint, `core/r3_lint.py`, its own CI step):
+
 ```bash
-cd tron-app/.worktrees/l1-harness-landing-fix/core
-for r in landing gate gate_full tick dispatch multiblock sentry casestate architect \
-         reviewers liveness liveness_working sentry_working engine classify knobs \
-         opfloor wallrouting outage trunkchurn archive_dep; do
-  python3 ${r}_rig.py
-done
-python3 sim/sim_l2_rig.py           # L2 scripted full-workflow SIM (happy + adversarial)
-python3 sim/boot_real_scaffold_rig.py   # real trivial-tip-converter scaffold boots through core.Engine
-python3 sim/report_channel_rig.py   # report.sh -> inbox -> classify -> worker.done integration lock
+./scripts/l1.sh
 ```
+
+To run one rig in isolation (each self-configures its own `sys.path`, so it works
+from any cwd): `python3 core/<name>_rig.py` (or `python3 core/sim/<name>_rig.py`).
+
 Each prints `PASS (n/m)` and drives real git + real `land.sh`. A rig is the WAKE daemon + the
 worker(s): it calls `tick.tick(eng)` in a loop and, when the engine orders work/land/close, does the
 real git and runs `land.sh` itself — faking the worker *process*, never the trunk.

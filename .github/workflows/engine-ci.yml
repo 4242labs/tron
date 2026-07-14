@@ -81,3 +81,19 @@ jobs:
 
       - name: Content-field lint — RED on fixture / GREEN on tree (AC-6 proof)
         run: python3 .github/scripts/content_field_lint_check.py
+
+      - name: L1 — the mutation-proof rig runner (block 01-40 T1, ADR-0012 §3 P1)
+        # ONE command, glob-discovers ALL core/*_rig.py + core/sim/*_rig.py — no
+        # hand-maintained list. ~1 min today (30 rigs); ~2 min budget per the ADR.
+        run: ./scripts/l1.sh
+
+      - name: L1 discovery is real, not vacuous (AC-1 proof)
+        run: python3 .github/scripts/l1_discovery_check.py
+
+      - name: R3 honesty lint — RED on direct-write fixture / GREEN on tree (AC-2 proof)
+        # A rig may not fabricate a sender kind report.sh could never produce, nor
+        # write manifest[...] state directly. core/sim/operator_proxy.py is a
+        # known, tracked exception (KNOWN_RED in core/r3_lint.py) — rebuilt honestly
+        # in block 01-38 T4; this step fails if that entry ever goes stale (silently
+        # fixed without updating the list) or a new offender appears unlisted.
+        run: python3 .github/scripts/r3_honesty_lint_check.py
