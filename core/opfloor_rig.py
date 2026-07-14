@@ -711,8 +711,10 @@ def main():
         # ══════════════════════════════════════════════════════════════
         eng_iso = Engine(Ctx(inst))   # a FRESH, throwaway Engine — never .start()-ed,
         eng_iso.dry = False           # never touching the main drive's own manifest;
-                                       # deliberately carries NO eng._deliver_page hook
-                                       # (the "absent hook, production-shaped" path).
+                                       # carries the REAL `_deliver_page` (block 01-38
+                                       # T2) — no `eng._deliver_page =` override here,
+                                       # so this exercises the actual production
+                                       # transport (scripts/tg-send.sh), un-stubbed.
         iso_manifest = {}
         cid = casestate.open_case(eng_iso, iso_manifest, None, "test.blockless",
                                   "a block-less escalation — never a silent "
@@ -770,11 +772,12 @@ def main():
            "event (`eng.events`) — the durable trace is never manifest-only",
            len(iso_page_events) == 1 and iso_page_events[0]["payload"].get("block") is None,
            f"iso_page_events={iso_page_events}")
-        ok("BL3 (ABSENT-HOOK KILLER — must be GREEN): with NO eng._deliver_page "
-           "hook wired (this wave's real production shape — no transport yet), "
-           "the receipt reads None (absent) — the SAME floor outcome a 'failed' "
-           "receipt gets, never a default-delivered assumption",
-           iso_pages[0].get("receipt") is None,
+        ok("BL3 (REAL-TRANSPORT, NO-LIVE-CREDS KILLER — must be GREEN, block "
+           "01-38 T2): the un-stubbed, REAL `_deliver_page` (scripts/tg-send.sh, "
+           "no `.env`/token in this sandboxed instance) answers 'failed' — "
+           "an honest receipt, NEVER a default-delivered assumption, and NEVER "
+           "an uncaught exception out of a missing-creds transport",
+           iso_pages[0].get("receipt") in (None, "failed"),
            f"iso_pages={iso_pages}")
 
         # ══════════════════════════════════════════════════════════════
@@ -784,12 +787,16 @@ def main():
         src = {}
         for mod in ("casestate", "sentry", "engine"):
             src[mod] = open(os.path.join(HERE, f"{mod}.py")).read()
-        ok("SRC1 (NO-RAW-GIT KILLER — must be GREEN): none of casestate.py/"
-           "sentry.py/engine.py shells out to a raw git/subprocess call of its "
-           "own — all git observation stays inside core/gitobs.py, all "
-           "persistence inside core/state.py",
+        ok("SRC1 (NO-RAW-GIT KILLER — must be GREEN): casestate.py/sentry.py "
+           "shell out to NO subprocess/git call of their own; engine.py's ONLY "
+           "subprocess call is block 01-38 T2's real operator-page transport "
+           "(scripts/tg-send.sh) and it never names `git` — all git observation "
+           "stays inside core/gitobs.py, all persistence inside core/state.py",
            all("import subprocess" not in s and "subprocess." not in s
-               and "\nimport git\n" not in s for s in src.values()),
+               and "\nimport git\n" not in s for s in
+               (src["casestate"], src["sentry"]))
+           and "tg-send.sh" in src["engine"]
+           and '"git"' not in src["engine"] and "'git'" not in src["engine"],
            "grep-equivalent source scan of core/{casestate,sentry,engine}.py")
         _reping_body = src["casestate"].split("def reping(")[1].split("\ndef ")[0]
         ok("SRC2 (NO-PERMANENT-DROP KILLER — must be GREEN): `core/casestate.py`'s "

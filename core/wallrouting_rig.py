@@ -886,7 +886,11 @@ def main():
            iso_case_bl_after is not None and iso_case_bl_after.get("owner") == "operator"
            and iso_case_bl_after.get("decision") is None
            and len(iso_pages_bl) == 1 and iso_pages_bl[0].get("block") is None
-           and iso_pages_bl[0].get("receipt") is None,   # no eng._deliver_page hook wired (production shape)
+           # block 01-38 T2: the REAL, un-stubbed `_deliver_page` (scripts/
+           # tg-send.sh) answers honestly — "failed" with no live creds in
+           # this sandboxed instance, never a default-delivered assumption;
+           # `None` stays accepted too (an even-more-absent transport shape).
+           and iso_pages_bl[0].get("receipt") in (None, "failed"),
            f"iso_case_bl_after={iso_case_bl_after} iso_pages_bl={iso_pages_bl}")
 
         # ══════════════════════════════════════════════════════════════

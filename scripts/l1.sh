@@ -11,25 +11,31 @@
 # sitecustomize.py directory prepended to PYTHONPATH (see materialize_site_dir
 # in core/r3_guard.py — never PYTHONSTARTUP, which does not fire for
 # scripts). THIS SCRIPT IS THE ONLY PLACE THE PROTECTED-PATH POLICY LIVES —
-# core/r3_guard.py itself hardcodes no path. Today that policy is
-# operator-inbox.jsonl only: R8 (ADR-0012 §2) already forbids ANY rig from
-# writing it, under any circumstance, so blanket-protecting it can never
-# legitimately trip a rig. worker-inbox.jsonl is DELIBERATELY NOT protected
-# yet — several rigs still write it in-process (append_jsonl) as a currently-
-# LEGAL shape (a real worker sender, or no sender key — see core/r3_lint.py's
-# payload-safety proof), and blanket-protecting it would false-RED every one
-# of them. That is the one piece of the R3 pivot still gated on an operator
-# ruling (MODEL A: route every rig through scripts/report.sh instead, then
-# protect worker-inbox.jsonl too) — flipping it later is a ONE-LINE change to
-# R3_GUARD_PROTECT below, never a code change.
+# core/r3_guard.py itself hardcodes no path.
+#
+# Block 01-38 (R8/R6): operator-inbox.jsonl is NO LONGER protected here. It
+# used to be — R8 had no real transport yet, so ANY in-process touch was
+# inherently a fabrication. Now `core/snapshot.py::build`'s operator-channel
+# drain (T3) is REAL PRODUCTION CODE that legitimately rotates/reads/removes
+# `ctx.operator_inbox` every tick, in-process, whenever a rig drives a real
+# `core.engine.Engine` — exactly the same reason worker-inbox.jsonl was
+# ALREADY excluded below (several rigs legitimately write it in-process as a
+# currently-legal shape). Blanket-protecting operator-inbox.jsonl now would
+# false-RED that legitimate drain (`core/sim/operator_channel_rig.py`'s own
+# proof of it). The remaining protection against a rig FABRICATING operator
+# content directly (a Python `.write()`/`open(...,'w')` on `ctx.
+# operator_inbox`) is `core/r3_lint.py`'s static OPERATOR_INBOX_WRITE rule
+# — unchanged, still enforced, still scans every harness file; the real
+# door stays `scripts/operator-reply.sh`, a genuine subprocess (see `core/
+# sim/operator_proxy.py`'s block 01-38 T4 rebuild). worker-inbox.jsonl
+# remains unprotected too — flipping either policy later is a ONE-LINE
+# change to R3_GUARD_PROTECT below, never a code change.
 #
 # A rig's own instance dir is minted at RUNTIME (tempfile.mkdtemp(), a random
 # suffix this script can't predict) — TMPDIR is pointed at a fresh sandbox for
-# the whole run so every rig's instance dir lands under one known root, and
-# R3_GUARD_PROTECT carries a GLOB (fnmatch's `*` matches across path
-# separators too) that covers any depth/suffix under it — the
-# "protected-DIRECTORY prefix match" unit-style rigs need without this script
-# ever having to know an individual rig's directory-naming scheme.
+# the whole run so every rig's instance dir lands under one known root; that
+# sandboxing stays even with an empty protect list (fresh, isolated instance
+# dirs per run is its own hygiene, independent of the guard).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
@@ -43,7 +49,7 @@ python3 core/r3_guard.py --write-site-dir "$R3_SITE_DIR" >/dev/null
 
 export TMPDIR="$R3_SANDBOX"
 export PYTHONPATH="$R3_SITE_DIR${PYTHONPATH:+:$PYTHONPATH}"
-export R3_GUARD_PROTECT="$R3_SANDBOX"'/*operator-inbox.jsonl'
+export R3_GUARD_PROTECT=""
 
 shopt -s nullglob
 rigs=(core/*_rig.py core/sim/*_rig.py)
