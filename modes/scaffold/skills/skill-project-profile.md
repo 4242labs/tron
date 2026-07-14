@@ -8,7 +8,7 @@ Lock the confirmed `{profile, values}` pair before handing off to `skill-project
 
 **TRON is out of scope.** TRON seeds itself when the operator activates it in a project — scaffold does not ask about it and does not copy `tron.md` / `skill-tg-comms.md`.
 
-> Existing projects are not this skill's business. Auditing and upgrading a project that already exists belongs to the AUDIT mode.
+> Existing projects are not this skill's business. Auditing, tidying, and upgrading a project that already exists belongs to the KONDO mode (`/tron-kondo`).
 
 ---
 

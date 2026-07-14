@@ -25,6 +25,7 @@ Do not create ceremony for a conversation.**
       | ALFREDO | `chore/alfredo-` | free-form kebab-case; the work is ad-hoc, so the slug is too |
       | CLU | — | CLU commits nothing. Its workers branch under the target repo's conventions. |
       | SCAFFOLD | — | SCAFFOLD creates repos; it does not branch inside them. |
+      | KONDO | — | KONDO commits inside the project it tidies, under *that* repo's conventions: `chore/upgrade-{area}` for what it adds, `chore/kondo-discard-{area}` for what it removes — never the same branch for both. |
 
 - [ ] **The target repo's rules win.** When the commits land in someone else's repo — a rollout, a
       retrofit, an ad-hoc fix in an app repo — follow *that repo's* conventions (`fix/`, `feat/`,

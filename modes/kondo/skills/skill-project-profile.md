@@ -6,7 +6,7 @@ Read the repo, infer the answers, present them for confirmation. Lock the confir
 
 **TRON is out of scope.** TRON seeds itself when the operator activates it in a project — the audit and upgrade flows do not ask about it, do not copy `tron.md`/`skill-tg-comms.md`, and do not audit TRON wiring.
 
-> New projects are not FLYNN's. A project that doesn't exist yet is scaffolded by `/tron-scaffold`, which runs its own fresh-profile skill.
+> New projects are not KONDO's. A project that doesn't exist yet is scaffolded by `/tron-scaffold`, which runs its own fresh-profile skill.
 
 ---
 
@@ -64,4 +64,4 @@ Fill these from disk; ask the operator only for what the repo can't tell you.
 
 ## Output
 
-A locked `{profile, values}` pair, passed verbatim to `skill-project-audit.md`. Re-confirm with the operator before handoff — no upgrade work proceeds without an explicit lock.
+A locked `{profile, values}` pair, passed verbatim to `skill-project-audit.md` and `skill-project-discard.md`. Re-confirm with the operator before handoff — no upgrade work proceeds without an explicit lock, and the discard pass is only safe once the profile is locked (a workflow for a service the project doesn't use is cruft; the same file in a project that does use it is canon).

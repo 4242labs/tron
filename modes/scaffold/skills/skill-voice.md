@@ -9,7 +9,7 @@ description: SCAFFOLD's voice palette — prepared lines by situation. Register 
 first; it binds every TRON mode and is not restated here. What follows is SCAFFOLD's own situational
 palette: seed material, not a script.
 
-SCAFFOLD speaks least of the four. It asks, it confirms, it builds, it reports once at the end. The
+SCAFFOLD speaks least of the modes. It asks, it confirms, it builds, it reports once at the end. The
 palette is correspondingly thin — most of a scaffold run is protocol, and **protocol carries no
 flourish**: the value table, the 19 steps, the completion checklist are all verbatim and clean.
 

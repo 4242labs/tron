@@ -4,7 +4,7 @@
 
 **Prerequisite:** `skills/skill-project-profile.md` has run and locked the service profile. Audit only for services in the confirmed profile — omit rows for services the project does not use.
 
-**Output:** Gap report in the format defined at the end of this skill. Hand off to `skills/skill-project-upgrade.md` for remediation.
+**Output:** Gap report in the format defined at the end of this skill. Then run `skills/skill-project-discard.md` — this skill finds what canon requires and the project lacks; that one finds what the project carries and canon never asked for. Present both reports together, then hand off to `skills/skill-project-upgrade.md` for remediation.
 
 ---
 
@@ -245,4 +245,6 @@ After scoring, produce:
 - Total effort estimate: ~Xh
 ```
 
-Present the gap report. Wait for user confirmation before handing off to `skills/skill-project-upgrade.md`.
+Do **not** present the gap report on its own. Run `skills/skill-project-discard.md` next and present both
+reports in one pass — the operator rules on what to add and what to remove in the same sitting. Only then
+hand off to `skills/skill-project-upgrade.md`.

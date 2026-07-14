@@ -5,13 +5,11 @@ doc, its skills, and whatever state it owns.
 
 | Mode | Boot | What it is |
 |:--|:--|:--|
-| [`flynn/`](flynn/) | `/tron-flynn` | **Advisor.** Workflow health, process audit, canon custody, agent design, project upgrade. Reports; the operator decides. |
+| [`flynn/`](flynn/) | `/tron-flynn` | **Advisor.** Workflow health, process audit, canon custody, agent design. Reports; the operator decides. |
 | [`clu/`](clu/) | `/tron-clu` | **Supervisor.** Runs a fleet of worker agents against a project's pipeline — dispatch, gates, merge, escalation. |
 | [`scaffold/`](scaffold/) | `/tron-scaffold` | **Scaffold.** Stands a new project up on the canon kit — profile, two wired repos, CI, hooks, services. New projects only. |
 | [`alfredo/`](alfredo/) | `/tron-alfredo` | **Generalist.** Ad-hoc engineering, debugging, everyday architecture, research, review. Advises *and* acts. One session, one task. |
-
-Planned: **AUDIT** — bring an existing project up to standard (currently FLYNN's). See the TRON
-operating-modes card.
+| [`kondo/`](kondo/) | `/tron-kondo` | **Tidier.** Brings an *existing* project up to canon — audit, discard, upgrade. Adds what's missing, removes what nothing needs. |
 
 ## Which one
 
@@ -23,9 +21,14 @@ Route on **what the work produces**, not on how hard it sounds.
 | a change to the **process layer** (agent doc, skill, canon, principles, pipeline), or a recommendation the operator must decide on | FLYNN |
 | a pipeline block moving through gates, with a fleet | CLU |
 | a project that does not exist yet | SCAFFOLD |
+| an existing project's structure brought to canon — gaps closed, cruft removed | KONDO |
 
-ALFREDO is the default when the work doesn't fit the other three. He is the only mode that both
+ALFREDO is the default when the work doesn't fit the others. He is the only mode that both
 advises and executes; FLYNN reports and waits, CLU dispatches and never touches the code.
+
+FLYNN and KONDO both audit, and they are not the same audit: **FLYNN audits conduct** (did the agents
+follow the process?), **KONDO audits structure** (does the project match the kit?). Running one does
+not substitute for the other.
 
 ## The law — one source of truth
 
@@ -40,7 +43,7 @@ before its own persona doc, and when the two disagree the shared layer wins.
 | [`shared/skill-operator-comms.md`](shared/skill-operator-comms.md) | The communication contract — ANSWER / ACT / FLAG / FYI, one type per reply. Governs every operator-facing channel. |
 | [`shared/skill-branching.md`](shared/skill-branching.md) | Worktree paths, branch names, and the session-end commit → push → land → clean-up protocol. Each mode contributes only its slug. |
 
-Change a rule there, and all four modes change with it. **Never fork it into a mode.**
+Change a rule there, and all five modes change with it. **Never fork it into a mode.**
 
 ## Boundary
 
@@ -57,7 +60,7 @@ tron-app/modes/install.sh
 
 That is the whole fresh-machine setup: the slash commands land in Claude's `commands/` directory
 with the mode's absolute path baked in, and the `tron-flynn` / `tron-clu` / `tron-scaffold` /
-`tron-alfredo` terminal shortcuts get wired onto your PATH. Re-running is safe. `install.sh <project>`
+`tron-alfredo` / `tron-kondo` terminal shortcuts get wired onto your PATH. Re-running is safe. `install.sh <project>`
 scopes the commands to a single project instead of the machine; `--no-path` skips the shell-rc line.
 
 The command files and one PATH line are the **only** things written. No pointer files, no
@@ -69,4 +72,5 @@ tron-flynn "audit this project"       # → claude "/tron-flynn audit this proje
 tron-clu                              # → claude "/tron-clu"
 tron-scaffold                         # → claude "/tron-scaffold"
 tron-alfredo "the build broke"        # → claude "/tron-alfredo the build broke"
+tron-kondo "tidy acme"                # → claude "/tron-kondo tidy acme"
 ```

@@ -12,7 +12,7 @@
    `commands/` directory, is the only thing written.
 
    Terminal shortcut (optional), one line in your shell rc:
-   `export PATH="<tron-app>/modes/bin:$PATH"` → gives you `tron-clu`, `tron-flynn`, `tron-scaffold`, and `tron-alfredo`.
+   `export PATH="<tron-app>/modes/bin:$PATH"` → gives you `tron-clu`, `tron-flynn`, `tron-scaffold`, `tron-alfredo`, and `tron-kondo`.
 
 2. **PULSE guard + worktree config** (per project, one-time): on first `/tron-clu` boot in a project, CLU proposes the install — `pulse-guard.sh` copied to the project's `.claude/tron-clu-pulse-guard.sh` (project-local, so `settings.json` never references a machine-specific path) plus a minimal `settings.json` merge: the Stop hook via `"$CLAUDE_PROJECT_DIR"/.claude/tron-clu-pulse-guard.sh` (a no-op unless a CLU run is active, so other agents in the project are untouched) and `"worktree": {"bgIsolation": "none"}` (mandatory for fleet runs — without it, background worker sessions auto-isolate into duplicate worktrees and break the parallel-engineer contract). It shows the diff and waits for a one-time go-ahead before writing anything. You can also apply `settings-snippet.json` + the script copy yourself ahead of time. Anthropic's config trust boundary sits at the folder-trust prompt, not per-hook, so committing both files to version control (rather than leaving them untracked) is the recommended safety net — and makes the project install portable across machines for free.
 

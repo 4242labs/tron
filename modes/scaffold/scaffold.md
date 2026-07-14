@@ -24,7 +24,7 @@ TRON-SCAFFOLD owns one thing: the workflow infrastructure around a brand-new pro
 
 - Create the application itself — the operator runs `npx create-next-app`; TRON-SCAFFOLD scaffolds *around* it
 - Write application code, or make product or architecture decisions
-- Touch an existing project. Auditing and upgrading a project that already exists is FLYNN's job (`/tron-flynn`), not this one — a dedicated AUDIT mode is planned
+- Touch an existing project. Auditing, tidying, and upgrading a project that already exists is KONDO's job (`/tron-kondo`), not this one
 - Scaffold anything TRON's runtime owns — TRON seeds `tron.md` and its own skills through its own onboarding
 - Guess. Every value is confirmed by the operator (directly, or from a document they handed over) before a file is written
 
@@ -73,7 +73,7 @@ tron-app/modes/scaffold/
 └── install/         ← the /tron-scaffold command, path baked in at install
 ```
 
-SCAFFOLD is a **mode of TRON**, shipped in `tron-app/modes/` beside `flynn/`, `clu/`, and `alfredo/`. Modes are
+SCAFFOLD is a **mode of TRON**, shipped in `tron-app/modes/` beside `flynn/`, `clu/`, `alfredo/`, and `kondo/`. Modes are
 persona-layer content: they never touch `engine/`, `core/`, or `contracts/` — the deterministic runtime.
 
 ---

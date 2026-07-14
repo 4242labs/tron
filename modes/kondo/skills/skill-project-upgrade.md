@@ -1,12 +1,15 @@
 # Skill: Project Upgrade
 
-**Purpose:** Procedural remediation for every gap found by `skills/skill-project-audit.md`.
+**Purpose:** Procedural remediation for every gap found by `skills/skill-project-audit.md`, and execution
+of every removal approved from `skills/skill-project-discard.md`.
 
-**Prerequisite:** Gap report from `skill-project-audit.md` produced and user-confirmed. Service profile locked.
+**Prerequisite:** Gap Report produced and user-confirmed. Discard Report produced and ruled on **per item**.
+Service profile locked.
 
 **Templates source of truth:** `tron/tron-app/templates/project-scaffold/templates/`.
 
-Apply Critical gaps first, then Important, then Nice-to-have. Within each tier, follow the ordering below.
+Additions first, removals last — see **Removals** below for why. Within the additions, apply Critical gaps
+first, then Important, then Nice-to-have; within each tier, follow the ordering below.
 
 ---
 
@@ -143,16 +146,49 @@ After all Critical gaps are closed:
 
 ---
 
+## Removals
+
+The approved lines of the Discard Report — and **only** those lines. An item that was rejected, or left
+uncertain, or never ruled on, is not removed. If the operator approved the report in bulk rather than line
+by line, go back and get the per-item answers first.
+
+Removals run **after** every addition is merged. An addition can reveal that a "dead" file was the only
+copy of something canon now wants in a different place — and it is cheaper to skip a removal than to
+resurrect one.
+
+Per approved item:
+
+1. **Branch** from staging: `git checkout -b chore/kondo-discard-<area>`
+   - Group related removals into one branch (all leftover CI workflows = one branch)
+   - Removals never share a branch with additions — a revert must be able to take back the deletion alone
+2. **Re-verify at the moment of deletion.** The evidence was gathered before the additions landed. Re-run
+   the reference grep. If anything now points at the file, **stop** — the item goes back to the operator
+3. **Delete** with `git rm` (files) / `git branch -d` + `git push origin --delete` (branches) /
+   `git worktree remove` + `git worktree prune` (worktrees). Never `rm -rf` a tracked path
+4. **Commit**: `chore(meta): remove <artifact>` / `chore(app): remove <artifact>` — subject fully lowercase,
+   body naming the evidence ("no database in profile; no inbound references")
+5. **Open PR** to `staging`. Removals are reviewed like any other change — never a direct commit
+6. **Merge**, then mark the line executed in the Discard Report
+
+**Stop conditions.** Abandon the removal and return to the operator if: a reference appears that wasn't
+there before; the branch or worktree has gained a commit or an open PR since the sweep; deleting it would
+need a history rewrite; or the item turns out to touch `.env`, application source, or tests. A removal you
+are not certain of is a removal you do not make.
+
+---
+
 ## Post-Upgrade Re-Audit
 
-After all gaps are applied:
+After all gaps are applied and all approved removals are merged:
 
 1. Re-run `skills/skill-project-audit.md` scoped to the confirmed service profile
 2. Every applicable item must score ✅ — no ⚠️ or ❌ remain
-3. Report final score to the user
-4. If any items are still ⚠️ or ❌, apply them before declaring done
+3. Re-run `skills/skill-project-discard.md`. It must come back empty of proposals — anything it still finds
+   is either a removal that didn't land, or something an addition dragged in
+4. Report final score to the user
+5. If any items are still ⚠️ or ❌, apply them before declaring done
 
-Do not declare the upgrade complete until the re-audit score is 100%.
+Do not declare the upgrade complete until the re-audit score is 100% and the discard sweep is clean.
 
 ---
 
@@ -160,6 +196,8 @@ Do not declare the upgrade complete until the re-audit score is 100%.
 
 Upgrade is complete when:
 - [ ] Re-audit scores 100% on all items applicable to the confirmed service profile
+- [ ] Re-run discard sweep proposes nothing new
+- [ ] Every approved removal is merged; every rejected one is recorded as rejected, so the next run doesn't re-propose it
 - [ ] Browser MCPs configured and verified (both classes — no project is exempt), and `app/docs/playbook-browser-testing.md` present
 - [ ] Emitted completion-gate and code-review skills have browser-validation wiring present
 - [ ] All PRs merged to `staging`

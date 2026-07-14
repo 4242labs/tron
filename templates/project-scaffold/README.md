@@ -5,11 +5,11 @@
 | What | Where |
 |------|-------|
 | Profile + scaffold a new project | `modes/scaffold/skills/` — booted with `/tron-scaffold` |
-| Profile + audit + upgrade an existing project | `modes/flynn/skills/` — booted with `/tron-flynn` |
+| Profile + audit + discard + upgrade an existing project | `modes/kondo/skills/` — booted with `/tron-kondo` |
 
 ## How to use
 
-Run `/tron-scaffold` for a new project, `/tron-flynn` for an existing one. The mode runs its profile skill, then the scaffold or audit/upgrade chain, reading every template file from this directory.
+Run `/tron-scaffold` for a new project, `/tron-kondo` for an existing one. The mode runs its profile skill, then the scaffold or audit/discard/upgrade chain, reading every template file from this directory.
 
 ## What's in `templates/`
 

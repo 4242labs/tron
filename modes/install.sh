@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install TRON's modes. One command, fresh machine to working /tron-flynn + /tron-clu +
-# /tron-scaffold + /tron-alfredo.
+# /tron-scaffold + /tron-alfredo + /tron-kondo.
 #
 #   modes/install.sh              → slash commands available in every project, PATH shortcuts wired
 #   modes/install.sh <project>    → slash commands scoped to one project (<project>/.claude/commands/)
@@ -46,7 +46,7 @@ mkdir -p "$DEST"
 sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
 # mode → the <ROOT> placeholder its command file carries
-for mode in flynn clu scaffold alfredo; do
+for mode in flynn clu scaffold alfredo kondo; do
   root_esc="$(sed_escape "${MODES_DIR}/${mode}")"
   placeholder="$(printf '%s' "$mode" | tr '[:lower:]' '[:upper:]')_ROOT"
   sed "s|<${placeholder}>|${root_esc}|g" \
@@ -73,8 +73,8 @@ if [ "$WIRE_PATH" -eq 1 ]; then
   elif grep -qF -e "$BIN_ABS" -e "$BIN_HOME" -e "$BIN_TILDE" "$RC" 2>/dev/null; then
     echo "shortcuts: already on PATH via ${RC}"
   else
-    printf '\n# TRON modes — tron-flynn (advisor) / tron-clu (supervisor) / tron-scaffold (new project) / tron-alfredo (generalist)\n%s\n' "$LINE" >> "$RC"
-    echo "shortcuts: PATH line added to ${RC} → tron-flynn / tron-clu / tron-scaffold / tron-alfredo (open a new shell)"
+    printf '\n# TRON modes — tron-flynn (advisor) / tron-clu (supervisor) / tron-scaffold (new project) / tron-alfredo (generalist) / tron-kondo (existing project)\n%s\n' "$LINE" >> "$RC"
+    echo "shortcuts: PATH line added to ${RC} → tron-flynn / tron-clu / tron-scaffold / tron-alfredo / tron-kondo (open a new shell)"
   fi
 fi
 

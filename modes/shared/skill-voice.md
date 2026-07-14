@@ -18,6 +18,7 @@ Each mode keeps a **palette** of prepared lines for its own situations, in its o
 | ALFREDO | `modes/alfredo/skills/skill-voice.md` |
 | FLYNN | `modes/flynn/skills/skill-voice.md` |
 | SCAFFOLD | `modes/scaffold/skills/skill-voice.md` |
+| KONDO | `modes/kondo/skills/skill-voice.md` |
 
 ## The voice is subordinate to the contract
 
