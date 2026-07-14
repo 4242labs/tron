@@ -77,35 +77,57 @@ case can only cause a false RED, never a false GREEN.
      augstore, or a write-sink call on manifest-rooted state, is always
      illegal.
   6. CONTAINER MUTATION (block 01-40 T1, second hostile review; extended
-     THIS round) — rule 2's binding forms only ever recorded taint for a
+     TWICE since) — rule 2's binding forms only ever recorded taint for a
      name FRESHLY bound to a tainted value; a name whose already-bound
-     container was MUTATED in place afterward (`.append`/`.extend`/
-     `.insert`/`.add`/`.update`, or a `Subscript` STORE `d[k] = v`) read as
-     permanently clean forever — `argv = []; argv.append(eng.ctx.
-     worker_inbox); subprocess.run(argv)` was a GREEN miss (`argv` never
-     "bound" to anything tainted; the taint arrived via mutation, invisible
-     to rule 2's binding walk). Now closed: each such mutation registers
-     its VALUE (for `.update`, EVERY positional arg AND every keyword's
-     VALUE — `env.update({"P": eng.ctx.worker_inbox})` and
-     `env.update(P=eng.ctx.worker_inbox)` both mutate `env`, so both are
-     sources) as an ADDITIONAL taint source for the receiver's key, in a
-     SEPARATE substrate (`container_bindings`, folded into the same
-     monotone fixed point) that contributes ONLY `{"worker", "operator"}`
-     — deliberately NEVER `"manifest"`. `d |= other` (dict/set augmented
-     BitOr) needs NO separate handling at all: an `AugAssign` to a bare
-     `Name` was ALREADY routed through rule 2's own generic `add()` call
-     (unconditionally, for every operator, not just `|=`) before this
-     round — verified empirically, not assumed (see
-     `.github/scripts/r3_honesty_lint_check.py` fixture 44). Manifest's own
-     sink checks (`_CONTAINER_MUTATE_ATTRS` in rule 5, and
-     `_check_manifest_stores`) are about receiver ALIASING ("is this
-     container itself manifest-rooted state" — rule 1's seed plus rule 4's
-     subscript-READ aliasing, both of which stay real Python reference
-     semantics), never about "did some element/value ever pass through
-     it" — conflating the two (tried, then reverted, in this same fix)
-     false-REDs every ordinary `results.append(some_manifest_derived_
-     summary)` reporting/iteration pattern across nearly every
-     `core/*_rig.py`, none of which is a manifest write at all.
+     container was MUTATED in place afterward read as permanently clean
+     forever — `argv = []; argv.append(eng.ctx.worker_inbox);
+     subprocess.run(argv)` was a GREEN miss (`argv` never "bound" to
+     anything tainted; the taint arrived via mutation, invisible to rule
+     2's binding walk). First closed for `.append`/`.extend`/`.insert`/
+     `.add`/`.update` and a `Subscript` STORE `d[k] = v` via an enumerated
+     method-name list; THIRD hostile review then found the enumeration
+     itself was the SAME disease rule 2 was rebuilt four times to escape —
+     `env.setdefault("P", eng.ctx.worker_inbox)` and `env.__setitem__("P",
+     eng.ctx.worker_inbox)` were a live GREEN miss the enumeration simply
+     didn't name. REPLACED (not extended again) with a STRUCTURAL rule: for
+     ANY method call `recv.METHOD(...)`, if ANY positional/keyword argument
+     carries taint, that taint is registered as an ADDITIONAL source for
+     the RECEIVER's key — regardless of what `METHOD` is called. This
+     covers `.setdefault`/`__setitem__`/`.update`/`.append`/`.extend`/
+     `.insert`/`.add` and every future stdlib mutator BY CONSTRUCTION, the
+     same move rule 3 (CALL PROPAGATION) already made for ordinary value
+     flow. `.popitem()`-writeback needed NO new mechanism at all: once a
+     container is genuinely tainted (via the mechanism above), a call
+     whose RECEIVER is tainted already has a tainted RETURN by the
+     pre-existing rule 3 — the popped-out value inherits it for free. All
+     of this feeds the SAME SEPARATE substrate (`container_bindings`,
+     folded into the same monotone fixed point) that contributes ONLY
+     `{"worker", "operator"}` — deliberately NEVER `"manifest"` (see below).
+     `d |= other` needed no separate handling at all: an `AugAssign` to a
+     bare `Name` was already routed through rule 2's own generic `add()`
+     call unconditionally, for every operator — verified empirically, not
+     assumed (see `.github/scripts/r3_honesty_lint_check.py` fixture 44).
+     TWO exclusions keep the generic "any method call" rule from
+     over-firing on calls that structurally cannot be container mutations
+     (both verified empirically against the real tree, and both
+     FALSE-RED-reducing only for every case this tree currently exercises
+     — see `_build_ctx`'s own inline comment for the full account,
+     including the narrower-but-wrong variant tried and reverted along the
+     way): a call whose bare method name matches a same-file function/
+     method (`fname in funcs`) is excluded, since rule 3's own call-graph
+     propagation already covers it correctly; a call whose receiver's
+     attribute-chain root is a same-file `import`-bound name (`os.path.
+     join(...)`) is excluded, since a module is never legitimately-mutable
+     aliased state. Manifest's own sink checks (`_CONTAINER_MUTATE_ATTRS`
+     in rule 5, and `_check_manifest_stores`) are about receiver ALIASING
+     ("is this container itself manifest-rooted state" — rule 1's seed
+     plus rule 4's subscript-READ aliasing, both of which stay real Python
+     reference semantics), never about "did some element/value ever pass
+     through it" — conflating the two (tried, then reverted, in an earlier
+     round of this fix) false-REDs every ordinary `results.append(
+     some_manifest_derived_summary)` reporting/iteration pattern across
+     nearly every `core/*_rig.py`, none of which is a manifest write at
+     all.
 
 The fixture suite in `.github/scripts/r3_honesty_lint_check.py` — every
 evasion four hostile reviews produced, plus the required-GREEN controls —
@@ -183,33 +205,61 @@ these a false-RED risk, never a false-GREEN one):
     call sites — rename the reused bare name (`f` -> `bf`) so the two
     bindings are no longer the same key at all. False-RED (an occasional
     forced rename) is the accepted cost; false-GREEN is not.
-  - CONTAINER MUTATION (rule 6) is now tracked for `.append`/`.extend`/
-    `.insert`/`.add`/`.update` and `Subscript`-STORE — a container is no
-    longer silently clean forever after a tainted element/value passes
-    through it. `.update(...)` (dict merge, block 01-40 T1 THIS round's
-    close) taints the receiver from EVERY positional arg and EVERY keyword
-    VALUE, matching the real mutation semantics of the method (both
-    `d.update({"k": tainted})` and `d.update(k=tainted)` mutate `d`); `d |=
-    other` needed no dedicated code at all — an `AugAssign` to a bare
-    `Name` was already routed through rule 2's own binding walk
-    unconditionally, for every operator, before this round (verified, see
-    fixture 44). One deliberate, honest scope limit remains: a
-    nested-subscript store (`x[a][b] = v`) taints only the ROOT container
-    `x` as a whole, never a specific key path — the SAME flow-insensitive,
-    whole-object granularity every other binding form in this module
-    already accepts (see the mutually-exclusive-rebindings limit above),
-    never a per-key/per-index precision this design was never meant to
-    have. A further, still-OPEN residual (never claimed closed): dict
-    mutator methods OUTSIDE this round's scope — `.setdefault(k, v)`,
-    `.pop(k, default)`'s `default` arg written back via a later store,
-    `__setitem__` called explicitly instead of `d[k] = v`, `.popitem()` —
-    are not container-mutation taint SOURCES; each is the same shape as
-    the four originally-fixed PoCs (and `.update`) but via a still-
-    unenumerated method name. This is the SAME class of gap this module's
-    own rebuild history keeps finding (an additive enumeration, not a
-    structural bound) — flagged here honestly rather than silently, not
-    fixed in this round (scope was `.update`/`|=` exactly, per this
-    round's finding).
+  - CONTAINER MUTATION (rule 6) — THIRD hostile review's fix — is now
+    tracked for ANY method call `recv.METHOD(...)` whose receiver resolves
+    to a container-like name, if ANY of the call's OWN arguments carries
+    taint, REGARDLESS of `METHOD`'s name: a container is no longer silently
+    clean forever after a tainted element/value passes through it via
+    `.append`/`.extend`/`.insert`/`.add`/`.update`/`.setdefault`/
+    `__setitem__`/`Subscript`-STORE/`AugAssign`, OR any future stdlib
+    mutator this module has never seen, by construction rather than by
+    enumeration — the SAME "structural, not enumerated" move rule 3 (CALL
+    PROPAGATION) already made for ordinary value flow. `.popitem()`-
+    writeback needs no dedicated handling: once a container is genuinely
+    tainted, rule 3's PRE-EXISTING receiver-taint-propagates-to-return
+    already carries that taint out through ANY call on it, popitem
+    included. TWO exclusions bound the generic rule to calls that can
+    structurally BE a container mutation (both verified empirically against
+    the real tree — see `_build_ctx`'s own inline comment for the full
+    account of what broke and why, including a narrower-but-wrong variant
+    tried and reverted along the way): (a) a call whose bare method name
+    matches a same-file function/method (`fname in funcs`) — rule 3's own
+    call-graph propagation already covers such a call correctly, and
+    treating it as a container mutation ANYWAY was the exact false-RED this
+    round found TWICE, first for `self.method(...)` then for
+    `plain_var.method(...)` on an instance held outside its own class; (b)
+    a call whose receiver's attribute-chain root is a same-file
+    `import`-bound name (`os.path.join(...)`) — a module is never
+    legitimately-mutable aliased state. Two deliberate, honest scope limits
+    remain: (1) a nested-subscript store (`x[a][b] = v`) taints only the
+    ROOT container `x` as a whole, never a specific key path — the SAME
+    flow-insensitive, whole-object granularity every other binding form in
+    this module already accepts (see the mutually-exclusive-rebindings
+    limit above), never a per-key/per-index precision this design was
+    never meant to have; (2) exclusion (a) above is a bare/unscoped
+    `funcs`-name collision risk of the SAME shape this module's `("attr",
+    ...)` substrate already accepts elsewhere — a genuine
+    `results.append(tainted)` would be false-GREENed if the SAME file
+    happened to ALSO define any unrelated function/method literally named
+    `append` (or whatever the real mutator's name is); verified EMPTY
+    across every file `harness_files()` scans as of this fix, but not
+    structurally impossible, since closing it fully needs real
+    interprocedural type inference (is the receiver ACTUALLY a dict/list/
+    set, not just "some object with a matching method name"), out of reach
+    for an AST-only prover.
+
+  TRUE RESIDUAL after this round (the two limits directly above aside):
+  the ONLY way a WORKER/OPERATOR-tainted value can now reach a recognized
+  sink without this module seeing it is a shape that never puts the tainted
+  value INTO an ordinary Python-level argument/binding/mutation AT ALL —
+  genuinely non-arg-carrying laundering (a channel reconstructed from
+  scratch with no traceable link back to `ctx.worker_inbox`/
+  `ctx.operator_inbox`, the SAME "no tainted argument at all" residual
+  already documented for the subprocess sink above) or adversarial
+  reflection (`exec`/`eval`, or `getattr` with a non-literal, dynamically
+  computed attribute name — see the existing bullet above). Ordinary dict/
+  list/set mutation, by ANY method name, is no longer part of that
+  residual.
 """
 import ast
 import glob
@@ -355,18 +405,59 @@ def _flatten_bind_targets(target):
     return []
 
 
-_CONTAINER_MUTATE_TAINT_METHODS = {"append", "extend", "insert", "add", "update"}
+def _imported_module_names(tree):
+    """Every bare name a same-file `import`/`from ... import ...` statement
+    binds — `import os` -> `{"os"}`, `import os.path as osp` -> `{"osp"}`,
+    `from ctx import Ctx` -> `{"Ctx"}`. Used ONLY to keep the THIRD hostile
+    review's generic "any method call whose arg is tainted taints its
+    receiver" rule (below) from mistaking a namespaced STDLIB FUNCTION CALL
+    (`os.path.join(...)`, `json.dumps(...)`, `subprocess.run(...)`) for a
+    container-mutation METHOD call on a stored object: structurally, both
+    are `<Attribute-or-Name>.<name>(...)`, and Python's grammar alone cannot
+    tell "an instance method mutating a stored container" apart from "a
+    namespaced function reached through package dotting" — but a module
+    import statement is itself the ONE unambiguous, structural signal that a
+    name is a MODULE, never a container this rule should track aliasing for
+    (a module is never reassigned/aliased as mutable state in legitimate
+    code). Deliberately broad (covers `from X import Y` names too, even
+    when `Y` is a class/function rather than a submodule) — a false
+    exclusion here only means one more receiver isn't container-mutation-
+    tracked, the SAME false-RED-only direction as every other choice in this
+    module; it is never used to gate anything ELSE (rule 3's ordinary VALUE
+    taint through `os.path.join(...)`'s arguments is untouched by this)."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+    return names
+
+
+def _attr_chain_root_name(expr):
+    """Unwraps a (possibly multi-level) `Attribute` chain — `os.path.sep`,
+    `a.b.c` — down to its leftmost `Name`, or `None` if the chain does not
+    bottom out in a bare Name (e.g. it starts from a `Call`/`Subscript`).
+    Used ONLY by the module-receiver exclusion above; `_container_receiver_
+    key` itself deliberately does NOT do this unwrapping (it keeps `self.x`/
+    `Cls.x` as its own distinct `("attr", "x")` key — see that function's
+    own docstring)."""
+    while isinstance(expr, ast.Attribute):
+        expr = expr.value
+    return expr.id if isinstance(expr, ast.Name) else None
 
 
 def _container_receiver_key(expr):
     """The bindable KEY a container-MUTATION (never a fresh bind) should
     taint — block 01-40 T1, second hostile review's `argv.append(eng.ctx.
-    worker_inbox)` / `env["P"] = tainted` miss (and THIS round's identical-
-    shape `env.update({"P": eng.ctx.worker_inbox})` miss): rule 2's binding
-    forms only ever recorded taint for a name/attribute BOUND to a tainted
-    value, never for a name whose already-bound container was MUTATED in
-    place with tainted content afterward (`.append`/`.extend`/`.insert`/
-    `.add`/`.update`, or a `Subscript` STORE `d[k] = v`) — `subprocess.
+    worker_inbox)` / `env["P"] = tainted` miss, `.update()`/`|=`'s identical-
+    shape miss, and THIRD hostile review's `env.setdefault("P", eng.ctx.
+    worker_inbox)` / `env.__setitem__("P", eng.ctx.worker_inbox)` miss: rule
+    2's binding forms only ever recorded taint for a name/attribute BOUND to
+    a tainted value, never for a name whose already-bound container was
+    MUTATED in place with tainted content afterward — `subprocess.
     run(argv)`/`subprocess.run(env=env)` then read `argv`/`env`
     itself, which the fixed point had never touched, straight through as
     clean. Unwraps nested `Subscript`s (`x[a][b] = v` / `x[a].append(v)`
@@ -376,7 +467,11 @@ def _container_receiver_key(expr):
     key shape `_flatten_bind_targets` already uses (`str` for a bare name,
     `("attr", name)` for `self.x`/`Cls.x`) so it feeds the identical
     `bindings`/union-taint substrate, or `None` if no such root exists
-    (e.g. a mutation on a call result/literal — nothing to taint)."""
+    (e.g. a mutation on a call result/literal — nothing to taint). THIRD
+    hostile review's finding: this key is no longer gated on an enumerated
+    METHOD NAME at all — see `_build_ctx`'s generic "any arg taints the
+    receiver" call handling below, which is what actually decides WHEN to
+    call this function now."""
     while isinstance(expr, ast.Subscript):
         expr = expr.value
     if isinstance(expr, ast.Name):
@@ -560,6 +655,7 @@ def _build_ctx(tree):
     # the taint fixed point (`_compute_taint`), NEVER "manifest" — see its
     # own docstring.
     container_bindings = {}
+    module_names = _imported_module_names(tree)
 
     def add_container(key, value, value_scope):
         if value is not None:
@@ -596,37 +692,6 @@ def _build_ctx(tree):
                 rk = _container_receiver_key(node.target.value)
                 if rk is not None:
                     add_container(target_key(rk, scope_id), node.value, scope_id)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr in _CONTAINER_MUTATE_TAINT_METHODS:
-            # `.append`/`.extend`/`.insert`/`.add`/`.update` — see
-            # `container_bindings` above for why this is a SEPARATE,
-            # worker/operator-only substrate, never unioned into the
-            # general aliasing `bindings`.
-            scope_id = scope_of(node)
-            rk = _container_receiver_key(node.func.value)
-            if rk is not None:
-                key = target_key(rk, scope_id)
-                if node.func.attr == "insert":
-                    val = node.args[1] if len(node.args) >= 2 else None
-                    if val is not None:
-                        add_container(key, val, scope_id)
-                elif node.func.attr == "update":
-                    # dict.update(mapping_or_iterable, **kwargs) /
-                    # set.update(*iterables) — block 01-40 T1, THIS round's
-                    # close: EVERY positional arg AND every keyword's VALUE
-                    # genuinely mutates the receiver (`env.update({"P":
-                    # tainted})` and `env.update(P=tainted)` both do), so
-                    # ALL of them are taint sources — never just the first
-                    # positional slot the way `.append`'s single-value
-                    # calling convention allows.
-                    for a in node.args:
-                        add_container(key, a, scope_id)
-                    for kw in node.keywords:
-                        add_container(key, kw.value, scope_id)
-                else:
-                    val = node.args[0] if node.args else None
-                    if val is not None:
-                        add_container(key, val, scope_id)
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             scope_id = scope_of(node)
             for fk in _flatten_bind_targets(node.target):
@@ -658,6 +723,87 @@ def _build_ctx(tree):
         if not isinstance(node, ast.Call):
             continue
         fname = _call_target_name(node)
+
+        # ANY method call `recv.METHOD(...)` — THIRD hostile review's
+        # finding: an enumerated method-NAME allow-list (`.append`/
+        # `.extend`/`.insert`/`.add`/`.update`) is the SAME disease as the
+        # binding-shape enumerations that defeated the first three rebuilds
+        # of this module — it can only ever be as complete as the last
+        # hostile review, and missed `env.setdefault("P", eng.ctx.
+        # worker_inbox)`, `env.__setitem__("P", eng.ctx.worker_inbox)`,
+        # `.popitem()`/`.pop(k, default)`-writeback, and any future method
+        # by construction. Replaced with a STRUCTURAL rule instead of a
+        # bigger enumeration: a mutation method's defining trait is that it
+        # STORES one of its OWN ARGUMENTS into the receiver — a pure reader
+        # like `.get(k)`/`.pop(k)` takes a KEY, never a VALUE it stores —
+        # so union EVERY positional/keyword ARGUMENT's taint into the
+        # receiver whenever ANY of them carries it, unconditionally,
+        # regardless of what the method is named. This covers
+        # `.setdefault`/`__setitem__`/`.update`/`.append`/`.extend`/
+        # `.insert`/`.add` and every other stdlib mutator BY CONSTRUCTION
+        # instead of by name — the same "structural, not enumerated" move
+        # rule 3 (CALL PROPAGATION) already made for ordinary value flow
+        # through calls. TWO exclusions keep this from over-firing on
+        # calls that are not container mutations at all (both verified
+        # empirically against the real tree, iteratively — see below):
+        #   (a) `fname in funcs` — the call TARGETS a same-file function or
+        #       method, REGARDLESS of what the receiver expression is.
+        #       `self.react_architect_triage(manifest, inbox_path)` (a
+        #       business-logic call from WITHIN the defining class) was the
+        #       first false-RED found; narrowing this exclusion to fire only
+        #       for a BARE `self`/`cls` receiver was tried next and ALSO
+        #       false-REDded — `rs.react(i, manifest, inbox_path)` (the
+        #       IDENTICAL same-file method, called on a plain instance
+        #       variable from OUTSIDE the class, the ordinary way every
+        #       driver in this tree invokes its own reaction object) proved
+        #       "self/cls only" was still receiver-shaped, not structural:
+        #       ANY object holding a same-file method can be called from ANY
+        #       variable name holding it, so the receiver identity carries
+        #       no signal at all here. `fname in funcs` alone is the correct
+        #       structural boundary — a call whose bare method name matches
+        #       a same-file `def` gets its OWN, ALREADY-CORRECT taint
+        #       coverage from rule 3's call-graph propagation (this same
+        #       loop, just below: the callee's parameters bind to the
+        #       caller's actual arguments, and the callee's body/return
+        #       taint flows back out) — nothing is lost by excluding such a
+        #       call here, only a wrong receiver-MUTATION guess is avoided.
+        #       RESIDUAL, honest and currently DORMANT (verified empty
+        #       against every file `harness_files()` scans, at the time of
+        #       this fix): a genuine container mutation whose method name
+        #       COINCIDES with an unrelated same-file function/method of the
+        #       identical bare name (`results.append(tainted)` would be
+        #       missed if the SAME file also defined ANY function/method
+        #       literally named `append`) would be false-GREENed by this
+        #       exclusion — the SAME class of bare/unscoped-key collision
+        #       this module's `("attr", ...)` substrate already accepts
+        #       elsewhere (see module docstring), now extended to `funcs`.
+        #       Closing this completely needs real interprocedural type
+        #       inference (is the receiver ACTUALLY a dict/list/set, not
+        #       just "some object with a matching method name") — out of
+        #       reach for an AST-only prover, and not worth taking on given
+        #       zero real occurrences today.
+        #   (b) the receiver's attribute-chain ROOT resolves to a same-file
+        #       `import`-bound name (`os.path.join(...)`, `json.dumps(...)`,
+        #       `subprocess.run(...)`) — a module is never legitimately-
+        #       mutable aliased state, and without this exclusion the bare/
+        #       unscoped `("attr", name)` key space (already a documented
+        #       limit — see module docstring) lets ANY tainted `os.path.
+        #       dirname(eng.ctx.worker_inbox)`-shaped call ANYWHERE in the
+        #       file permanently taint `("attr", "path")`, leaking into
+        #       every UNRELATED `os.path.*` call's return by rule 3's own
+        #       receiver-taint propagation.
+        if isinstance(node.func, ast.Attribute) and fname not in funcs:
+            root = _attr_chain_root_name(node.func.value)
+            if root not in module_names:
+                scope_id = scope_of(node)
+                rk = _container_receiver_key(node.func.value)
+                if rk is not None:
+                    key = target_key(rk, scope_id)
+                    for a in node.args:
+                        add_container(key, a, scope_id)
+                    for kw in node.keywords:
+                        add_container(key, kw.value, scope_id)
+
         if fname is None or fname not in funcs:
             continue
         caller_scope = scope_of(node)

@@ -83,6 +83,36 @@ case can only cause a false RED, never a false GREEN. Proves, live:
   GREEN      an ordinary `.update()`/`|=` whose value carries no
              WORKER/OPERATOR/MANIFEST taint at all stays clean — the fix
              is value-conditioned, never a blanket red on the method name.
+  RED (x3)   THE THIRD hostile review's finding (fixtures 45-47): the
+             SECOND review's own container-mutation fix (rule 6) was
+             ITSELF still an enumerated method-NAME allow-list (`.append`/
+             `.extend`/`.insert`/`.add`/`.update`) — `env.setdefault("P",
+             eng.ctx.worker_inbox)` and `env.__setitem__("P", eng.ctx.
+             worker_inbox)` were a live, two-layer GREEN miss (static AND
+             the runtime guard both missed them, since the guard's own
+             mechanism does not cross Python-level dict method calls
+             either). Replaced the enumeration with a STRUCTURAL rule: ANY
+             method call whose receiver resolves to a container-like name
+             taints that receiver if ANY of the call's OWN arguments is
+             tainted, regardless of method name — covers `.setdefault`/
+             `__setitem__`/every other stdlib mutator by construction.
+             Fixture 47 (`.popitem()`-writeback) needed NO new mechanism at
+             all: once `env` is genuinely tainted (via the ordinary
+             subscript-store already covered by rule 6), `env.popitem()`'s
+             RETURN is tainted by the PRE-EXISTING rule 3 (a call whose
+             RECEIVER is tainted has a tainted return, unconditionally) —
+             proof that the fix composes with the rest of the design
+             instead of needing its own bespoke case.
+  GREEN      `.setdefault`/`.__setitem__`/`.get`/`.pop` whose value carries
+             no taint stay clean (value-conditioned, not name-conditioned,
+             same guarantee as `.update`/`|=` above) — AND a genuine
+             evasion routed through a same-file method call (`self.emit(
+             eng, {...})`) stays RED, proving the new rule's `funcs`-
+             exclusion (added to stop it false-REDding ordinary business-
+             logic method calls whose arguments happen to carry taint,
+             e.g. `self.react_architect_triage(manifest, inbox_path)`) does
+             not also hide a real evasion — rule 3's OWN call-graph
+             propagation still catches it independently.
   GREEN/tree the real `core/` proof-harness tree is clean except the
              explicit, visible KNOWN_RED list (core/sim/operator_proxy.py
              + core/architect_rig.py, at minimum — see core/r3_lint.py's
@@ -569,6 +599,60 @@ def bad(eng):
     env |= {"P": eng.ctx.worker_inbox}
     subprocess.run(["cat"], env=env)
 ''',
+
+    # ── block 01-40 T1, THIRD hostile review's finding — the second
+    #     hostile review's CONTAINER-MUTATION fix (rule 6) was itself STILL
+    #     an enumerated method-NAME allow-list (`.append`/`.extend`/
+    #     `.insert`/`.add`/`.update`) — the SAME disease as the binding-
+    #     shape enumerations that defeated the first three rebuilds, just
+    #     applied one level down. Ordinary dict idioms outside that list —
+    #     `.setdefault(k, v)` (stores `v` when `k` is absent),
+    #     `.__setitem__(k, v)` (the explicit spelling of `d[k] = v`) — were
+    #     a live two-layer GREEN miss (static AND runtime both missed them).
+    #     Fixed by replacing the enumeration with a STRUCTURAL rule: ANY
+    #     method call whose receiver resolves to a container-like name is a
+    #     mutation SOURCE if ANY of its own arguments carries taint,
+    #     regardless of the method's name (see `core/r3_lint.py`'s
+    #     `_build_ctx`, the "ANY method call" call-graph-loop branch). ──
+    "45_container_mutation_setdefault": '''
+import subprocess
+
+def bad(eng):
+    env = {}
+    env.setdefault("P", eng.ctx.worker_inbox)
+    subprocess.run(["cat"], env=env)
+''',
+
+    "46_container_mutation_dunder_setitem": '''
+import subprocess
+
+def bad(eng):
+    env = {}
+    env.__setitem__("P", eng.ctx.worker_inbox)
+    subprocess.run(["cat"], env=env)
+''',
+
+    # `.popitem()`-WRITEBACK — not itself a mutation SOURCE (it takes no
+    # arguments at all, so there is nothing for the arg-taints-receiver
+    # rule to see); this fixture proves the container-mutation SOURCE fix
+    # above (fixture 45's `env["P"] = eng.ctx.worker_inbox`, an ordinary
+    # subscript-store already covered since rule 6) composes correctly with
+    # the PRE-EXISTING rule 3 (CALL PROPAGATION): once `env` itself is
+    # genuinely tainted, `env.popitem()` is a call whose RECEIVER is
+    # tainted, so its RETURN is unconditionally tainted too — the
+    # popped-out `(k, v)` pair, and the fresh `{k: v}` dict built from it,
+    # carry the SAME taint straight through to the subprocess sink, with NO
+    # additional container-mutation code needed for this direction at all.
+    "47_container_mutation_popitem_writeback": '''
+import subprocess
+
+def bad(eng):
+    env = {}
+    env["X"] = "safe"
+    env["P"] = eng.ctx.worker_inbox
+    k, v = env.popitem()
+    subprocess.run(["cat"], env={k: v})
+''',
 }
 
 # ── ROUND-5 PoCs (Opus design review, pending the operator's MODEL A/B
@@ -622,6 +706,63 @@ def fine(eng):
     env.update({"PATH": "/usr/bin"})
     env |= {"LANG": "C"}
     subprocess.run(["cat"], env=env)
+'''
+
+# No-false-RED control for fixtures 45/46's fix (the generic "any method
+# call, any arg tainted" rule): `.setdefault`/`.__setitem__`/`.get`/`.pop`
+# with NO worker/operator/manifest-tainted argument at all must stay clean —
+# same value-conditioning guarantee as `.update`/`|=` above, now generalized
+# to every method name instead of an enumerated few.
+CLEAN_CONTAINER_SETDEFAULT_FIXTURE = '''
+import subprocess
+
+def fine(eng):
+    env = {}
+    env.setdefault("PATH", "/usr/bin")
+    env.__setitem__("LANG", "C")
+    env.get("PATH")
+    env.pop("LANG", "C")
+    subprocess.run(["cat"], env=env)
+'''
+
+# No-false-GREEN control for the `funcs`-exclusion added alongside fixtures
+# 45/46 (a call whose bare method name matches a same-file function/method
+# is NOT treated as a container mutation, to avoid false-REDding ordinary
+# `self.helper(manifest_derived_arg)` business-logic calls — see
+# `core/r3_lint.py`'s `_build_ctx` call-graph loop). Proves that exclusion
+# does not ALSO hide a genuine evasion: a same-file method that itself
+# stores its argument into `ctx.worker_inbox` and writes it must still be
+# caught, via ordinary rule 3 CALL PROPAGATION (the excluded call's own
+# RETURN/body taint), independent of the container-mutation mechanism
+# entirely.
+SAMEFILE_METHOD_CALL_STILL_CAUGHT_FIXTURE = '''
+import json
+
+class Reporter:
+    def emit(self, eng, obj):
+        with open(eng.ctx.worker_inbox, "a") as ib:
+            ib.write(json.dumps(obj) + "\\n")
+
+    def bad(self, eng):
+        self.emit(eng, {"tag": "operator.decision", "sender": {"kind": "operator", "id": "x"}})
+'''
+
+# No-false-RED control for the `funcs`-exclusion's OWN iteration: the first
+# attempt narrowed it to fire only for a bare `self`/`cls` receiver, which
+# immediately false-REDded THIS shape — the identical same-file method
+# called on a plain instance variable from OUTSIDE its class (the ordinary
+# way a driver invokes its own reaction object; manifest/inbox_path are
+# genuinely tainted, and were wrongly read as MUTATING `rs`). Proves the
+# final, broader `fname in funcs` exclusion (receiver-agnostic) does not
+# regress on this shape.
+EXTERNAL_INSTANCE_METHOD_CALL_FIXTURE = '''
+class Reactor:
+    def react(self, manifest, inbox_path):
+        pass
+
+def fine(manifest, inbox_path):
+    rs = Reactor()
+    rs.react(manifest, inbox_path)
 '''
 
 DOOR_ONLY_FIXTURE = '''
@@ -720,6 +861,62 @@ def main():
         print("GREEN proof (fixture) confirmed: `.update()`/`|=` with an untainted "
               "value stays clean — container-mutation taint is value-conditioned, "
               "not name-conditioned.")
+
+    # ── control: `.setdefault`/`.__setitem__`/`.get`/`.pop` with an
+    #     UNTAINTED value must stay clean — fixtures 45/46's fix (the
+    #     generic "any method call" rule) is value-conditioned, exactly
+    #     like `.update`/`|=` above, now for EVERY method name instead of
+    #     an enumerated few. ──
+    clean_setdefault_violations = r3_lint.lint_source(
+        CLEAN_CONTAINER_SETDEFAULT_FIXTURE, path="<clean-container-setdefault-fixture>")
+    if clean_setdefault_violations:
+        print("AC-2 REGRESSION: ordinary `.setdefault`/`.__setitem__`/`.get`/`.pop` calls "
+              "with no WORKER/OPERATOR/MANIFEST-tainted value were flagged: "
+              f"{[str(v) for v in clean_setdefault_violations]}", file=sys.stderr)
+        failed = True
+    else:
+        print("GREEN proof (fixture) confirmed: `.setdefault`/`.__setitem__`/`.get`/`.pop` "
+              "with an untainted value stay clean — the generic container-mutation rule "
+              "is value-conditioned for ANY method name, not just the previously-"
+              "enumerated `.append`/`.extend`/`.insert`/`.add`/`.update`.")
+
+    # ── control: the `funcs`-exclusion added alongside fixtures 45/46 (a
+    #     call whose bare method name matches a same-file function/method is
+    #     NOT treated as a container mutation, to avoid false-REDding
+    #     ordinary `self.helper(manifest_derived_arg)` business-logic calls)
+    #     must NOT also hide a genuine evasion routed through such a call —
+    #     rule 3's own call-graph propagation (unrelated to container-
+    #     mutation taint) must still catch it. ──
+    samefile_method_violations = r3_lint.lint_source(
+        SAMEFILE_METHOD_CALL_STILL_CAUGHT_FIXTURE, path="<samefile-method-call-fixture>")
+    if not samefile_method_violations:
+        print("AC-2 REGRESSION: a fabricated-sender payload routed through a same-file "
+              "method call (`self.emit(eng, {...})`) was NOT caught — the `funcs`-"
+              "exclusion added to keep the container-mutation rule from false-RED-ing "
+              "ordinary method calls also hid a real evasion.", file=sys.stderr)
+        failed = True
+    else:
+        print("RED proof confirmed: a fabricated-sender payload routed through a "
+              f"same-file method call is still caught: {[str(v) for v in samefile_method_violations]}")
+
+    # ── control: a same-file method called on a PLAIN INSTANCE VARIABLE
+    #     (not `self`/`cls`) from outside its own class, with genuinely
+    #     tainted arguments, must NOT be misread as a mutation of the
+    #     variable holding the instance — the exact shape that broke a
+    #     narrower ("self"/"cls"-only) version of the `funcs`-exclusion
+    #     during this fix's own development. ──
+    external_instance_violations = r3_lint.lint_source(
+        EXTERNAL_INSTANCE_METHOD_CALL_FIXTURE, path="<external-instance-method-call-fixture>")
+    if external_instance_violations:
+        print("AC-2 REGRESSION: a same-file method called on a plain instance variable "
+              "(`rs.react(manifest, inbox_path)`) with genuinely tainted arguments was "
+              f"misread as a container mutation of `rs`: "
+              f"{[str(v) for v in external_instance_violations]}", file=sys.stderr)
+        failed = True
+    else:
+        print("GREEN proof (fixture) confirmed: a same-file method called on a plain "
+              "instance variable (not self/cls) with tainted arguments is not misread "
+              "as a container mutation of the receiver.")
 
     # ── GREEN on tree, modulo the explicit KNOWN_RED list ──
     result = r3_lint.run()
