@@ -161,6 +161,14 @@ EFFECTS = dict([
     _reg("gate_close_ordered", "state"),     # close-out ordered
     _reg("gate_close_cased", "state"),       # close landing case-id bound
     _reg("gate_closed", "state"),            # replica clean -> CLOSED
+
+    # ── core/sentry.py — the idle-cap pacing ladder (T7 sub-commit 4) ──
+    _reg("sentry_clock_advanced", "state"),   # the fallback pace clock ticked
+    _reg("sentry_pacing_anchored", "state"),  # a gate/reviewer pacing episode (re)anchored
+    _reg("sentry_pacing_cleared", "state"),   # a terminal/escalated gate's stale episode dropped
+    _reg("sentry_nudged", "state"),           # a one-time re-nudge marked (nudged_at)
+    _reg("sentry_escalated", "state"),        # a gate idle past the cap -> BLOCKED
+    _reg("sentry_reviewer_dropped", "state"), # a capped reviewer's slot freed (workers pop)
 ])
 
 

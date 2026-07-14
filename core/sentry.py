@@ -106,6 +106,7 @@ if _HERE not in sys.path:
 
 import gate        # noqa: E402 — core/gate.py, the STAGE_CLOSED/STAGE_ESCALATED terminal vocabulary
 import casestate    # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
+import emit         # noqa: E402 — core/emit.py, block 01-38 T7's single emit API
 
 # ── the ONE pacing ladder's two knobs — every stage, no exceptions ──
 GATE_NUDGE_AFTER = 3   # ticks holding at one stage, no progress -> re-nudge (once per episode)
@@ -145,15 +146,23 @@ def _clock(eng, manifest):
     now_fn = getattr(eng, "_now", None)
     if callable(now_fn):
         return now_fn()
-    counters = manifest.setdefault("sentry", {})
-    counters["clock"] = counters.get("clock", 0) + 1
-    return counters["clock"]
+    newclock = int((manifest.get("sentry") or {}).get("clock", 0)) + 1
+    emit.put(eng, manifest, "sentry_clock_advanced", ("sentry",), "clock",
+             newclock, clock=newclock)
+    return newclock
 
 
-def _drop_pacing(gate_state):
-    gate_state.pop("holding_stage", None)
-    gate_state.pop("holding_since", None)
-    gate_state.pop("nudged_at", None)
+def _drop_pacing(eng, gate_state):
+    # Only emit when there is a live pacing episode to clear (matching the
+    # original pop's no-op-when-absent behavior — otherwise a terminal gate
+    # would re-emit every tick forever). The keys are set to None rather than
+    # popped; no reader distinguishes absent from None (verified), and the
+    # None-guard above keeps it from re-firing once cleared.
+    if any(gate_state.get(k) is not None
+           for k in ("holding_stage", "holding_since", "nudged_at")):
+        emit.patch_obj(eng, "sentry_pacing_cleared", gate_state,
+                       {"holding_stage": None, "holding_since": None, "nudged_at": None},
+                       block=gate_state.get("block"))
 
 
 def _nudge(eng, block, gate_state, stage, holding):
@@ -174,11 +183,12 @@ def _escalate(eng, manifest, block, gate_state, stage, holding, now):
     detail = (f"gate[{block}] idle at gate.{stage} for {holding} pace unit(s) "
              f"(>= gate_idle_cap={GATE_IDLE_CAP}) — sentry escalated (the gate "
              f"itself never self-caps; capping lives only in core.sentry)")
-    gate_state["stage"] = gate.STAGE_ESCALATED
-    gate_state["escalation"] = detail
+    emit.patch_obj(eng, "sentry_escalated", gate_state,
+                   {"stage": gate.STAGE_ESCALATED, "escalation": detail}, block=block)
     record = {"block": block, "stage": stage, "holding": holding,
              "gate_idle_cap": GATE_IDLE_CAP, "detail": detail, "at": now}
-    manifest.setdefault("escalations", []).append(record)
+    emit.append(eng, manifest, "escalation_logged", ("escalations",), record,
+                block=block, stage=stage)
     eng.log("flow", f"sentry: ESCALATED {block} — {detail}")
     # Wave 8: one path for "needs the operator" — a cap escalation ALSO
     # opens a parked case (never REPLACES the honest `manifest["escalations"]`
@@ -227,8 +237,8 @@ def _pace_reviewers(eng, manifest, now):
         block = f"review:{typ}"
 
         if w.get("holding_since") is None:
-            w["holding_since"] = now
-            w.pop("nudged_at", None)
+            emit.patch_obj(eng, "sentry_pacing_anchored", w,
+                           {"holding_since": now, "nudged_at": None}, block=block)
             continue
 
         if _worker_working(eng, agent_id):
@@ -240,8 +250,8 @@ def _pace_reviewers(eng, manifest, now):
             # operator page -> a trivial SIM REJECT). Sound because R1a bounds
             # `_worker_working` by the runner's own deadline (a hung reviewer
             # reads not-working past its deadline and still caps).
-            w["holding_since"] = now
-            w.pop("nudged_at", None)
+            emit.patch_obj(eng, "sentry_pacing_anchored", w,
+                           {"holding_since": now, "nudged_at": None}, block=block)
             continue
 
         holding = now - w["holding_since"]
@@ -253,9 +263,11 @@ def _pace_reviewers(eng, manifest, now):
                      f"lives only in core.sentry, exactly like a block gate)")
             record = {"block": block, "stage": "review", "holding": holding,
                      "gate_idle_cap": GATE_IDLE_CAP, "detail": detail, "at": now}
-            manifest.setdefault("escalations", []).append(record)
+            emit.append(eng, manifest, "escalation_logged", ("escalations",), record,
+                        block=block, stage="review")
             eng.log("flow", f"sentry: ESCALATED {block} — {detail}")
-            workers.pop(agent_id, None)   # the ONE thing that frees a reviewer's slot
+            emit.drop(eng, manifest, "sentry_reviewer_dropped", ("workers",), agent_id,
+                      agent_id=agent_id, block=block)   # the ONE thing that frees a reviewer's slot
             casestate.open_case(eng, manifest, block, "sentry.cap", detail,
                                 worker_id=agent_id, kind="cap")
             eng._release_worker(agent_id, reason=f"sentry-cap ({block})")
@@ -264,7 +276,7 @@ def _pace_reviewers(eng, manifest, now):
 
         if holding >= GATE_NUDGE_AFTER and w.get("nudged_at") is None:
             _nudge(eng, block, w, "review", holding)
-            w["nudged_at"] = now
+            emit.patch_obj(eng, "sentry_nudged", w, {"nudged_at": now}, block=block)
             nudged.append(block)
 
     return nudged, escalated
@@ -293,16 +305,16 @@ def pace(eng, snapshot):
             # Already terminal (this tick's own gate.advance pass, a PRIOR
             # pace() call, or a gate seeded pre-closed) — never pace a
             # terminal gate; drop any stale episode so it can't leak.
-            _drop_pacing(gate_state)
+            _drop_pacing(eng, gate_state)
             continue
 
         if gate_state.get("holding_stage") != stage:
             # Just advanced into this stage (or first time pace() has ever
             # seen this gate) — progress clears the clock; no holding time
             # accrues on the tick a gate actually moved.
-            gate_state["holding_stage"] = stage
-            gate_state["holding_since"] = now
-            gate_state.pop("nudged_at", None)
+            emit.patch_obj(eng, "sentry_pacing_anchored", gate_state,
+                           {"holding_stage": stage, "holding_since": now,
+                            "nudged_at": None}, block=block)
             continue
 
         if _worker_working(eng, gate_state.get("wid")):
@@ -312,21 +324,21 @@ def pace(eng, snapshot):
             # genuine idle-at-gate time ever accrues toward nudge/cap, never
             # a live turn's own wall-clock. (No prior rig sets the hook, so
             # this branch is inert for all of them.)
-            gate_state["holding_since"] = now
-            gate_state.pop("nudged_at", None)
+            emit.patch_obj(eng, "sentry_pacing_anchored", gate_state,
+                           {"holding_since": now, "nudged_at": None}, block=block)
             continue
 
         holding = now - gate_state["holding_since"]
 
         if holding >= GATE_IDLE_CAP:
             detail = _escalate(eng, manifest, block, gate_state, stage, holding, now)
-            _drop_pacing(gate_state)
+            _drop_pacing(eng, gate_state)
             escalated.append((block, detail))
             continue
 
         if holding >= GATE_NUDGE_AFTER and gate_state.get("nudged_at") is None:
             _nudge(eng, block, gate_state, stage, holding)
-            gate_state["nudged_at"] = now
+            emit.patch_obj(eng, "sentry_nudged", gate_state, {"nudged_at": now}, block=block)
             nudged.append(block)
 
     r_nudged, r_escalated = _pace_reviewers(eng, manifest, now)
