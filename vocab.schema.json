@@ -170,6 +170,7 @@
     "terminal.plan_first",
     "terminal.review",
     "terminal.run_control",
+    "terminal.safe_park",
     "terminal.scope_unknown",
     "tg.escalate",
     "tg.status_digest"

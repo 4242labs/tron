@@ -9,7 +9,7 @@ Pick exactly one:
 
 Reply with the verdict wire, not plain text — this is the only reply that reaches me:
 
-  bash {report} {worker_id} --tag verdict --triage-id {triage_id} --verdict <scope_forward|answer|operator> "<note>"
+  bash {report} --tag verdict --triage-id {triage_id} --verdict <scope_forward|answer|operator> "<note>"
 
 `<note>` is your reasoning (or, for `answer`, the answer itself). `{triage_id}` above is
 this triage's own id — copy it verbatim into `--triage-id`; it is never the case id.

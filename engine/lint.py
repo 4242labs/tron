@@ -329,15 +329,20 @@ def _reply_contract(ctx):
     # channel does not exist to the engine, so EVERY PMT must carry the channel instruction —
     # either flagged `reply_expected: true` (the loader appends the shared reply_line) or its
     # body references {report} inline (PMT-SPAWN's bespoke check-in). The shared line itself
-    # must exist and render both {report} and {worker_id}. Data, not convention: a new PMT
-    # cannot silently skip the channel.
+    # must exist and render {report}. Data, not convention: a new PMT cannot silently skip
+    # the channel. Block 01-38 T1 (ADR-0012 R6, ambient identity): {worker_id} is NO LONGER
+    # required in reply_line — {report} now resolves to the agent's OWN installed, identity-
+    # bearing copy of report.sh (`core/engine.py::Engine._install_agent_channel`), so the
+    # reply command itself never types an id at all (that was the self-asserted-identity
+    # shape R6 closes). {worker_id} may still appear elsewhere in a PMT body for addressing
+    # ("you're {worker_id} here") — that is untouched and not this rule's concern.
     doc = util.load_yaml(ctx.prompts_registry) if os.path.exists(ctx.prompts_registry) else {}
     doc = doc or {}
     reg = doc.get("prompts", {})
     line = (doc.get("reply_line") or "")
     d19 = []
-    if "{report}" not in line or "{worker_id}" not in line:
-        d19.append("reply_line missing or lacks {report}/{worker_id}")
+    if "{report}" not in line:
+        d19.append("reply_line missing {report}")
     for pid, spec in reg.items():
         if (spec or {}).get("reply_expected"):
             continue

@@ -7,12 +7,14 @@ off. Read it fully at spawn; the Orchestrator's orders assume you have.
 
 ## 1. The channel
 Every reply to the Orchestrator goes through the report command your spawn message named
-(`report.sh <your worker id> "<message>"`). A reply that is not on the channel does not
-exist to the Orchestrator — turn output is never read.
+(`report.sh "<message>"`) — YOUR OWN copy, and only yours: it already knows who you are the
+moment it runs, so you never type your own id, and you can never type someone else's. A
+reply that is not on the channel does not exist to the Orchestrator — turn output is never
+read.
 
 ## 2. One message, one act — tagged
 A gate reply carries its verb as data, so nothing is guessed:
-`report.sh <id> --tag <verb> [--block <id>] [--branch <name>] "<message>"`
+`report.sh --tag <verb> [--block <id>] [--branch <name>] "<message>"`
 Verbs: `done` · `recorded` · `wall` · `review-done` · `clean` · `flag`.
 The architect additionally answers a TRIAGE order with `verdict` (§7) — no other role sends it.
 One VERB per message — never two. Modifiers ride freely on any message: `--branch <name>`
@@ -23,7 +25,7 @@ never after — a trailing flag on what you meant as plain text is read as a rea
 **Reporting is structured-only.** The word on your report IS the classification — there is
 no free-text fallback any more. A message with neither a recognized `--tag` nor a `--branch`
 is refused: `report.sh` itself exits nonzero and prints the legal `--tag` set (run
-`report.sh <id> --schema` any time to see it) — fix the flag and resend, in the same turn,
+`report.sh --schema` any time to see it) — fix the flag and resend, in the same turn,
 before doing anything else. A refused report is never silently dropped: the Orchestrator
 records the full attempt and, if it stays unresolved, opens a case for it — but the fast
 path is simply sending a legal tag the first time.
@@ -91,7 +93,7 @@ never need to say which of those it is; just report the wall.
 
 ## 7. The architect's verdict wire
 This section is for the architect role only. A TRIAGE order names a `triage_id` and asks for
-a verdict; answer with `report.sh architect --tag verdict --triage-id <id> --verdict
+a verdict; answer with `report.sh --tag verdict --triage-id <id> --verdict
 <scope_forward|answer|operator> "<note>"` — `scope_forward` when it's upcoming work to scope
 and land, `answer` when you can resolve it directly (say how, in `<note>`), `operator` when
 it's genuinely the operator's call. Always reply with the verdict wire, never a plain-text

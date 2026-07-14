@@ -16,9 +16,10 @@
 # Appended by the prompt loader to every PMT flagged `reply_expected: true`; lint L19 keeps
 # the flag set total. A worker reply that never reaches the channel does not exist to TRON.
 reply_line: >-
-  Reply on the channel, always — `bash {report} {worker_id} "<your report>"` —
-  a reply that is not on the channel does not exist to me. Tag gate replies as the
-  worker contract prescribes (`--tag <verb>`, `--branch <name>`).
+  Reply on the channel, always — `bash {report} "<your report>"` — it's YOUR OWN
+  copy, so never type your own id or anyone else's. A reply that is not on the
+  channel does not exist to me. Tag gate replies as the worker contract prescribes
+  (`--tag <verb>`, `--branch <name>`).
 
 prompts:
   PMT-SPAWN:             { file: PMT-SPAWN.md,             slots: [worker_id, role, persona, report, contract] }   # bespoke check-in line inline (its reply is the literal "online")

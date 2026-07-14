@@ -156,6 +156,16 @@ templates:
     channel: terminal
     slots: [detail]
     text: "[TRON]  {detail}"
+  # R8 (block 01-38 T2) — THE terminal floor: the operator-page transport
+  # itself has permanently failed (a bounded budget of consecutive
+  # undelivered/unseen pages exhausted) and the run has entered
+  # safe-park-and-halt. Never "fails loudly into a log nobody reads" — this
+  # is the one message that MUST reach a human by whatever means still
+  # work, so it states the fact, the case, and the recovery action plainly.
+  terminal.safe_park:
+    channel: terminal
+    slots: [detail]
+    text: "[TRON]  SAFE-PARK-AND-HALT. The operator page channel itself has permanently failed — I can no longer reach you about a parked case, so I've stopped the run rather than spin blind. {detail} A full state snapshot is on the case record. Fix the page transport, then settle the case directly and restart the session. End of line."
 
   # escalation (operator / tg channels)
   escalate.wall:

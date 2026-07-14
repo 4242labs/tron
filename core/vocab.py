@@ -200,6 +200,11 @@ TPL_TERMINAL_HALT_TRUNK = "terminal.halt_trunk"
 TPL_TERMINAL_PLAN_FIRST = "terminal.plan_first"
 TPL_TERMINAL_SCOPE_UNKNOWN = "terminal.scope_unknown"
 TPL_TERMINAL_RUN_CONTROL = "terminal.run_control"
+# R8 (block 01-38 T2): the terminal floor — if the operator-page transport
+# itself permanently fails, the run enters this NAMED terminal state
+# (safe-park-and-halt, `core/casestate.py::_trip_safe_park`) with a full
+# state snapshot, rather than "failing loudly into a log nobody reads".
+TPL_TERMINAL_SAFE_PARK = "terminal.safe_park"
 TPL_ESCALATE_WALL = "escalate.wall"
 TPL_ESCALATE_AWAIT = "escalate.await"
 TPL_ESCALATE_GATE = "escalate.gate"
