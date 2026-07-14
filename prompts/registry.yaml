@@ -31,7 +31,8 @@ prompts:
   PMT-SCOPE:             { file: PMT-SCOPE.md,             slots: [block, worker_id, report],  reply_expected: true }
   PMT-RECONCILE:         { file: PMT-RECONCILE.md,         slots: [block, after, worker_id, report], reply_expected: true }
   PMT-SCOPE-REMEDIATION: { file: PMT-SCOPE-REMEDIATION.md, slots: [type, worker_id, report],   reply_expected: true }
-  PMT-TRIAGE:            { file: PMT-TRIAGE.md,            slots: [detail, sender, worker_id, report], reply_expected: true }
+  PMT-TRIAGE:            { file: PMT-TRIAGE.md,            slots: [detail, sender, triage_id, worker_id, report], reply_expected: true }
+  PMT-FLAGS:             { file: PMT-FLAGS.md,              slots: [detail, worker_id, report],        reply_expected: true }
   PMT-DONE-LOCAL:        { file: PMT-DONE-LOCAL.md,        slots: [worker_id, block, report],  reply_expected: true, reply_prefix: "done {block} — local:" }
   PMT-DONE-MERGE:        { file: PMT-DONE-MERGE.md,        slots: [worker_id, block, report],  reply_expected: true }
   PMT-DONE-TRUNK:        { file: PMT-DONE-TRUNK.md,        slots: [worker_id, block, report],  reply_expected: true, reply_prefix: "done {block} — trunk:" }

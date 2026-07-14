@@ -72,8 +72,17 @@ templates:
     pmt: PMT-SCOPE-REMEDIATION
   arch.triage:
     channel: worker
-    slots: [detail, sender, worker_id, report]
+    slots: [detail, sender, triage_id, worker_id, report]
     pmt: PMT-TRIAGE
+  # T7 (block 01-37, ADR-0012 R5) — the batched, non-paging visibility-flag
+  # digest: every `worker.flag` queued since the architect's last idle moment,
+  # delivered as ONE order (never one-per-turn — R5's "a chatty worker cannot
+  # starve real triage"). Fire-and-forget: no reply is required (the flags are
+  # already durably ledgered, `manifest["flag_ledger"]`, before this ever sends).
+  arch.flags:
+    channel: worker
+    slots: [detail, worker_id, report]
+    pmt: PMT-FLAGS
   close.worker:
     channel: worker
     slots: [worker_id, report]

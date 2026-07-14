@@ -12,13 +12,27 @@ exist to the Orchestrator — turn output is never read.
 
 ## 2. One message, one act — tagged
 A gate reply carries its verb as data, so nothing is guessed:
-`report.sh <id> --tag <verb> [--block <id>] [--branch <name>] [--kind <scope|blueprint|design>] "<message>"`
-Verbs: `done` · `recorded` · `wall` · `review-done` · `clean`.
+`report.sh <id> --tag <verb> [--block <id>] [--branch <name>] "<message>"`
+Verbs: `done` · `recorded` · `wall` · `review-done` · `clean` · `flag`.
+The architect additionally answers a TRIAGE order with `verdict` (§7) — no other role sends it.
 One VERB per message — never two. Modifiers ride freely on any message: `--branch <name>`
 declares a branch, `--block <id>` names your block; a done-report carrying `--branch` is
-the normal way to declare-and-report in one line. `--kind` is only meaningful on a
-`--tag wall` — see §6. Flags always come BEFORE the message, never after — a trailing
-flag on what you meant as plain text is read as a real one.
+the normal way to declare-and-report in one line. Flags always come BEFORE the message,
+never after — a trailing flag on what you meant as plain text is read as a real one.
+
+**Reporting is structured-only.** The word on your report IS the classification — there is
+no free-text fallback any more. A message with neither a recognized `--tag` nor a `--branch`
+is refused: `report.sh` itself exits nonzero and prints the legal `--tag` set (run
+`report.sh <id> --schema` any time to see it) — fix the flag and resend, in the same turn,
+before doing anything else. A refused report is never silently dropped: the Orchestrator
+records the full attempt and, if it stays unresolved, opens a case for it — but the fast
+path is simply sending a legal tag the first time.
+
+**Flag for visibility, when nothing needs a verdict.** `--tag flag` is for something worth
+surfacing — a heads-up, a minor oddity, context for later — that is NOT a wall and needs NO
+reply: it is never paged, never blocks you, never blocks anything else. Batches of it reach
+the architect together, not one interruption per flag. Use `wall` (§6) for anything that
+actually stops you; use `flag` for everything else worth a mention.
 
 ## 3. The DONE ladder
 You never decide when work is finished — you report, the Orchestrator orders each step,
@@ -68,12 +82,18 @@ Orchestrator never lands anything on trunk, code or paperwork; it only mints the
 Code is never paperwork: unmerged code at close is a wall to report, not a cleanup.
 
 ## 6. Walls
-A wall is anything you cannot clear yourself after consulting your peers: an operator-only
-task, an external blocker, a true impasse. Report it (`--tag wall`, say exactly what blocks
-you) and stop — never work around it, never guess. The Orchestrator routes it; the operator
-decides.
-If your either/or is a question about the BLOCK SPEC itself (scope, an acceptance-criteria
-interpretation, the blueprint, a design call) — something the architect owns, not the
-operator — declare it: `--tag wall --kind scope` (or `blueprint` / `design`). That routes
-you to the architect first, who answers directly; a wall with no `--kind`, or one that is
-genuinely the operator's call (policy, an external blocker), pages the operator as before.
+A wall is anything you cannot clear yourself after consulting your peers: a question about
+the block spec, an operator-only task, an external blocker, a true impasse. Report it
+(`--tag wall`, say exactly what blocks you) and stop — never work around it, never guess.
+Every wall routes to the architect first, who either answers it directly, scopes it forward
+as upcoming work, or — its own call, never yours to flag — raises it to the operator. You
+never need to say which of those it is; just report the wall.
+
+## 7. The architect's verdict wire
+This section is for the architect role only. A TRIAGE order names a `triage_id` and asks for
+a verdict; answer with `report.sh architect --tag verdict --triage-id <id> --verdict
+<scope_forward|answer|operator> "<note>"` — `scope_forward` when it's upcoming work to scope
+and land, `answer` when you can resolve it directly (say how, in `<note>`), `operator` when
+it's genuinely the operator's call. Always reply with the verdict wire, never a plain-text
+answer alone — a triage order that goes unanswered eventually pages the operator on its own,
+never guessing at your intent.
