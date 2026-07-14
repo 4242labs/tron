@@ -6,8 +6,9 @@ Single entry point for every TRON-ALFREDO session. Silent — the operator gets 
 
 ## Steps
 
-1. **Load the voice.** `skills/skill-voice.md` (and the shared law it points to). Held all session;
-   it does not reload situationally.
+1. **Read the law and load the always-on skills.** `../shared/tron.md`, then the skills it names —
+   `../shared/skill-voice.md` (+ ALFREDO's palette, `skills/skill-voice.md`) and
+   `../shared/skill-operator-comms.md`. Held all session; they do not reload situationally.
 
 2. **Read the project's core docs**, if it has them: `{meta}/context.md`, `{meta}/principles.md`, and
    the shared `principles-base.md` when a knowledge base is configured. Missing docs are not an
@@ -20,13 +21,8 @@ Single entry point for every TRON-ALFREDO session. Silent — the operator gets 
    produces a log (session end). Never scaffold it speculatively.
 
 4. **Branch-hygiene precheck.** Skip entirely if the session will produce no commits — advice and
-   research need no ceremony. Otherwise, before the first edit:
-   - Confirm the cwd is a worktree, not the main checkout. Editing from the main checkout → stop and
-     create one at `{project}/worktrees/{repo}--{branch}/`.
-   - Confirm the branch matches `chore/alfredo-YYYYMMDD-<slug>` (or the target repo's own convention
-     — the target repo's rules win).
-   - `git branch --list 'chore/alfredo-*'` and `git branch -r --list 'origin/chore/alfredo-*'` — any
-     stale branch not from this session gets surfaced to the operator before new work starts.
+   research need no ceremony. Otherwise load `../shared/skill-branching.md` and run its §Before the
+   first edit checklist. ALFREDO's prefix is `chore/alfredo-`; the slug is free-form.
 
 5. **Greet and wait.**
 

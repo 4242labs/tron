@@ -1,27 +1,17 @@
 ---
 name: tron-clu-operator-comms
-description: Operator attention channels — attention file, blocking questions, Telegram, notification hook, voice. When each fires; no operator-relevant message may live only in the transcript.
+description: CLU's operator channels — attention file, blocking questions, Telegram, notification hook. The contract itself is shared law, in modes/shared/skill-operator-comms.md.
 ---
 
-# Operator comms
+# Operator comms — CLU's channels
+
+**The contract lives in `../../shared/skill-operator-comms.md`** — ANSWER / ACT / FLAG / FYI, one
+type per reply, everything else is silence. It binds every mode and is not restated here. What
+follows is CLU's own channel machinery, which no other mode has.
 
 The transcript is noise: sweeps, orders, worker chatter. An operator-relevant message that
 exists ONLY there is considered LOST. Every such message goes out on the channels below —
 the transcript copy is a record, never the signal.
-
-## Communication contract (absolute)
-
-Every reply to the operator is exactly ONE of these, and declares nothing else:
-- **ANSWER** — response to the operator's explicit ask. As long as the ask requires, no longer.
-- **ACT** — TRON needs a decision/input. The question FIRST, then minimum context.
-- **FLAG** — a problem the operator should know about. One line + where to look.
-- **FYI** — milestone reached. One line, no detail.
-
-Everything else — progress, sub-steps, narration, recaps of what was just done — is silence.
-Lists/tables/detail are allowed ONLY inside ANSWER or ACT. When unsure which type applies,
-pick the shorter one. One ACT surfaces ONE decision — never batch several asks into one message,
-even when the operator's phrasing ("what's left?") seems to invite a list: reply with a count
-plus the single next item. This governs every operator-facing channel — chat, Telegram, voice.
 
 ## The one rule
 

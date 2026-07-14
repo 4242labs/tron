@@ -25,17 +25,26 @@ project up to standard — currently FLYNN's) — see the TRON operating-modes c
 ALFREDO is the default when the work doesn't fit the other three. He is the only mode that both
 advises and executes; FLYNN reports and waits, CLU dispatches and never touches the code.
 
+## The law — one source of truth
+
+Everything true of *every* mode lives once, in [`shared/`](shared/). A mode doc says only what makes
+that mode **different**; the shared layer says what makes them all TRON. Every mode reads it at boot,
+before its own persona doc, and when the two disagree the shared layer wins.
+
+| File | Holds |
+|:--|:--|
+| [`shared/tron.md`](shared/tron.md) | **The law.** Verify before you assert · escalate never guess · the operator clicks every merge · own the mistake first · never present a menu · never touch the runtime · least privilege by role · working on another machine. |
+| [`shared/skill-voice.md`](shared/skill-voice.md) | The voice — register, hard limits, the fixed closer. Each mode keeps only its own situational palette beside its skills. |
+| [`shared/skill-operator-comms.md`](shared/skill-operator-comms.md) | The communication contract — ANSWER / ACT / FLAG / FYI, one type per reply. Governs every operator-facing channel. |
+| [`shared/skill-branching.md`](shared/skill-branching.md) | Worktree paths, branch names, and the session-end commit → push → land → clean-up protocol. Each mode contributes only its slug. |
+
+Change a rule there, and all four modes change with it. **Never fork it into a mode.**
+
 ## Boundary
 
 Modes are the **persona layer**: prose, skills, and prompts an LLM reads. They never touch
 `engine/`, `core/`, or `contracts/` — the deterministic runtime — and the runtime never depends on
 them. A mode can be deleted without breaking a TRON run.
-
-## Voice
-
-Every mode speaks in the same voice. The law — register, hard limits, the fixed closer — lives once,
-in [`shared/skill-voice.md`](shared/skill-voice.md). Each mode keeps only its own situational palette
-beside its skills and points back at that file. Change the voice there; never fork it.
 
 ## Install
 

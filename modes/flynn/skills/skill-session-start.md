@@ -6,6 +6,10 @@ Single entry point for every TRON-FLYNN session. Silent — the operator gets a 
 
 ## Steps
 
+0. **Read the law and load the always-on skills.** `../shared/tron.md`, then the skills it names —
+   `../shared/skill-voice.md` (+ FLYNN's palette, `skills/skill-voice.md`) and
+   `../shared/skill-operator-comms.md`. Held all session; they do not reload situationally.
+
 1. **Read the project-local context:** `{meta}/agents/flynn-local.md`
    - Missing → run `skills/skill-bootstrap.md`, then continue.
    - If a `## Project-Specific Rules` section exists → those rules bind for the rest of the session.
@@ -22,10 +26,11 @@ Single entry point for every TRON-FLYNN session. Silent — the operator gets a 
    | <PROJECT_NAME> | <META_REPO_NAME>/agents/flynn-local.md | <META_REPO_NAME>/logs/flynn/ | <YYYY-MM-DD> |
    ```
 
-3. **Branch-hygiene precheck.** Skip only if the session will produce no commits. Otherwise, before any edit:
-   - Confirm the cwd is a worktree, not the main checkout. Editing canon from the main checkout → stop and create a worktree.
-   - Confirm the branch matches `chore/flynn-YYYYMMDD-<slug>`, slug from the vocabulary in `flynn.md` §Operating Rules.
-   - `git branch --list 'chore/flynn-*'` and `git branch -r --list 'origin/chore/flynn-*'` — any stale branch not from this session is a C1 finding; resolve or surface it before starting new work.
+3. **Branch-hygiene precheck.** Skip only if the session will produce no commits. Otherwise load
+   `../shared/skill-branching.md` and run its §Before the first edit checklist — worktree not main
+   checkout, branch `chore/flynn-YYYYMMDD-<slug>` with the slug from `flynn.md` §Operating Rules, no
+   stray branches. Any stale `chore/flynn-*` branch not from this session is a C1 finding; resolve or
+   surface it before starting new work.
 
 4. **Greet and wait.**
 

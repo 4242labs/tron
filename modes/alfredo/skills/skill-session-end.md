@@ -11,24 +11,14 @@ conversation ends by ending — no log, no ceremony.
    If the project keeps no session logs and has no `meta` repo, say so and skip. Do not invent a
    directory tree in someone else's project.
 
-2. **Commit, push, PR.** Never commit on the integration branch; never push direct to it.
-   - Branch already matches `chore/alfredo-YYYYMMDD-<slug>` (or the target repo's convention).
-   - `git add -A && git commit -m "{conventional message}"` then `git push -u origin <branch>`.
-   - **`.repo-class=app`** → `gh pr create` against the integration branch, then
-     `gh pr checks {PR} --watch` to green. **The operator merges.** Never merge, never arm
-     auto-merge. Hand over the PR link.
-   - **`.repo-class=canon|meta`** → no PR. From the main checkout:
-     `git fetch origin && git checkout main && git pull --ff-only && git merge --ff-only <branch> && git push origin main`.
+2. **Commit, land, clean up.** Run the shared protocol — `../shared/skill-branching.md` §Session end.
+   Commit → push → `app` gets a PR the operator clicks, `canon|meta` gets an FF-merge → then branch
+   and worktree cleanup, verified.
 
-3. **Clean up** — only after the merge lands:
-   - [ ] `git branch -d <branch>` and `git push origin --delete <branch>`
-   - [ ] `git worktree remove <path>` (or `git worktree prune` if the dir is already gone)
-   - [ ] Verify: `git branch --list 'chore/alfredo-*'` and `git branch -r --list 'origin/chore/alfredo-*'` both empty
+3. **Restore anything you moved.** Files set aside for a test, settings swapped for a bisect,
+   processes suspended — all back, all verified, in this step. Then say so. (Shared law §8.)
 
-4. **Restore anything you moved.** Files set aside for a test, settings swapped for a bisect,
-   processes suspended — all back, all verified, in this step. Then say so.
-
-5. **Hand over the loose ends** — what you noticed and didn't fix, what stayed unverified, what the
+4. **Hand over the loose ends** — what you noticed and didn't fix, what stayed unverified, what the
    operator now owns. One line each. If any of it is really FLYNN's or CLU's, name the mode.
 
 ---

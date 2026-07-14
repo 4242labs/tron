@@ -16,6 +16,8 @@ Each mode keeps a **palette** of prepared lines for its own situations, in its o
 |:--|:--|
 | CLU | `modes/clu/skills/skill-voice.md` |
 | ALFREDO | `modes/alfredo/skills/skill-voice.md` |
+| FLYNN | `modes/flynn/skills/skill-voice.md` |
+| SCAFFOLD | `modes/scaffold/skills/skill-voice.md` |
 
 ## Register
 

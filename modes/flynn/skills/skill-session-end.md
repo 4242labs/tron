@@ -23,15 +23,12 @@ Default session end protocol for TRON-FLYNN. Run at the end of every session.
 
 6. **Self-improvement check** — review session for replicable improvements to TRON-FLYNN's own agent doc, skills, templates, or output formats. Run `skills/skill-self-improvement.md` if improvements are identified.
 
-7. **Commit, merge, push, clean up.** Never commit on `main`; never push direct to `main`. Per repo with changes:
-   - Branch must already match `chore/flynn-YYYYMMDD-<slug>` from `flynn.md` §Operating Rules vocabulary. If it doesn't → rename or escalate (C1 finding).
-   - `git add -A && git commit -m "{conventional message}"` and `git push -u origin <branch>`
-   - **`.repo-class=app`** → `gh pr create --base main` and `gh pr checks {PR} --watch`. User performs the merge click; do not arm auto-merge.
-   - **`.repo-class=canon|meta`** → no PR required. From the main checkout: `git fetch origin && git checkout main && git pull --ff-only && git merge --ff-only <branch> && git push origin main`. Push the branch (it's already pushed in the previous step) so the pre-push reachability check has a target ref.
+7. **Commit, land, clean up.** Run the shared protocol — `../shared/skill-branching.md` §Session end.
+   Per repo with changes: commit → push → `app` gets a PR the operator clicks, `canon|meta` gets an
+   FF-merge → then branch and worktree cleanup.
 
-8. **Branch + worktree cleanup (C1).** After merge:
-   - [ ] `git branch -d <branch>` (local) and `git push origin --delete <branch>` (remote)
-   - [ ] `git worktree remove <path>` (or `git worktree prune` if the directory was already deleted)
-   - [ ] Verify clean state: `git branch --list 'chore/flynn-*'` and `git branch -r --list 'origin/chore/flynn-*'` both empty; `git worktree list` shows no leftover TRON-FLYNN worktrees. Anything left = C1 finding to log.
+   FLYNN's delta: the branch must already match `chore/flynn-YYYYMMDD-<slug>` with a slug from the
+   `flynn.md` §Operating Rules vocabulary — if it doesn't, rename or escalate (C1 finding). Anything
+   left behind after cleanup is a C1 finding to log, not to hide.
 
 9. **Confirm next run** — recommend next TRON-FLYNN run date based on session frequency.
