@@ -711,12 +711,37 @@ def reping(eng, manifest, now):
     return repinged
 
 
-def settle(eng, manifest, case_id, verb, note=None):
+def settle(eng, manifest, case_id, verb, note=None, origin=None):
     """Apply the operator's reply to a parked case. Returns `True` if a case
     was genuinely settled this call, `False` for a logged no-op (unknown/
     duplicate case_id, or an unrecognized verb) — NEVER raises, NEVER
     crashes, NEVER clears/mutates a case other than the one `case_id`
-    itself resolves."""
+    itself resolves.
+
+    `origin` (R8, block 01-38, defense-in-depth at the single origin
+    choke-point) — the CALLER'S OWN channel-derived origin (`vocab.
+    resolve_origin`), never re-derived here from any payload field. The
+    real production caller (`core/router.py::_route_decision`) always
+    supplies it, resolved off the SAME `msg` that carried the `operator.
+    decision` tag; `door.admit`'s minters check (`vocab.minters_ok`) is the
+    PRIMARY gate that already refuses a non-OPERATOR origin before a report
+    ever resolves to this tag at all — this is a SECOND, independent check
+    at the actual state-mutating choke point, so a future bug in the door/
+    classify layer can never alone let a non-operator settle land here.
+    `origin=None` (every direct rig/unit-level call, mirroring `vocab.
+    resolve_origin`'s own optional-manifest convenience elsewhere in this
+    stack) skips this check entirely — never a behavior change for the
+    many existing direct `casestate.settle(...)` call sites that test OTHER
+    concerns (malformed verb, unknown case_id, the architect-owner
+    bypass-rejection) and never claim a real request origin at all."""
+    if origin is not None and origin != vocab.OPERATOR:
+        eng.log("flow", f"casestate: settle for case {case_id!r} (verb="
+                        f"{verb!r}) REFUSED — requester origin {origin!r} "
+                        f"is not OPERATOR (defense-in-depth at the single "
+                        f"origin choke point; the door/classify layer "
+                        f"should already have refused this upstream) — "
+                        f"logged, no-op, case stays open")
+        return False
     cases = manifest.get("cases") or {}
     case = cases.get(case_id)
     if case is None:

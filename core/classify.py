@@ -139,7 +139,25 @@ def classify(eng, msg, manifest=None):
     sender = msg.get("sender") or {}
     text = msg.get("text", "") or ""
 
-    if sender.get("kind") == "operator":
+    # R8 (block 01-38, THIRD identity-disease instance): origin is decided
+    # EXACTLY ONCE, by `vocab.resolve_origin` off the CHANNEL `msg` arrived
+    # on — never by re-reading `sender.get("kind")` off the raw payload
+    # here. The prior form (`sender.get("kind") == "operator"`) trusted the
+    # payload directly: the LEGACY shared `worker-inbox.jsonl` drain
+    # (`core/snapshot.py::_drain_inbox`) stamps `_channel="legacy"` but
+    # leaves `sender` UNTOUCHED (backward compat for pre-01-38 rigs), so any
+    # writer to that shared, adversary-writable file could forge
+    # `sender:{"kind":"operator",...}` and reach `_settle_from_text`
+    # WITHOUT ever passing through `door.admit`/`vocab.minters_ok` — the
+    # exact channel-proof `resolve_origin` already enforces for every other
+    # consumer (`door.admit`, the structured `operator.decision` path
+    # below). Routing THIS fast path through the SAME single choke point
+    # closes it identically: a legacy/worker-channel line claiming
+    # `sender.kind=="operator"` resolves to `WORKER` here (never
+    # `OPERATOR`), so `_settle_from_text` is never even attempted for it —
+    # the case stays open, exactly as an ordinary unrecognized worker line
+    # would leave it.
+    if vocab.resolve_origin(msg, architect.ARCHITECT_WID) == vocab.OPERATOR:
         settled = _settle_from_text(manifest, text)
         if settled:
             return "operator.decision", settled

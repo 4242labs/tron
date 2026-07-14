@@ -192,7 +192,17 @@ def main():
            "(case_id/verb intact)",
            tag == "operator.decision" and slots.get("case_id") == cid1 and slots.get("verb") == "resume",
            f"tag={tag} slots={slots}")
-        router._route_decision(eng1, manifest1, {"tag": tag, "slots": slots})
+        # R8 (block 01-38, defense-in-depth): `_route_decision` now resolves
+        # the requester's ORIGIN off the full report (`vocab.resolve_
+        # origin`, reading `sender`/`_channel`) and hands it to `casestate.
+        # settle` as a SECOND, independent check — so the report passed
+        # here must carry the SAME `sender` the real drain stamped
+        # (`op_reports[0]`), never a stripped-down `{tag, slots}`-only
+        # dict (which would read as origin-less and be refused, a rig
+        # artifact, never a real production shape: `core/snapshot.py::
+        # _classify_reports` always PROMOTES fields onto a resolved report,
+        # never drops them).
+        router._route_decision(eng1, manifest1, {**op_reports[0], "tag": tag, "slots": slots})
         ok("IN4 (AC-5 KILLER): the REAL router->casestate.settle path cleared "
            "the case — a real inbound operator command genuinely settles it, "
            "the live inbound path a real human uses",

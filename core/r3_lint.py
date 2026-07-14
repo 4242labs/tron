@@ -338,6 +338,38 @@ KNOWN_RED = {
                    "outcome' as an R3-exempt pattern — never a one-off carve-out for "
                    "this file alone."),
     },
+    "core/sim/legacy_settle_forgery_rig.py": {
+        "owning_block": "01-38",
+        "reason": ("The THIRD identity-disease instance (a hostile re-review of 6ee0a05 "
+                   "found `core/classify.py::classify`'s `_settle_from_text` fast path "
+                   "trusted `sender.get(\"kind\") == \"operator\"` straight off the raw "
+                   "drained payload, never checking the channel — see classify.py's own "
+                   "docstring on the fix). This rig's `_run_scenario` hand-appends a "
+                   "`{\"sender\": {\"kind\": \"operator\", ...}}` line straight to `ctx."
+                   "worker_inbox` — INBOX_FABRICATED_SENDER's exact seed. This is "
+                   "UNAVOIDABLE for THIS exploit specifically: `scripts/report.sh`'s own "
+                   "legacy branch hardcodes `sender:{kind:\"worker\",id:$id}` "
+                   "unconditionally (no CLI flag can ever produce `kind:\"operator\"` "
+                   "there), so the ONLY way to reproduce the actual adversary-writable "
+                   "shape `core/vocab.py::resolve_origin`'s own docstring names is a raw "
+                   "hand-write bypassing report.sh entirely — the SAME physical write the "
+                   "hostile re-review's own PoC used to reproduce the exploit end-to-end. "
+                   "This is the exploit PAYLOAD itself, never a faked drain outcome "
+                   "another module then trusts: the very next lines (`_real_tick_ingest`) "
+                   "run the REAL `snapshot.build()`/`router.route()` pipeline and assert "
+                   "on ITS genuine output — X1/X2/X3 all read `manifest_after`, `eng."
+                   "events.log`, and real forensic records the production path itself "
+                   "produced, exactly the discipline `core/sim/operator_impersonation_"
+                   "rig.py`/`architect_impersonation_rig.py` already use for their own "
+                   "channel-forgery scenarios (those two dodge this rule by writing to a "
+                   "per-agent channel instead, which the rule doesn't taint — this "
+                   "exploit is specifically ABOUT the one channel the rule DOES taint, so "
+                   "it cannot dodge by channel choice). A KNOWN_RED entry, re-verified "
+                   "every run, is the honest way to keep INBOX_FABRICATED_SENDER's "
+                   "general invariant airtight while allowing this one deliberate, "
+                   "necessary, self-documenting exception — never a silent loosening of "
+                   "the rule itself."),
+    },
 }
 
 

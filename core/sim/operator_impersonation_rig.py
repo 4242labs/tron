@@ -207,10 +207,22 @@ def main():
            f"cases={manifest2_after.get('cases')}")
 
         # ══════════════════════════════════════════════════════════════
-        # M — MUTATION PROOF: reverting the door fix (restoring the
-        #     pre-fix verb-skip shape) makes X1's SAME scenario go RED
+        # M — MUTATION PROOF (two layers, R8 defense-in-depth): the closed
+        #     hole has TWO independent gates on THIS scenario now —
+        #     (1) `door.admit`'s `vocab.minters_ok` enforcement (this rig's
+        #     own, original fix) and (2) `casestate.settle`'s own `origin`
+        #     check, fed by `router._route_decision`'s `vocab.resolve_
+        #     origin` call (added block 01-38, defense-in-depth at the
+        #     actual state-mutating choke point, so a future door/classify
+        #     regression can never ALONE reopen ANY settle-authority hole —
+        #     see `core/casestate.py::settle`'s own docstring). Reverting
+        #     LAYER 1 alone therefore no longer reopens THIS exploit;
+        #     proving the rig still genuinely discriminates means
+        #     demonstrating BOTH the defense-in-depth (M1) and the true
+        #     kill-shot with every gate gone (M2).
         # ══════════════════════════════════════════════════════════════
         _real_minters_ok = vocab.minters_ok
+        _real_settle = casestate.settle
 
         def _pre_fix_minters_ok(tag, msg, architect_wid):
             w = vocab.TAGS.get(tag)
@@ -218,6 +230,12 @@ def main():
                 return True   # the EXACT pre-fix bug: minters skipped for every verb-less tag
             return _real_minters_ok(tag, msg, architect_wid)
 
+        def _settle_ignore_origin(eng_, manifest_, case_id_, verb_, note=None, origin=None):
+            return _real_settle(eng_, manifest_, case_id_, verb_, note=note, origin=None)
+
+        # M1 (DEFENSE-IN-DEPTH — must be GREEN): revert LAYER 1 alone
+        # (door.admit's minters enforcement) — LAYER 2 (casestate.settle's
+        # origin check) must independently still refuse the settle.
         vocab.minters_ok = _pre_fix_minters_ok
         try:
             ctx3, _installed3 = _seed()
@@ -225,17 +243,41 @@ def main():
             eng3.dry = False
             cid3, manifest3_after = _run_scenario(ctx3, eng3)
             case3_after = (manifest3_after.get("cases") or {}).get(cid3)
-            mutation_settled = case3_after is None or case3_after.get("decision") is not None
-            ok("M1 (MUTATION-PROOF KILLER — must be GREEN, i.e. this "
-               "assertion is TRUE: the mutation DID make it settle): "
-               "reverting door.py's minters enforcement to the pre-fix "
-               "verb-skip shape makes the IDENTICAL worker-self-mint "
-               "scenario succeed — X1 is genuinely discriminating, not "
-               "vacuous",
-               mutation_settled,
+            layer1_alone_settled = case3_after is None or case3_after.get("decision") is not None
+            ok("M1 (DEFENSE-IN-DEPTH — must be GREEN, i.e. the case STAYS "
+               "OPEN): reverting ONLY door.admit's minters enforcement "
+               "(LAYER 1) does NOT reopen the exploit — router."
+               "_route_decision's own resolve_origin call + casestate."
+               "settle's origin check (LAYER 2) independently refuse the "
+               "worker-self-mint even when LAYER 1 alone regresses",
+               not layer1_alone_settled,
                f"case3_after={case3_after}")
         finally:
             vocab.minters_ok = _real_minters_ok
+
+        # M2 (MUTATION-PROOF KILLER — must be GREEN): revert BOTH layers
+        # together — the exploit succeeds only when EVERY gate this fix
+        # added is gone, proving the rig is genuinely discriminating.
+        vocab.minters_ok = _pre_fix_minters_ok
+        casestate.settle = _settle_ignore_origin
+        try:
+            ctx3b, _installed3b = _seed()
+            eng3b = Engine(ctx3b)
+            eng3b.dry = False
+            cid3b, manifest3b_after = _run_scenario(ctx3b, eng3b)
+            case3b_after = (manifest3b_after.get("cases") or {}).get(cid3b)
+            both_layers_settled = case3b_after is None or case3b_after.get("decision") is not None
+            ok("M2 (MUTATION-PROOF KILLER — must be GREEN, i.e. this "
+               "assertion is TRUE: the mutation DID make it settle): "
+               "reverting BOTH LAYER 1 (door.admit's minters enforcement) "
+               "AND LAYER 2 (casestate.settle's origin check) together "
+               "makes the IDENTICAL worker-self-mint scenario succeed — "
+               "X1 is genuinely discriminating, not vacuous",
+               both_layers_settled,
+               f"case3b_after={case3b_after}")
+        finally:
+            vocab.minters_ok = _real_minters_ok
+            casestate.settle = _real_settle
 
         passed = sum(1 for _, c, _ in _results if c)
         print(f"\ncore.sim.operator_impersonation_rig: {'PASS' if passed == len(_results) else 'FAIL'} "

@@ -418,7 +418,16 @@ def _route_decision(eng, manifest, rep):
     or an unrecognized verb) is logged and dropped, never raised — an
     operator reply is not a structural contract the way a worker's own wall
     report is; `core.casestate.settle` itself handles an unknown/duplicate
-    case_id the same forgiving way."""
+    case_id the same forgiving way.
+
+    R8 (block 01-38, single origin choke-point, defense-in-depth): `rep` is
+    the FULL drained/classified report (it still carries `sender`/
+    `_channel` — `core/snapshot.py::_classify_reports` only ever ADDS
+    keys, never strips them), so this call site resolves the SAME `vocab.
+    resolve_origin` every other privileged consumer uses and hands it to
+    `casestate.settle`, which refuses (logs, no-op) anything not OPERATOR —
+    a SECOND check at the actual mutating choke point, never trusting
+    `door.admit`'s upstream minters gate as the only line of defense."""
     slots = rep.get("slots") or {}
     case_id = rep.get("case_id") or slots.get("case_id")
     verb = rep.get("verb") or slots.get("verb")
@@ -428,7 +437,8 @@ def _route_decision(eng, manifest, rep):
                         f"(case_id={case_id!r} verb={verb!r}) — logged, no-op, "
                         f"never crashes, never guesses a case")
         return
-    casestate.settle(eng, manifest, case_id, verb, note=note)
+    origin = vocab.resolve_origin(rep, architect.ARCHITECT_WID)
+    casestate.settle(eng, manifest, case_id, verb, note=note, origin=origin)
 
 
 def _route_flag(eng, manifest, rep):

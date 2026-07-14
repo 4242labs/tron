@@ -253,7 +253,14 @@ def main():
     ok("E1a: the injected line classifies as operator.decision via the real structured bypass",
        tag == "operator.decision" and slots.get("case_id") == "CASE-E1" and slots.get("verb") == "resume",
        f"tag={tag} slots={slots}")
-    router._route_decision(eng, manifest, {"tag": tag, "slots": slots})
+    # R8 (block 01-38, defense-in-depth): `_route_decision` resolves the
+    # requester's channel-derived ORIGIN off the full report (`vocab.
+    # resolve_origin`) and hands it to `casestate.settle` as a second,
+    # independent check — pass through `msg`'s own `sender` (operator-
+    # reply.sh's real payload) rather than a stripped `{tag, slots}`-only
+    # dict, which `core/snapshot.py::_classify_reports` never produces in
+    # real production (it only ever PROMOTES fields, never drops them).
+    router._route_decision(eng, manifest, {**msg, "tag": tag, "slots": slots})
     ok("E1b: the REAL settle path removed the case (no dangling open case — the gate's conjunct)",
        "CASE-E1" not in manifest.get("cases", {}), f"cases={list(manifest.get('cases', {}))}")
 
@@ -264,7 +271,7 @@ def main():
     op.tick(eng, manifest, set(), {}, decide_fn=lambda c: {"verb": "abandon", "note": "out of scope"})
     msg = _last_line(ctx)
     tag, slots = classify.classify(eng, msg, manifest)
-    router._route_decision(eng, manifest, {"tag": tag, "slots": slots})
+    router._route_decision(eng, manifest, {**msg, "tag": tag, "slots": slots})
     ok("E2: injected abandon settles via the real path — case cleared AND block in abandoned_blocks",
        "CASE-E2" not in manifest.get("cases", {})
        and "01-07" in (manifest.get("abandoned_blocks") or []),
