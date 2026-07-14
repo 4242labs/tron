@@ -532,7 +532,8 @@ class RunHistory:
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
             append_jsonl(self.tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
 
     def react_architect_log(self, i, manifest):
@@ -570,7 +571,8 @@ class RunHistory:
                 and cur.get("triage_id") not in self.triage_answered):
             append_jsonl(self.tron_ctx.worker_inbox,
                         {"tag": "architect.triage_verdict",
-                         "triage_id": cur["triage_id"], "verdict": "operator"})
+                         "triage_id": cur["triage_id"], "verdict": "operator",
+                         "agent_id": architect.ARCHITECT_WID})
             self.triage_answered.add(cur["triage_id"])
 
     def react(self, i, manifest, *, attest=True, findings_first=None, findings_second=None):

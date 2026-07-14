@@ -99,7 +99,6 @@ sys.path.insert(0, HERE)                                 # core/{gate,state,snap
                                                           # core/*_rig.py already relies on.
 
 import util                  # noqa: E402 — engine/util.py, atomic_write (respected)
-import judge                   # noqa: E402 — engine/judge.py, the ONE LLM seam (stubbed for D9/D10 only)
 import grants                # noqa: E402 — respected contract, real, unmodified
 import trunk                  # noqa: E402 — respected contract, real, unmodified
 import jobs                    # noqa: E402 — engine/jobs.py, the ONE seam this rig stubs (spawn_runner)
@@ -476,7 +475,8 @@ class RunState:
         else:
             return   # not one of this rig's own cases yet (shouldn't happen)
         append_jsonl(inbox_path, {"tag": "architect.triage_verdict",
-                                  "triage_id": cur["triage_id"], "verdict": verdict})
+                                  "triage_id": cur["triage_id"], "verdict": verdict,
+                                  "agent_id": architect.ARCHITECT_WID})
         self.triage_answered.add(cur["triage_id"])
 
     def react_architect_scope_forward(self, manifest):
@@ -599,11 +599,10 @@ def main():
     write_knobs(inst)
     tron_ctx = Ctx(inst)
     grants_dir = tron_ctx.grants_dir
-    # `core/classify.py`'s own `invalid_output.max_retries` read + `judge.py`
-    # 's validator both need a real `routing.yaml` on disk (D9/D10's own
-    # unclassified proof, below) — the actual repo-root canon file, copied
-    # verbatim, never a rig-authored fork (the SAME discipline `core/
-    # classify_rig.py::_tron_ctx` already keeps).
+    # A real `routing.yaml` on disk, copied verbatim from the repo root
+    # (never a rig-authored fork) — harmless/vestigial for `core/
+    # classify.py` (block 01-37 retired its routing.yaml read), kept for
+    # any other module in this drive that still resolves `ctx.routing`.
     shutil.copy(os.path.join(APP_ROOT, "routing.yaml"), tron_ctx.routing)
 
     spawn_calls = []
@@ -794,33 +793,29 @@ def main():
         eng_iso = Engine(Ctx(inst))   # a FRESH, throwaway Engine — never .start()-ed,
         eng_iso.dry = False           # never touching the main drive's own manifest.
 
-        # `TRON_JUDGE_STUB` (`engine/judge.py`'s own offline-testability
-        # contract, `core/classify_rig.py`'s established discipline) stands
-        # in for the ONE real judge call this free-text line would trigger
-        # — a self-declared `unclassified` tag, deterministic, no real LLM
-        # anywhere in this rig.
-        stub_doc = {"classify_message": [{"tag": "unclassified", "slots": {}, "confidence": 0.1}]}
-        stub_path = os.path.join(tron_ctx.dir, "wallrouting-stub.json")
-        util.atomic_write(stub_path, json.dumps(stub_doc))
-        os.environ["TRON_JUDGE_STUB"] = stub_path
-        judge._stub_cache = None
-        judge._stub_idx.clear()
-
+        # Block 01-37 T8: the free-text GRADER is retired — there is no
+        # judge to stub any more. A genuinely free-text line (no --tag, no
+        # --branch) is refused at the door (`core.door.refuse`) and handed
+        # to the architect FIRST exactly the same way `unclassified` used
+        # to (case-less PMT-TRIAGE, `core/architect.py::enqueue_triage`,
+        # reused verbatim) — the mechanism is now the door's own refusal
+        # path, source `worker.report_refused`, never a second LLM call.
         iso_manifest_u = {}
         raw_unclassified = "the whole staging environment is on fire, someone please look — this is nobody's block"
         tag_u, _slots_u = classify.classify(
             eng_iso, {"text": raw_unclassified, "sender": {"kind": "worker", "id": "engineer-99"}},
             iso_manifest_u)
-        os.environ.pop("TRON_JUDGE_STUB", None)   # never leaks past this ONE classify() call
         triage_job_u = next((j for j in (iso_manifest_u.get("architect_queue") or [])
-                             if j.get("kind") == "triage" and j.get("case_id") is None), None)
-        ok("D9 (UNCLASSIFIED->ARCHITECT-FIRST KILLER — must be GREEN): a "
-           "classify result the judge can't resolve collapses to "
-           "unclassified and is handed to the architect FIRST — a real, "
-           "CASE-LESS PMT-TRIAGE job (never a second LLM call, never a "
-           "direct operator page)",
-           tag_u == "unclassified" and triage_job_u is not None
-           and triage_job_u.get("detail") == raw_unclassified
+                             if j.get("kind") == "triage" and j.get("source") == "worker.report_refused"),
+                            None)
+        ok("D9 (DOOR-REFUSAL->ARCHITECT-FIRST KILLER, re-based on block "
+           "01-37 T8 — must be GREEN): a genuinely free-text report is "
+           "REFUSED at the door (tag=None, never a guessed classification) "
+           "and handed to the architect FIRST — a real, CASE-BEARING "
+           "PMT-TRIAGE job (never a second LLM call, never a direct "
+           "operator page)",
+           tag_u is None and triage_job_u is not None
+           and raw_unclassified in (triage_job_u.get("detail") or "")
            and len(iso_manifest_u.get("operator_pages") or {}) == 0,
            f"tag_u={tag_u} triage_job_u={triage_job_u} "
            f"pages={iso_manifest_u.get('operator_pages')}")
@@ -841,12 +836,12 @@ def main():
 
         iso_pages_u = list((iso_manifest_u.get("operator_pages") or {}).values())
         iso_case_u = next((c for c in (iso_manifest_u.get("cases") or {}).values()
-                           if c.get("source") == "classify.unclassified"), None)
-        ok("D10 (UNCLASSIFIED->OPERATOR-REACHED KILLER — must be GREEN): "
-           "once the architect's OWN scripted `operator` verdict resolved "
-           "it, the case-less unclassified escalation genuinely reached "
-           "the operator — a real page, durably recorded, `owner="
-           "'operator'` — never a silent, unclassified discard",
+                           if c.get("source") == "worker.report_refused"), None)
+        ok("D10 (DOOR-REFUSAL->OPERATOR-REACHED KILLER, re-based on block "
+           "01-37 T8 — must be GREEN): once the architect's OWN scripted "
+           "`operator` verdict resolved it, the door-refused escalation "
+           "genuinely reached the operator — a real page, durably "
+           "recorded, `owner='operator'` — never a silent discard",
            iso_case_u is not None and iso_case_u.get("block") is None
            and iso_case_u.get("owner") == "operator" and iso_case_u.get("decision") is None
            and len(iso_pages_u) == 1 and iso_pages_u[0].get("block") is None,

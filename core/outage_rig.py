@@ -372,8 +372,11 @@ class EngineerReactor:
             # (`drive_single_death` deliberately configures LOW silence
             # knobs so sd-2's real silence trips it quickly — sd-1, still
             # being actively driven, must not accidentally trip it too).
+            # block 01-37 T7/T10: `worker.progress` is DELETED — `worker.
+            # flag` (surfaced, non-paging) replaces it as the "still alive,
+            # nothing structural to report" heartbeat.
             append_jsonl(self.tron_ctx.worker_inbox,
-                        {"tag": "worker.progress", "agent_id": agent_id})
+                        {"tag": "worker.flag", "agent_id": agent_id})
             branch = f"feat/{block}"
             if block not in self.spawn_tick:
                 self.spawn_tick[block] = i
@@ -417,7 +420,8 @@ class EngineerReactor:
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
             append_jsonl(self.tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
 
     def react_architect_triage(self, i, manifest, verdict_for_source):
@@ -437,7 +441,7 @@ class EngineerReactor:
             return
         append_jsonl(self.tron_ctx.worker_inbox,
                     {"tag": "architect.triage_verdict", "triage_id": triage_id,
-                     "verdict": verdict})
+                     "verdict": verdict, "agent_id": architect.ARCHITECT_WID})
         self.triage_answered[triage_id] = verdict
 
     def record_done_ticks(self, i, outcomes):

@@ -579,7 +579,8 @@ class RunHistory:
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
             append_jsonl(self.tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
 
     def react_architect_log(self, i, manifest):

@@ -36,7 +36,7 @@ sys.path.insert(0, _HERE)
 from ctx import Ctx                 # noqa: E402 — engine/ctx.py
 from engine import Engine           # noqa: E402 — core/engine.py
 import snapshot                     # noqa: E402 — core/snapshot.py, the observe pass under test
-import classify                     # noqa: E402 — core/classify.py, the verb->tag map under test
+import vocab                        # noqa: E402 — core/vocab.py, the verb->tag map under test (AC-1)
 from boot_real_scaffold_rig import copy_real_scaffold, seed_live_instance   # noqa: E402
 from seed_canon import install_canon   # noqa: E402
 
@@ -118,17 +118,21 @@ def main():
     ok("R8: report.sh rejects a flag AFTER the message (the --tag-wall fat-finger guard)",
        r.returncode != 0, f"rc={r.returncode}")
 
-    # ── 5. the verb map itself: an already-namespaced tag passes through ──
-    ok("R9: _canonical_tag passes an already-namespaced tag through unchanged (rigs untouched)",
-       classify._canonical_tag("worker.done") == "worker.done"
-       and classify._canonical_tag("architect.reconciled") == "architect.reconciled",
+    # ── 5. the verb map itself (block 01-37, AC-1): an already-namespaced
+    #     tag passes through unchanged; every report.sh verb maps to its
+    #     canonical worker.*/architect.* tag — single source, core/vocab.py ──
+    ok("R9: vocab.verb_to_tag passes an already-namespaced tag through unchanged (rigs untouched)",
+       vocab.verb_to_tag("worker.done") == "worker.done"
+       and vocab.verb_to_tag("architect.reconciled") == "architect.reconciled",
        "")
-    ok("R10: _canonical_tag maps every report.sh verb to a worker.* tag",
-       classify._canonical_tag("done") == "worker.done"
-       and classify._canonical_tag("recorded") == "worker.recorded"
-       and classify._canonical_tag("wall") == "worker.wall"
-       and classify._canonical_tag("review-done") == "worker.review_done"
-       and classify._canonical_tag("clean") == "worker.done",
+    ok("R10: vocab.verb_to_tag maps every report.sh verb to its canonical tag",
+       vocab.verb_to_tag("done") == "worker.done"
+       and vocab.verb_to_tag("recorded") == "worker.recorded"
+       and vocab.verb_to_tag("wall") == "worker.wall"
+       and vocab.verb_to_tag("review-done") == "worker.review_done"
+       and vocab.verb_to_tag("clean") == "worker.done"
+       and vocab.verb_to_tag("flag") == "worker.flag"
+       and vocab.verb_to_tag("verdict") == "architect.triage_verdict",
        "")
 
     passed = sum(1 for _, c, _ in _results if c)

@@ -106,6 +106,7 @@ sys.path.insert(0, HERE)                                 # core/{gate,liveness,s
 import grants               # noqa: E402 — respected contract, real, unmodified
 import trunk                 # noqa: E402 — respected contract, real, unmodified
 from ctx import Ctx          # noqa: E402 — engine/ctx.py, the real runtime-context resolver
+import architect              # noqa: E402 — core/architect.py, ARCHITECT_WID (door minters identity)
 import gate                  # noqa: E402 — core/gate.py, the DONE ladder core.tick drives
 import casestate              # noqa: E402 — core/casestate.py, the recovery primitive liveness reuses
 import liveness                # noqa: E402 — core/liveness.py, the module under test
@@ -433,7 +434,12 @@ def main():
     code_files = {BLOCK_SILENT: "src/lib/silent01.ts", BLOCK_LIVE: "src/lib/live01.ts"}
 
     def heartbeat(agent_id):
-        append_jsonl(tron_ctx.worker_inbox, {"tag": "worker.progress", "agent_id": agent_id})
+        # block 01-37 T7/T10: `worker.progress` ({side: none}, a do-nothing
+        # route) is DELETED — `worker.flag` (surfaced, non-paging) is its
+        # replacement; any legal structured tag proves liveness here
+        # (`liveness.touch` only cares that a well-formed report carried
+        # this agent_id, never which specific tag).
+        append_jsonl(tron_ctx.worker_inbox, {"tag": "worker.flag", "agent_id": agent_id})
 
     def try_land(block, s, branch, case_id, role):
         """Run the REAL `land.sh`; on a genuine "not a fast-forward" refusal
@@ -537,7 +543,8 @@ def main():
                 and cur.get("triage_id") not in triage_answered):
             append_jsonl(tron_ctx.worker_inbox,
                         {"tag": "architect.triage_verdict",
-                         "triage_id": cur["triage_id"], "verdict": "operator"})
+                         "triage_id": cur["triage_id"], "verdict": "operator",
+                         "agent_id": architect.ARCHITECT_WID})
             triage_answered.add(cur["triage_id"])
 
     def maybe_resume(manifest, i):
@@ -791,21 +798,47 @@ def main():
     # ══════════════════════════════════════════════════════════════════
     # ENGINE-PRODUCED — worker.stalled is never an inbound classify/router tag
     # ══════════════════════════════════════════════════════════════════
-    cases_before_injection = len(final_manifest.get("cases") or {})
+    # H4 (just above) already proved a clean SESSION-END is on file — but
+    # `core/tick.py::tick`'s idempotent terminal (`session.already_ended`)
+    # makes EVERY tick after that a true no-op (no drain at all), which
+    # would make this injection prove nothing either way. Clear the durable
+    # marker first (this rig's own test setup, never a real engine
+    # concern) so the injected line genuinely reaches `route()`.
+    reset_manifest = state.load(tron_ctx)
+    reset_manifest.pop("session", None)
+    state.save(tron_ctx, reset_manifest)
+
+    cases_before_injection = len(reset_manifest.get("cases") or {})
+    counter_before = (reset_manifest.get("counters") or {}).get("router_catch_all", 0)
     append_jsonl(tron_ctx.worker_inbox,
                 {"tag": "worker.stalled", "agent_id": "not-a-real-worker",
                  "block": "not-a-real-block", "slots": {"detail": "adversarial inbound tag"}})
-    tick.tick(eng)   # drains it — must be a structural no-op
+    tick.tick(eng)   # drains it — must never be routed as a REAL engine-declared stall
     manifest_after_injection = state.load(tron_ctx)
-    ok("T1 (INBOUND-TAG KILLER — must be GREEN): injecting a well-formed-"
-       "looking `{\"tag\": \"worker.stalled\", ...}` line straight into the "
-       "worker inbox is a structural no-op — router.route has no dispatch "
-       "arm for it at all (falls through exactly like any other "
-       "unrecognized tag), so it opens NO new case and touches NOTHING",
-       len(manifest_after_injection.get("cases") or {}) == cases_before_injection
+    # Block 01-37 T4: `core/router.py::route` gained an explicit `else`
+    # catch-all — an unroutable tag that somehow arrives (this one included:
+    # `worker.stalled` has no dispatch arm, exactly as T2 below still
+    # proves) becomes a CASE, never a silent drop. This SUPERSEDES the
+    # pre-01-37 "structural no-op" expectation with a strictly STRONGER
+    # guarantee: the adversarial/malformed inbound line is neither treated
+    # as a real engine-declared stall (no dispatch arm — T2) NOR silently
+    # dropped (the catch-all cases it, bumps the must-be-zero
+    # `router_catch_all` counter) — never both a phantom stall AND never a
+    # silent vanish.
+    ok("T1 (INBOUND-TAG KILLER, re-based on block 01-37 T4 — must be GREEN): "
+       "injecting a well-formed-looking `{\"tag\": \"worker.stalled\", ...}` "
+       "line straight into the worker inbox is NEVER treated as a real "
+       "engine-declared stall (no dispatch arm) AND is NEVER silently "
+       "dropped — the T4 catch-all cases it and bumps the must-be-zero "
+       "counter",
+       len(manifest_after_injection.get("cases") or {}) == cases_before_injection + 1
+       and (manifest_after_injection.get("counters") or {}).get(
+           "router_catch_all", 0) == counter_before + 1
        and "not-a-real-block" not in (manifest_after_injection.get("gates") or {}),
        f"cases_before={cases_before_injection} "
-       f"cases_after={len(manifest_after_injection.get('cases') or {})}")
+       f"cases_after={len(manifest_after_injection.get('cases') or {})} "
+       f"counter_before={counter_before} "
+       f"counter_after={(manifest_after_injection.get('counters') or {}).get('router_catch_all')}")
 
     router_src = open(os.path.join(HERE, "router.py")).read()
     liveness_src = open(os.path.join(HERE, "liveness.py")).read()

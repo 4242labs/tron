@@ -93,6 +93,7 @@ sys.path.insert(0, HERE)                                 # core/{gate,sentry,sta
 import grants               # noqa: E402 — respected contract, real, unmodified
 import trunk                 # noqa: E402 — respected contract, real, unmodified
 from ctx import Ctx          # noqa: E402 — engine/ctx.py, the real runtime-context resolver
+import architect              # noqa: E402 — core/architect.py, ARCHITECT_WID (door minters identity)
 import gate                  # noqa: E402 — core/gate.py, the DONE ladder (never self-caps)
 import sentry                 # noqa: E402 — core/sentry.py, the module under test
 import state                 # noqa: E402 — core/state.py
@@ -419,7 +420,8 @@ def main():
                 and cur.get("triage_id") not in triage_answered):
             append_jsonl(tron_ctx.worker_inbox,
                         {"tag": "architect.triage_verdict",
-                         "triage_id": cur["triage_id"], "verdict": "operator"})
+                         "triage_id": cur["triage_id"], "verdict": "operator",
+                         "agent_id": architect.ARCHITECT_WID})
             triage_answered.add(cur["triage_id"])
 
     def react(manifest):

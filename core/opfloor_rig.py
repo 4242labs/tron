@@ -401,7 +401,8 @@ class RunState:
         if (cur and cur.get("kind") == "triage" and cur.get("ordered")
                 and cur.get("triage_id") not in self.triage_answered):
             append_jsonl(inbox_path, {"tag": "architect.triage_verdict",
-                                      "triage_id": cur["triage_id"], "verdict": "operator"})
+                                      "triage_id": cur["triage_id"], "verdict": "operator",
+                                      "agent_id": architect.ARCHITECT_WID})
             self.triage_answered.add(cur["triage_id"])
 
     def react(self, i, manifest, inbox_path):

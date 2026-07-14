@@ -389,7 +389,8 @@ def main():
                 and cur.get("triage_id") not in triage_answered):
             append_jsonl(tron_ctx.worker_inbox,
                         {"tag": "architect.triage_verdict",
-                         "triage_id": cur["triage_id"], "verdict": "operator"})
+                         "triage_id": cur["triage_id"], "verdict": "operator",
+                         "agent_id": architect.ARCHITECT_WID})
             triage_answered.add(cur["triage_id"])
 
     def react(manifest):

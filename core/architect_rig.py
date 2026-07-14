@@ -472,7 +472,8 @@ def run_reconcile_gate_scenario():
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in reconciled_reported:
             append_jsonl(tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             reconciled_reported.add(cur["block"])
 
     i = 0
@@ -801,36 +802,50 @@ def run_forward_scenario():
 
 
 def run_phantom_triage_grace_scenario():
-    """R1b (ADR-0005) idle-gated, source-DIRECTIONAL backstop lock. A triage the
-    architect took its ordered turn on but never verdicted must neither wedge the
-    fleet (blocker B) nor swallow a real escalation (M1). Directional by TRUSTED
-    source: a low-confidence `classify.unclassified` phantom resolves BENIGN
-    ('answer', never wedges session-end); a GENUINE `worker.wall` resolves LOUD
-    ('operator', a real page — never swallowed). The backstop is keyed on the
-    architect being settled-idle (`eng._worker_working` absent on MiniEng -> reads
-    not-working under the dry rig, so it arms across the idle debounce), NOT a
-    wall-clock tick count. It also HOLDS while the architect is provably mid-turn
-    (PT3 below)."""
+    """Block 01-37 T10 (ADR-0012 §6(b)): R1b's old "idle-GUESS" backstop
+    (fabricate a verdict — BENIGN 'answer' for a low-confidence source,
+    LOUD 'operator' for a genuine one — the instant the architect settled
+    idle) is DELETED. Under structured-only reporting + the closed verdict
+    wire, a genuinely completed architect turn always carries a real
+    `report.sh --tag verdict ...` reply; a settled turn with NO structured
+    verdict is instead a bounded RE-ORDER ladder (`core/architect.py::
+    RESPAWN_CAP`, the SAME cap R-C's delivery-recovery loop already uses) —
+    never a guess. Past the cap, the operator is ALWAYS paged LOUD (never
+    a benign swallow — the low-confidence/genuine source DISTINCTION is
+    gone along with `_LOW_CONFIDENCE_TRIAGE_SOURCES`, since the ONLY source
+    that fed it (`classify.unclassified`, the free-text grader's own
+    output) no longer exists at all — T8 retired the grader that produced
+    it). PT1 (below) now proves that NEW invariant directly: a case-less,
+    low-confidence-SHAPED triage that never gets a structured verdict is
+    NEVER silently swallowed benign any more — it pages too, exactly like a
+    genuine one (PT2). It also HOLDS while the architect is provably
+    mid-turn (PT3 below)."""
     root = build_root()
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
     tron_ctx = Ctx(inst)
     eng = MiniEng(root, tron_ctx, test_command="true", worker_count=1)
 
-    # PT1 — low-confidence phantom -> BENIGN 'answer' backstop.
+    # PT1 — a case-less, LOW-CONFIDENCE-SHAPED phantom (the modern producible
+    # equivalent of the retired `classify.unclassified` source: a door
+    # refusal, `core/door.py::refuse` -> `casestate.open_case(..., "worker.
+    # report_refused", ...)`) that never gets a structured verdict. T10: NO
+    # source is benign any more — this now pages too, exactly like PT2.
     mA = {"architect": {"status": "busy"}, "triage_verdicts": {}}
-    jobA = {"kind": "triage", "triage_id": "triage-1", "source": "classify.unclassified",
+    jobA = {"kind": "triage", "triage_id": "triage-1", "source": "worker.report_refused",
             "block": None, "worker_id": "engineer-01-03", "ordered": True, "dispatch_seq": True,
             "verdict": None, "resolved": False}
     mA["architect"]["current_job"] = jobA
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mA, jobA)
-    ok("PT1 (LOW-CONFIDENCE BENIGN BACKSTOP, R1b — must be GREEN): a "
-       "classify.unclassified phantom with no verdict auto-resolves BENIGN "
-       "('answer') once the architect settles idle — never wedges session-end",
-       jobA.get("resolved") is True and jobA.get("verdict") == "answer",
+    ok("PT1 (NO MORE BENIGN SWALLOW, T10 — must be GREEN): a case-less, "
+       "low-confidence-SHAPED phantom with no structured verdict is NEVER "
+       "silently resolved benign any more — after the bounded re-order "
+       "ladder exhausts it pages LOUD too, exactly like a genuine "
+       "escalation (PT2) — there is no more source-directional distinction",
+       jobA.get("resolved") is True and jobA.get("verdict") == "operator",
        f"resolved={jobA.get('resolved')} verdict={jobA.get('verdict')} "
-       f"idle_ticks={jobA.get('idle_ticks')}")
+       f"reorders={jobA.get('_verdict_reorders')}")
 
     # PT2 — GENUINE worker.wall the architect could not verdict -> LOUD 'operator'
     # (blocker B fixed: it no longer wedges; M1 fixed: it is never swallowed benign).
@@ -842,7 +857,7 @@ def run_phantom_triage_grace_scenario():
             "block": "01-02", "case_id": "case-01-02-1", "worker_id": "engineer-01-02",
             "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mB["architect"]["current_job"] = jobB
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mB, jobB)
     paged = getattr(eng, "operator_pages", [])
     ok("PT2 (GENUINE LOUD BACKSTOP, R1b — must be GREEN): a real worker.wall the "
@@ -878,7 +893,7 @@ def run_phantom_triage_grace_scenario():
              "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mS0["architect"]["current_job"] = jobS0
     _pages_before = len(getattr(eng, "operator_pages", []))
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mS0, jobS0)
     _pages_after = getattr(eng, "operator_pages", [])
     ok("STALE-A0 (BLOCK-LESS T2-18 PATH, ADR-0008 — must be GREEN): the literal defect "
@@ -900,7 +915,7 @@ def run_phantom_triage_grace_scenario():
              "block": None, "case_id": "case-stale-1", "worker_id": "engineer-01-03",
              "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mS1["architect"]["current_job"] = jobS1
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mS1, jobS1)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-A1 (IDLE-BACKSTOP STALE-WALL, ADR-0008 — must be GREEN): a genuine "
@@ -945,7 +960,7 @@ def run_phantom_triage_grace_scenario():
              "block": "01-04", "case_id": "case-nv-1", "worker_id": "engineer-01-04",
              "detail": _WALL_LAND, "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mN1["architect"]["current_job"] = jobN1
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mN1, jobN1)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-NV1 (OPEN-BLOCK STILL PAGES, ADR-0008 non-vacuity — must be GREEN): a "
@@ -967,7 +982,7 @@ def run_phantom_triage_grace_scenario():
              "detail": "dependency cycle between 01-06 and 01-07 — cannot proceed",
              "ordered": True, "dispatch_seq": True, "verdict": None, "resolved": False}
     mN2["architect"]["current_job"] = jobN2
-    for _ in range(3):
+    for _ in range(architect.RESPAWN_CAP + 1):
         architect._advance_triage(eng, mN2, jobN2)
     paged = getattr(eng, "operator_pages", [])
     ok("STALE-NV2 (NON-LANDING WALL STILL PAGES, ADR-0008 non-vacuity — must be GREEN): "
@@ -1289,10 +1304,21 @@ def run_delivery_gap_rig():
        len(getattr(eng, "operator_pages", [])) == 0,
        f"pages={getattr(eng, 'operator_pages', [])}")
     eng.consume()   # the runner (finally) processes the (re-)delivered order
+    # T10: the deleted R1b guess no longer resolves a settled-but-unanswered
+    # turn — under structured-only + the closed verdict wire, delivery
+    # succeeding is what lets the REAL architect turn run and reply via
+    # `report.sh --tag verdict ...`; this rig is about the DELIVERY
+    # mechanism (R-C/R-E/R-G), not the verdict wire itself (`core/
+    # verdict_wire_rig.py`'s own job) — simulate that real reply landing
+    # the instant delivery is proven, exactly as `core/router.py::
+    # _route_architect_triage_verdict` would record it.
+    m["triage_verdicts"][job["triage_id"]] = {"verdict": "answer",
+                                              "note": "resolved via the real verdict wire"}
     eng.tick_clock()
     architect.advance(eng, m)
     ok("RIG1-A3 (THE DELIVERY-GAP KILLER — must be GREEN): once genuinely "
-       "consumed, the job resolves — 0 pages for the WHOLE run, the "
+       "consumed AND the architect's real structured verdict lands, the job "
+       "resolves — 0 pages for the WHOLE run, the "
        "architect is freed (current_job cleared) for the next triage",
        job.get("resolved") is True and len(getattr(eng, "operator_pages", [])) == 0
        and m["architect"].get("current_job") is None,
@@ -1360,10 +1386,16 @@ def run_respawn_rig():
        f"hwm={eng._hwm} seq0={seq0}")
     eng._alive_map[architect.ARCHITECT_WID] = True   # the fresh incarnation comes up
     eng.consume()   # ... and processes the re-delivered order
+    # T10: simulate the real architect's structured verdict landing the
+    # instant delivery is proven post-respawn (see RIG1-A3's own comment —
+    # this rig proves the RESPAWN mechanism, not the verdict wire itself).
+    m["triage_verdicts"][job["triage_id"]] = {"verdict": "answer",
+                                              "note": "resolved via the real verdict wire"}
     eng.tick_clock()
     architect.advance(eng, m)
     ok("RIG2-A3 (THE RESPAWN KILLER — must be GREEN): completes cleanly "
-       "post-respawn — 0 pages, job resolved",
+       "post-respawn (once the architect's real verdict lands) — 0 pages, "
+       "job resolved",
        job.get("resolved") is True and len(getattr(eng, "operator_pages", [])) == 0,
        f"resolved={job.get('resolved')} pages={getattr(eng, 'operator_pages', [])}")
 
@@ -1616,9 +1648,18 @@ def run_no_progress_budget_rig():
     for _ in range(recovery_span):
         eng3.tick_clock()
         architect.advance(eng3, m3)
-        if eng3.respawn_calls >= 1:
+        if eng3.respawn_calls >= 1 and job3["triage_id"] not in m3["triage_verdicts"]:
             eng3._alive_map[architect.ARCHITECT_WID] = True   # the respawned incarnation comes up
             eng3.consume()
+            # T10: simulate the real architect's structured verdict landing
+            # the MOMENT delivery is proven (see RIG1-A3's own comment — 4c
+            # proves BUDGET SIZING, not the verdict wire itself) — injected
+            # here, inside the loop, so no FURTHER re-order tick can occur
+            # before it is seen (a real architect's own turn runs and
+            # replies the instant its order is genuinely delivered, not
+            # some ticks later).
+            m3["triage_verdicts"][job3["triage_id"]] = {
+                "verdict": "answer", "note": "resolved via the real verdict wire"}
     eng3.tick_clock()
     architect.advance(eng3, m3)
     pages_c = getattr(eng3, "operator_pages", [])

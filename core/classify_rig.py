@@ -1,52 +1,58 @@
-"""core.classify_rig — real-git, TRON_JUDGE_STUB-deterministic rig proving
-`core.classify` (wave 13: the ONE LLM judgment, pinned to the OBSERVE phase
-so `decide`/`route`/`act` stay pure — `contracts/rebuild-spec.md` T2/T5).
+"""core.classify_rig — real-git rig proving `core.classify` under
+STRUCTURED-ONLY reporting (block 01-37 T3/T6/T8, ADR-0012 §6(b)). Replaces
+the pre-01-37 free-text/`TRON_JUDGE_STUB` version wholesale: the free-text
+GRADER this rig used to drive (`judge.call("classify_message", ...)`) is
+RETIRED — there is no model in this module's call graph at all any more.
+The word on a report IS the classification; every resolution here is
+either structural (a real `core/vocab.py` tag/verb) or a DOOR REFUSAL
+(`core.door`), never a judgment call.
 
-NO real LLM call anywhere in this rig — `TRON_JUDGE_STUB` (`engine/judge.py`
-'s own offline-testability contract) stands in for `classify_message`,
-exactly the way `engine/e2e_test.py::report` already drives it: a canned
-`{"classify_message": [...]}` JSON file, `judge._stub_cache`/`_stub_idx`
-reset before each canned response is queued, so every scenario below is
-byte-reproducible. Real surface for everything ELSE: a real `git init` repo
-copied from the same scaffold `core/dispatch_rig.py`/`core/architect_rig.py`
-use, a REAL `engine.ctx.Ctx`, `core.tick.tick(eng)` as the WAKE daemon —
-never a faked trunk, never a faked pipeline read.
+Historical-incident coverage (T10: "each removed path's incident test
+subsumed or ported") is PRESERVED, re-expressed for the new invariant:
+T2-16 (the "placeholder" branch-declaration mis-grade) and ADR-0009 §4/
+ADR-0010 §3's land-grant-FYI phantom-walls are exactly the free-text
+narrations that USED to reach a judge that could mis-grade them — under
+structured-only reporting there is no judge to mis-grade ANYTHING, so
+every one of those exact historical trigger texts is proven to be
+REFUSED at the door instead (S2-K10/K11 below) — a STRICTLY STRONGER
+guarantee (never reaches judgment at all, rather than reaching one that
+happens not to misfire).
 
 Two scenarios:
 
-  SCENARIO 1 (real-tick integration) — ONE block from a real 📋 pipeline row,
-  driven via `core.tick.tick`: a STRUCTURED `worker.online` report ASSIGNs
-  the gate with the model NEVER consulted (AC-1), then a genuinely FREE-TEXT
-  local-pass report ("01-01 is done...") is classified by the stub into
-  `{tag: worker.done, slots: {block: 01-01, verdict: pass, evidence: ...}}`
-  and drives the SAME gate from `gate.local` to `gate.merge` (AC-2) — the
-  real classify path, wired through `core/snapshot.py`'s observe pass,
-  entirely deterministic via the stub. Judge-call-count instrumentation
-  (monkeypatched counters around `judge.call`/`snapshot.build`/
-  `router.route`/`gate.advance`) proves the ONE model touch happens inside
-  `snapshot.build` (observe) and NEVER inside `router.route`/`gate.advance`
-  (route/decide/act) — AC-5.
+  SCENARIO 1 (real-tick integration) — ONE block from a real 📋 pipeline
+  row, driven via `core.tick.tick`: a STRUCTURED `worker.online` report
+  ASSIGNs the gate (AC-1); a STRUCTURED `worker.done` report (never
+  free-text any more) drives the SAME gate from `gate.local` to `gate.
+  merge`; a `worker.flag` report (T7) ledgers + batches to the architect
+  and advances NOTHING, opens NO case, pages no one.
 
   SCENARIO 2 (direct unit calls) — `core.classify.classify` exercised
-  directly against a plain manifest dict (no tick/gate machinery needed to
-  prove these): a structured report bypasses the model too (AC-1, unit
-  level); an out-of-enum tag retried-then-exhausted collapses to
-  `unclassified` -> a real architect triage job queued + the raw body
-  logged, never a crash (AC-3); an ENGINE_ONLY tag (`worker.stalled`) is
-  rejected the identical way, since a classifier is never allowed to emit an
-  engine-produced tag (AC-4); the deterministic operator CASE-<n> settle
-  regex is proven too (bonus — "keep it working", per the design).
+  directly against a plain manifest dict: an unrecognized `--tag` verb is
+  REFUSED at the door (T3/AC-4, full text + sender recorded, an
+  architect-first case opened — never a crash, never a guessed flow
+  decision); genuine free prose (no tag, no branch) is refused identically
+  (T8); a progress+blocking combination (`--tag wall` + `--branch`) is
+  refused by the R5/T6 partition (AC-7) — note this FLIPS the pre-01-37
+  behavior, which let an explicit wall win over a branch modifier; the
+  ADR now makes that exact combination illegal by class, on purpose (see
+  S2-K9's own docstring below); a worker-shaped sender cannot mint
+  `architect.reconciled` (ADR-0011 S-1 minters, T9); the deterministic
+  operator CASE-<n> settle regex still works, zero judgment calls (now
+  trivially true — there is no judgment tool left to call).
 
-Plus a structural/grep proof (`judge.call` appears in exactly ONE `core/
-*.py` module, `classify.py`) and, at the end, a live re-run of all 12 prior
-`core/*_rig.py` fixtures as subprocesses — wave 13 is purely additive; every
-one of them still sends only structured inbox lines, so `classify()` is a
-same-tag echo for all of them, zero behavior change.
+Plus a structural/grep proof: `judge` is imported by NO `core/*.py` module
+at all (the free-text grader's sole call site, `core/classify.py`, no
+longer imports `engine/judge.py` — a strictly stronger claim than the
+pre-01-37 "exactly one module" proof) and, at the end, a live re-run of
+every prior `core/*_rig.py` fixture as subprocesses — block 01-37's
+structured-only door is purely additive to every one of them: every prior
+rig already sent only structured lines, so `classify()` remains a same-tag
+echo for all of them.
 
 `ok(name, cond, detail)` collector; `main()` prints `PASS (n/m)` and every
 line, exits non-zero on any fail.
 """
-import json
 import os
 import re
 import shutil
@@ -56,21 +62,22 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(APP_ROOT, "engine"))   # judge.py / ctx.py / grants.py / trunk.py
+sys.path.insert(0, os.path.join(APP_ROOT, "engine"))   # ctx.py / grants.py / trunk.py
 sys.path.insert(0, HERE)                                 # core/{classify,gate,state,snapshot,tick,...}.py
 
 import util                  # noqa: E402 — engine/util.py, atomic_write/append_jsonl (respected)
-import judge                  # noqa: E402 — engine/judge.py, the ONE LLM seam (stubbed throughout)
 import trunk                   # noqa: E402 — respected contract, real, unmodified
 from ctx import Ctx             # noqa: E402 — engine/ctx.py, the real runtime-context resolver
 import gate                      # noqa: E402 — core/gate.py, the DONE ladder core.tick drives
 import state                      # noqa: E402 — core/state.py
-import snapshot                    # noqa: E402 — core/snapshot.py, wave 13's observe-phase wiring
-import router                       # noqa: E402 — core/router.py, structured ASSIGN (must stay LLM-free)
+import snapshot                    # noqa: E402 — core/snapshot.py, block 01-37's structured-door wiring
+import router                       # noqa: E402 — core/router.py, structured ASSIGN + T4/T7 arms
 import tick                          # noqa: E402 — core/tick.py, the whole per-tick pass
 import classify                       # noqa: E402 — core/classify.py, the module under test
-import architect                       # noqa: E402 — core/architect.py, log-review job (triage reuse)
-import casestate                        # noqa: E402 — core/casestate.py, VERBS + case-id shape
+import door                            # noqa: E402 — core/door.py, the T3/T6 admission door
+import vocab                            # noqa: E402 — core/vocab.py, the closed vocabulary
+import architect                         # noqa: E402 — core/architect.py, ARCHITECT_WID + triage reuse
+import casestate                          # noqa: E402 — core/casestate.py, VERBS + case-id shape
 
 import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
 
@@ -147,11 +154,10 @@ BLOCK_DOC_TEMPLATE = """# Block {block}: classify_rig fixture
 
 ## Context
 
-Synthetic block doc for `core.classify_rig` — proves wave 13's ONE LLM
-judgment (`core/classify.py::classify_message`) is pinned to the OBSERVE
-phase: a structured report bypasses it entirely; a genuinely free-text
-report is the one place it's touched, deterministically via
-`TRON_JUDGE_STUB`.
+Synthetic block doc for `core.classify_rig` — proves block 01-37's
+structured-only door (`core/classify.py` + `core/door.py`): a structured
+report resolves off `core/vocab.py`'s closed vocabulary, deterministically;
+anything else is refused at the door, never guessed at by a model.
 """
 
 
@@ -193,11 +199,7 @@ class _Events:
 class MiniEng:
     """The minimal duck-typed `eng` — everything `core/gate.py` + `core/
     pipeline.py` + `core/switchboard.py` + `core/router.py` + `core/
-    classify.py` need. `.ctx` is a REAL `engine.ctx.Ctx`, so `eng.ctx.
-    load_routing()` (`classify.py`'s own max_retries read) and `judge.call`
-    's own `_v_classify` validator (which ALSO reads `ctx.routing`) resolve
-    against a REAL `routing.yaml` — the actual repo-root canon file, copied
-    verbatim (never hand-authored/forked for this rig)."""
+    classify.py`/`core/door.py` need. `.ctx` is a REAL `engine.ctx.Ctx`."""
 
     def __init__(self, root, tron_ctx, worker_count=1):
         self.paths = {
@@ -230,9 +232,7 @@ class MiniEng:
     def emit(self, template_id, fallback_text, slots=None, worker_id=None, kind=None):
         # Rig fixture: no canon shipped (no messages.yaml/prompts/ on this
         # scaffold), so this mirrors core.engine.Engine.emit's FALLBACK arm
-        # unconditionally — fallback_text verbatim, delivered the same way
-        # _to_worker always was, so every existing rig assertion on
-        # self.orders stays byte-for-byte identical.
+        # unconditionally — fallback_text verbatim.
         line = fallback_text
         if worker_id and not self.dry:
             self._to_worker(worker_id, line, kind or template_id)
@@ -252,94 +252,18 @@ class MiniEng:
         pass
 
     def _page_operator(self, case_id, block, detail, worker_id=None, **_kwargs):
-        # **_kwargs: wave 17 (GAP-A) widened the real `eng._page_operator`
-        # call surface (`manifest=`/`page_kind=`, `core/casestate.py`'s own
-        # THE-FLOOR re-ping ladder) — this rig's own stub never needed
-        # either, so it just tolerates and ignores them (never weakens any
-        # assertion this rig already makes).
         self.log_lines.append(("operator_page", f"{case_id} {block} {detail}"))
 
 
 def _tron_ctx(root):
-    """A real `engine.ctx.Ctx` under `root`, with the REAL repo-root
-    `routing.yaml` copied in verbatim (`judge.py`'s validator + `classify.py`
-    's own `invalid_output.max_retries` read both need it on disk — reused
-    AS-IS, per the hard rule, never a rig-authored fork of it)."""
+    """A real `engine.ctx.Ctx` under `root`."""
     inst = os.path.join(root, "meta", "agents", "tron")
     os.makedirs(inst, exist_ok=True)
-    ctx = Ctx(inst)
-    shutil.copy(os.path.join(APP_ROOT, "routing.yaml"), ctx.routing)
-    return ctx
-
-
-def _set_stub(ctx, tag, slots, confidence=0.9):
-    """Exactly `engine/e2e_test.py::report`'s own stub-priming discipline:
-    write ONE canned `classify_message` response, point `TRON_JUDGE_STUB` at
-    it, and reset BOTH `judge._stub_cache`/`_stub_idx` so the fresh file is
-    re-read and the per-tool pop-index restarts at 0 for this call."""
-    stub = {"classify_message": [{"tag": tag, "slots": slots, "confidence": confidence}]}
-    stub_path = os.path.join(ctx.dir, "stub.json")
-    util.atomic_write(stub_path, json.dumps(stub))
-    os.environ["TRON_JUDGE_STUB"] = stub_path
-    judge._stub_cache = None
-    judge._stub_idx.clear()
+    return Ctx(inst)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# call-count instrumentation — proves the model is touched ONLY inside
-# core.snapshot.build (observe), NEVER inside core.router.route or
-# core.gate.advance (route/decide/act) — AC-5.
-# ═══════════════════════════════════════════════════════════════════════
-_judge_call_count = [0]
-_route_deltas = []
-_advance_deltas = []
-_snapshot_deltas = []
-
-
-def _instrument():
-    orig_judge_call = judge.call
-    orig_route = router.route
-    orig_advance = gate.advance
-    orig_build = snapshot.build
-
-    def counting_judge_call(*a, **kw):
-        _judge_call_count[0] += 1
-        return orig_judge_call(*a, **kw)
-
-    def wrapped_route(*a, **kw):
-        before = _judge_call_count[0]
-        r = orig_route(*a, **kw)
-        _route_deltas.append(_judge_call_count[0] - before)
-        return r
-
-    def wrapped_advance(*a, **kw):
-        before = _judge_call_count[0]
-        r = orig_advance(*a, **kw)
-        _advance_deltas.append(_judge_call_count[0] - before)
-        return r
-
-    def wrapped_build(*a, **kw):
-        before = _judge_call_count[0]
-        r = orig_build(*a, **kw)
-        _snapshot_deltas.append(_judge_call_count[0] - before)
-        return r
-
-    judge.call = counting_judge_call
-    router.route = wrapped_route
-    gate.advance = wrapped_advance
-    snapshot.build = wrapped_build
-    return orig_judge_call, orig_route, orig_advance, orig_build
-
-
-def _restore(orig_judge_call, orig_route, orig_advance, orig_build):
-    judge.call = orig_judge_call
-    router.route = orig_route
-    gate.advance = orig_advance
-    snapshot.build = orig_build
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# SCENARIO 1 — real-tick integration (structured bypass + free-text drive)
+# SCENARIO 1 — real-tick integration (structured door only, no judgment)
 # ═══════════════════════════════════════════════════════════════════════
 def run_scenario_1():
     root = build_root()
@@ -347,333 +271,252 @@ def run_scenario_1():
     tron_ctx = _tron_ctx(root)
     eng = MiniEng(root, tron_ctx, worker_count=1)
 
-    orig = _instrument()
-    try:
-        # ── tick 1: SWITCHBOARD spawns the block off the real pipeline ──
-        os.environ.pop("TRON_JUDGE_STUB", None)
-        res1 = tick.tick(eng)
-        ok("S1-A0: SWITCHBOARD spawned block 01-01 off the real 📋 pipeline "
-           "row (identity-only, no report yet)",
-           res1["spawned"] == [AGENT_ID], f"spawned={res1['spawned']}")
+    # ── tick 1: SWITCHBOARD spawns the block off the real pipeline ──
+    res1 = tick.tick(eng)
+    ok("S1-A0: SWITCHBOARD spawned block 01-01 off the real 📋 pipeline "
+       "row (identity-only, no report yet)",
+       res1["spawned"] == [AGENT_ID], f"spawned={res1['spawned']}")
 
-        # ── the rig-as-worker forks its OWN branch, reports online via a
-        #     STRUCTURED line (`{"tag": "worker.online", ...}`) ──
-        make_code_commit(root, BRANCH, CODE_FILE_REL, f"{BLOCK}-classifyrig-change")
-        util.append_jsonl(tron_ctx.worker_inbox,
-                          {"tag": "worker.online", "agent_id": AGENT_ID,
-                           "slots": {"branch": BRANCH}})
+    # ── the rig-as-worker forks its OWN branch, reports online via a
+    #     STRUCTURED line (`{"tag": "worker.online", ...}`) ──
+    make_code_commit(root, BRANCH, CODE_FILE_REL, f"{BLOCK}-classifyrig-change")
+    util.append_jsonl(tron_ctx.worker_inbox,
+                      {"tag": "worker.online", "agent_id": AGENT_ID,
+                       "slots": {"branch": BRANCH}})
 
-        idx_before = dict(judge._stub_idx)
-        count_before = _judge_call_count[0]
+    # ── tick 2: ASSIGN — the structured report resolves via classify.py's
+    #     own vocab-backed door (AC-1) — no model exists anywhere in this
+    #     call graph to consult ──
+    res2 = tick.tick(eng)
+    manifest2 = state.load(tron_ctx)
+    gate2 = (manifest2.get("gates") or {}).get(BLOCK, {})
 
-        # ── tick 2: ASSIGN — the structured report resolves via
-        #     classify.py's own structured-bypass check; the model must
-        #     NEVER be consulted for it (AC-1) ──
-        res2 = tick.tick(eng)
-        manifest2 = state.load(tron_ctx)
-        gate2 = (manifest2.get("gates") or {}).get(BLOCK, {})
+    ok("S1-K1 (STRUCTURED-DOOR KILLER — must be GREEN): the structured "
+       "worker.online report ASSIGNed the gate (gate.local opened, bound to "
+       "the worker's OWN reported branch)",
+       gate2.get("stage") == gate.STAGE_LOCAL and gate2.get("branch") == BRANCH,
+       f"stage={gate2.get('stage')} branch={gate2.get('branch')}")
 
-        ok("S1-K1 (STRUCTURED-BYPASS KILLER — must be GREEN): the "
-           "structured worker.online report ASSIGNed the gate (gate.local "
-           "opened, bound to the worker's OWN reported branch) with the "
-           "judge NEVER invoked — zero judge.call()s this tick",
-           gate2.get("stage") == gate.STAGE_LOCAL and gate2.get("branch") == BRANCH
-           and _judge_call_count[0] == count_before,
-           f"stage={gate2.get('stage')} branch={gate2.get('branch')} "
-           f"judge_calls_this_tick={_judge_call_count[0] - count_before}")
-        ok("S1-K1b: the stub queue itself was never popped for this "
-           "structured report (belt-and-suspenders on the same claim)",
-           dict(judge._stub_idx) == idx_before,
-           f"stub_idx_before={idx_before} stub_idx_after={dict(judge._stub_idx)}")
+    # ── the rig-as-worker's local pass, delivered STRUCTURED (T8: there is
+    #     no free-text arm any more — a real worker's local-pass report is
+    #     `report.sh --tag done --block <id> "<evidence>"`, ported here as
+    #     the equivalent structured JSONL line) ──
+    evidence = ("npm ci --no-audit --no-fund && npx vitest run -> 9/9 green "
+               "(rig-supplied local pass, delivered STRUCTURED — --tag done)")
+    util.append_jsonl(
+        tron_ctx.worker_inbox,
+        {"tag": "done", "agent_id": AGENT_ID, "text": evidence,
+         "slots": {"block": BLOCK, "verdict": "pass", "evidence": evidence},
+         "sender": {"kind": "worker", "id": AGENT_ID}})
 
-        # ── the rig-as-worker's local pass, delivered as GENUINELY
-        #     FREE TEXT — no `tag` key at all, `classify_message`'s own
-        #     {text, sender} input shape — classified by the stub into
-        #     worker.done ──
-        evidence = ("npm ci --no-audit --no-fund && npx vitest run -> 9/9 "
-                    "green (rig-supplied local pass, delivered via a "
-                    "FREE-TEXT inbox line, classified by the stubbed judge)")
-        _set_stub(tron_ctx, "worker.done",
-                 {"block": BLOCK, "verdict": "pass", "evidence": evidence})
-        util.append_jsonl(
-            tron_ctx.worker_inbox,
-            {"text": f"{BLOCK} is done — {evidence}",
-             "sender": {"kind": "worker", "id": AGENT_ID}})
+    # ── tick 3: the structured done report feeds the gate's local_report ->
+    #     advances past gate.local (AC-2's structured-only equivalent) ──
+    res3 = tick.tick(eng)
+    manifest3 = state.load(tron_ctx)
+    gate3 = (manifest3.get("gates") or {}).get(BLOCK, {})
 
-        count_before_3 = _judge_call_count[0]
-        route_before = len(_route_deltas)
-        advance_before = len(_advance_deltas)
-        snap_before = len(_snapshot_deltas)
+    ok("S1-K2 (STRUCTURED-DONE-ADVANCES — must be GREEN): the structured "
+       "`--tag done` report fed the gate's local_report — the SAME block's "
+       "gate advanced from gate.local to gate.merge this tick",
+       gate3.get("stage") == gate.STAGE_MERGE,
+       f"stage_after={gate3.get('stage')} outcomes={res3.get('outcomes')}")
 
-        # ── tick 3: the ONE real classify_message call — free text -> the
-        #     stubbed tag -> the SAME gate's local_report -> advances past
-        #     gate.local (AC-2) ──
-        res3 = tick.tick(eng)
-        manifest3 = state.load(tron_ctx)
-        gate3 = (manifest3.get("gates") or {}).get(BLOCK, {})
+    # ── T7 — a worker.flag report: ledgered + batched to the architect,
+    #     never opens a case, never pages, never advances/blocks anything ──
+    cases_before = len((manifest3.get("cases") or {}))
+    util.append_jsonl(
+        tron_ctx.worker_inbox,
+        {"tag": "flag", "agent_id": AGENT_ID, "text": "fyi: noisy test output, ignorable",
+         "slots": {"block": BLOCK}, "sender": {"kind": "worker", "id": AGENT_ID}})
+    res4 = tick.tick(eng)
+    manifest4 = state.load(tron_ctx)
+    ledger = manifest4.get("flag_ledger") or []
+    ok("S1-K3 (T7 VISIBILITY-FLAG KILLER — must be GREEN): a worker.flag "
+       "report is ledgered (operator-readable) and pages NO ONE — no new "
+       "case, no operator_page log line, and the gate is UNCHANGED",
+       len(ledger) == 1 and ledger[0]["worker_id"] == AGENT_ID
+       and len((manifest4.get("cases") or {})) == cases_before
+       and not any(ch == "operator_page" for ch, _m in eng.log_lines)
+       and (manifest4.get("gates") or {}).get(BLOCK, {}).get("stage") == gate.STAGE_MERGE,
+       f"ledger={ledger} cases={manifest4.get('cases')} "
+       f"gate={(manifest4.get('gates') or {}).get(BLOCK)}")
 
-        ok("S1-K2 (FREE-TEXT-CLASSIFIES KILLER — must be GREEN): the "
-           "free-text report was classified into worker.done and fed the "
-           "gate's local_report — the SAME block's gate advanced from "
-           "gate.local to gate.merge this tick",
-           gate3.get("stage") == gate.STAGE_MERGE,
-           f"stage_after={gate3.get('stage')} outcomes={res3.get('outcomes')}")
-        ok("S1-K3: exactly ONE judge.call() fired this tick (one free-text "
-           "line drained -> one classify_message call, never more)",
-           _judge_call_count[0] - count_before_3 == 1,
-           f"judge_calls_this_tick={_judge_call_count[0] - count_before_3}")
-        ok("S1-K4: the stub was popped EXACTLY once for this call",
-           judge._stub_idx.get("classify_message") == 1,
-           f"stub_idx={dict(judge._stub_idx)}")
-
-        # ── AC-5: the model touch happened inside snapshot.build (observe)
-        #     and NEVER inside router.route or gate.advance (route/act) ──
-        new_snapshot_deltas = _snapshot_deltas[snap_before:]
-        new_route_deltas = _route_deltas[route_before:]
-        new_advance_deltas = _advance_deltas[advance_before:]
-        ok("S1-K5 (OBSERVE-ONLY KILLER — must be GREEN): the ONE model call "
-           "happened INSIDE core.snapshot.build (the observe pass) this "
-           "tick — never inside core.router.route or core.gate.advance "
-           "(route/decide/act stayed at zero model calls, structurally)",
-           sum(new_snapshot_deltas) == 1
-           and all(d == 0 for d in new_route_deltas)
-           and all(d == 0 for d in new_advance_deltas),
-           f"snapshot_deltas={new_snapshot_deltas} route_deltas={new_route_deltas} "
-           f"advance_deltas={new_advance_deltas}")
-
-        print("\n== SCENARIO 1 (real-tick integration) ==")
-        print(f"root={root}")
-        print(f"tron instance dir={tron_ctx.dir}")
-        print(f"gate after tick2 (ASSIGN, structured)={gate2}")
-        print(f"gate after tick3 (free-text classify)={gate3}")
-        print(f"judge_call_count(total)={_judge_call_count[0]}")
-        print(f"route_deltas={_route_deltas} advance_deltas={_advance_deltas} "
-              f"snapshot_deltas={_snapshot_deltas}")
-    finally:
-        _restore(*orig)
-        os.environ.pop("TRON_JUDGE_STUB", None)
+    print("\n== SCENARIO 1 (real-tick integration, structured-only) ==")
+    print(f"root={root}")
+    print(f"tron instance dir={tron_ctx.dir}")
+    print(f"gate after ASSIGN={gate2}")
+    print(f"gate after structured done={gate3}")
+    print(f"flag_ledger={ledger}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# SCENARIO 2 — direct unit calls: invalid/out-of-enum, ENGINE_ONLY,
-# structured bypass (unit level), CASE-<n> settle regex
+# SCENARIO 2 — direct unit calls: door refusals, minters, R5/T6 partition,
+# CASE-<n> settle regex, historical phantom-wall incidents (now REFUSED,
+# never reaching any judgment — there is none)
 # ═══════════════════════════════════════════════════════════════════════
 def run_scenario_2():
-    root = build_root()   # only needed for a real routing.yaml-bearing ctx; no pipeline/tick here
+    root = build_root()   # only needed for a real Ctx; no pipeline/tick here
     tron_ctx = _tron_ctx(root)
     eng = MiniEng(root, tron_ctx, worker_count=1)
     manifest = {}
 
-    # ── unit-level structured bypass: model never touched ──
-    _set_stub(tron_ctx, "SHOULD-NEVER-BE-POPPED", {})
-    idx_before = dict(judge._stub_idx)   # captured AFTER the reset _set_stub itself performs
+    # ── structured bypass: a real vocab tag resolves deterministically ──
     tag, slots = classify.classify(
-        eng, {"tag": "worker.done", "block": BLOCK,
+        eng, {"tag": "worker.done", "agent_id": AGENT_ID, "block": BLOCK,
               "slots": {"verdict": "pass", "evidence": "x"}}, manifest)
-    ok("S2-K1: a structured report resolves via classify.classify() with "
-       "the model NEVER consulted (unit level — the stub queue is never "
-       "popped even though a poisoned response was primed)",
-       tag == "worker.done" and slots == {"verdict": "pass", "evidence": "x"}
-       and dict(judge._stub_idx) == idx_before,
-       f"tag={tag} slots={slots} stub_idx_before={idx_before} "
-       f"stub_idx_after={dict(judge._stub_idx)}")
+    ok("S2-K1: a structured report resolves via classify.classify() "
+       "deterministically off core/vocab.py",
+       tag == "worker.done" and slots == {"verdict": "pass", "evidence": "x"},
+       f"tag={tag} slots={slots}")
 
-    # ── invalid/out-of-enum tag -> unclassified -> architect triage
-    #     (wave 18/GAP-E: a case-less PMT-TRIAGE job, architect-first),
-    #     logged with the raw body, never a crash, never a direct
-    #     operator page ──
+    # ── unrecognized --tag verb -> REFUSED at the door (T3/AC-4): recorded
+    #     with full text + sender, an architect-first case opened, never a
+    #     crash, never a guessed flow decision ──
     raw_text_invalid = "the deploy pipeline is on fire, someone please look"
-    _set_stub(tron_ctx, "totally.not.a.real.tag", {"note": "made up"})
     queue_len_before = len(manifest.get("architect_queue") or [])
+    events_before = len(eng.events.log)
     tag2, slots2 = classify.classify(
-        eng, {"text": raw_text_invalid, "sender": {"kind": "worker", "id": "engineer-99"}},
+        eng, {"tag": "totally-not-a-real-verb", "text": raw_text_invalid,
+              "sender": {"kind": "worker", "id": "engineer-99"}},
         manifest)
     queue_after = manifest.get("architect_queue") or []
     triage_job = next((j for j in queue_after if j.get("kind") == "triage"
-                       and j.get("case_id") is None
-                       and j.get("source") == "classify.unclassified"), None)
-    ok("S2-K2 (INVALID-OUTPUT KILLER — must be GREEN): an out-of-enum tag "
-       "from the judge collapses to unclassified — never a guessed flow "
-       "decision, never a crashed classify",
-       tag2 == "unclassified", f"tag2={tag2}")
-    ok("S2-K3 (ARCHITECT-TRIAGE KILLER — must be GREEN): unclassified was "
-       "handed to the architect FIRST as a real, case-less PMT-TRIAGE job "
-       "(kind=triage, case_id=None, source=classify.unclassified) — a "
-       "genuine scope_forward/answer/operator triage, never a direct "
-       "operator page, never a second LLM call",
-       len(queue_after) == queue_len_before + 1 and triage_job is not None
-       and triage_job.get("detail") == raw_text_invalid
-       and triage_job.get("worker_id") == "engineer-99",
+                       and j.get("source") == "worker.report_refused"), None)
+    ok("S2-K2 (DOOR-REFUSAL KILLER — must be GREEN): an unrecognized --tag "
+       "verb is REFUSED (tag=None, never routed) — never a crash, never a "
+       "guessed flow decision",
+       tag2 is None and slots2 is None, f"tag2={tag2} slots2={slots2}")
+    ok("S2-K3 (ARCHITECT-FIRST REFUSAL KILLER — must be GREEN): the "
+       "refusal was handed to the architect FIRST as a real case "
+       "(source=worker.report_refused) — never a direct operator page",
+       len(queue_after) == queue_len_before + 1 and triage_job is not None,
        f"queue_before={queue_len_before} queue_after={queue_after}")
-    ok("S2-K4 (FORENSIC-LOG KILLER — must be GREEN): the raw body was "
-       "logged (both the home-log line AND a durable events.event record) "
-       "— never silently swallowed",
-       any(raw_text_invalid in msg for _ch, msg in eng.log_lines)
-       and any(e["type"] == "unclassified" and e["payload"].get("raw") == raw_text_invalid
-              for e in eng.events.log),
-       f"log_lines_tail={eng.log_lines[-2:]} events_tail={eng.events.log[-2:]}")
+    ok("S2-K4 (FORENSIC-RECORD KILLER — must be GREEN): the refusal was "
+       "recorded durably — the home-log line AND a durable events.event "
+       "record — full attempted text preserved, never reduced to a count",
+       len(eng.events.log) == events_before + 1
+       and eng.events.log[-1]["type"] == "door_refusal"
+       and raw_text_invalid in eng.events.log[-1]["payload"]["raw"]
+       and any(raw_text_invalid in msg for _ch, msg in eng.log_lines),
+       f"events_tail={eng.events.log[-1:]}")
 
-    # ── ENGINE_ONLY tag rejected — a classifier is never allowed to emit
-    #     an engine-produced tag (worker.stalled/worker.dead) ──
-    raw_text_engine_only = "worker-07 hasn't said anything in ages, is it dead?"
-    _set_stub(tron_ctx, "worker.stalled", {})
-    queue_len_before2 = len(manifest.get("architect_queue") or [])
-    tag3, _slots3 = classify.classify(
-        eng, {"text": raw_text_engine_only, "sender": {"kind": "worker", "id": "engineer-01"}},
-        manifest)
-    queue_after2 = manifest.get("architect_queue") or []
-    ok("S2-K5 (ENGINE-ONLY-REJECTED KILLER — must be GREEN): worker.stalled "
-       "(engine-liveness-produced only) from the classifier is rejected as "
-       "invalid output, same as any other out-of-enum tag -> unclassified",
-       tag3 == "unclassified" and len(queue_after2) == queue_len_before2 + 1,
-       f"tag3={tag3} queue_len_before={queue_len_before2} queue_len_after={len(queue_after2)}")
+    # ── genuine free prose (no tag, no branch) -> refused identically
+    #     (T8: structured-only, no free-text judgment behind it at all) ──
+    raw_prose = "hey, quick heads up, this one's tricky"
+    tag_prose, slots_prose = classify.classify(
+        eng, {"text": raw_prose, "sender": {"kind": "worker", "id": "engineer-01"}}, manifest)
+    ok("S2-K5 (PROSE-ONLY REFUSED — must be GREEN, T8): a message with "
+       "NEITHER --tag NOR --branch is refused at the door — structured-only "
+       "reporting, no free-text judgment behind it",
+       tag_prose is None and slots_prose is None,
+       f"tag={tag_prose} slots={slots_prose}")
 
-    # ── ADR-0009 §4 / rig 6 (PHANTOM-WALL) part A — the FREE-TEXT judge
-    #     structurally CANNOT mint worker.wall: even when the (stubbed) model
-    #     itself grades a block-less, evidence-less narration "worker.wall",
-    #     judge._v_classify's FREE_TEXT_BLOCKED rejection downgrades it to
-    #     invalid-output-exhausted -> unclassified -> architect triage (never
-    #     an escalating tag reaching open_case straight from prose). This is
-    #     the T2-16 phantom-wall's ROOT mechanism, one layer earlier than the
-    #     existing structural-bypass proof above (S2-K8/K9, which never even
-    #     reach the judge) — this scenario is the one case that DOES reach it.
-    raw_text_phantom_wall = "placeholder"
-    _set_stub(tron_ctx, "worker.wall", {"detail": "genuinely blocked"})
-    queue_len_before5 = len(manifest.get("architect_queue") or [])
-    tag8, _slots8 = classify.classify(
-        eng, {"text": raw_text_phantom_wall,
+    # ── R5/T6 partition: a progress+blocking combination is illegal (AC-7).
+    #     This is a DELIBERATE behavior FLIP from pre-01-37 (where an
+    #     explicit --tag wall carrying a --branch modifier "won" over the
+    #     branch): ADR-0012 R5 makes exactly this combination illegal BY
+    #     CLASS — a worker cannot assert "I'm blocked" and "here is my new
+    #     branch" in the SAME report any more; send them separately. ──
+    tag_conflict, slots_conflict = classify.classify(
+        eng, {"tag": "wall", "agent_id": "engineer-01-03",
+              "slots": {"branch": "feat/01-03-ui"},
+              "text": "genuinely blocked",
               "sender": {"kind": "worker", "id": "engineer-01-03"}},
         manifest)
-    queue_after5 = manifest.get("architect_queue") or []
-    ok("S2-K10 (PHANTOM-WALL JUDGE-ENUM KILLER, ADR-0009 §4 rig 6 — must be "
-       "GREEN): a free-text, block-less narration the (stubbed) judge itself "
-       "grades worker.wall is REJECTED at the validator (FREE_TEXT_BLOCKED) "
-       "-> invalid-output-exhausted -> unclassified -> architect triage, "
-       "NEVER an escalating worker.wall minted from prose",
-       tag8 == "unclassified" and len(queue_after5) == queue_len_before5 + 1,
-       f"tag8={tag8} queue_len_before={queue_len_before5} "
-       f"queue_len_after={len(queue_after5)}")
+    ok("S2-K6 (R5/T6 PARTITION KILLER — must be GREEN, AC-7): --tag wall "
+       "combined with a --branch modifier (progress-advancing + blocking in "
+       "ONE report) is REFUSED — the enumerated partition, not the one pair "
+       "seen live",
+       tag_conflict is None and slots_conflict is None,
+       f"tag={tag_conflict} slots={slots_conflict}")
+    # ...but a wall with NO branch modifier still resolves normally —
+    # the partition never blocks a genuine, uncombined wall.
+    tag_wall_ok, slots_wall_ok = classify.classify(
+        eng, {"tag": "wall", "agent_id": "engineer-01-03", "text": "genuinely blocked",
+              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        manifest)
+    ok("S2-K6b: an UN-combined wall (no branch modifier) still resolves to "
+       "worker.wall normally — the partition never blocks a genuine wall",
+       tag_wall_ok == "worker.wall", f"tag={tag_wall_ok} slots={slots_wall_ok}")
 
-    # ── ADR-0010 §3/§6 rig 1 (Invariant A — origin, the T3-01 phantom-wall
-    #     killer — SUPERSEDES the ADR-0009 §4 rig 6 part-B scenario this
-    #     slot used to hold: that scenario proved a land.sh-signature free
-    #     text classified DETERMINISTICALLY to worker.wall via a regex
-    #     mint inside `_structured` — ADR-0010 DELETES that exact mint
-    #     branch, since it was an effectively-always-true matcher over this
-    #     fleet's own routine land-grant handshake narration, the root
-    #     cause of the recurring phantom-wall (T2-16, T2-20, ADR-0009 §4
-    #     itself, and now T3-01-TRI-F). A tag-less, branch-less report
-    #     whose free text merely narrates ROUTINE land-grant status must
-    #     stay SILENT — never worker.wall, never a case, never a page.
-    #     Poison the stub so even the JUDGE tries to grade it worker.wall —
-    #     proving `FREE_TEXT_BLOCKED` (ADR-0009 §4's OTHER half, UNTOUCHED
-    #     by ADR-0010) is what actually keeps it silent now that the regex
-    #     shortcut is gone, never a second detector of this module's own.
-    #     Exactly the T3-01 input space S2-K10/the old S2-K11 never fed —
-    #     ADR-0009's own rig 6 tested a bare "placeholder" + a clean
-    #     land.sh-refusal signature, NEITHER of which is routine land-grant
-    #     FYI narration — this closes that proven vacuity. ──
-    t301_fyis = [
-        "FYI — awaiting the land grant",
+    # ── ADR-0011 S-1 minters (T9): a worker-shaped sender cannot mint
+    #     architect.reconciled just by knowing the shape ──
+    tag_forge, slots_forge = classify.classify(
+        eng, {"tag": "reconciled", "agent_id": "engineer-99", "block": BLOCK,
+              "sender": {"kind": "worker", "id": "engineer-99"}},
+        manifest)
+    ok("S2-K7 (MINTERS-ENFORCED KILLER — must be GREEN, T9): a WORKER "
+       "sender cannot mint architect.reconciled — refused, never trusted "
+       "just because it named the right shape",
+       tag_forge is None and slots_forge is None,
+       f"tag={tag_forge} slots={slots_forge}")
+    # ...but the architect's OWN identity (agent_id == ARCHITECT_WID) may.
+    tag_real, slots_real = classify.classify(
+        eng, {"tag": "reconciled", "agent_id": architect.ARCHITECT_WID, "block": BLOCK},
+        manifest)
+    ok("S2-K7b: the architect's OWN identity mints architect.reconciled fine",
+       tag_real == "architect.reconciled", f"tag={tag_real} slots={slots_real}")
+
+    # ── T2-16 / ADR-0009 §4 / ADR-0010 §3 — the historical phantom-wall
+    #     incidents, RE-PROVEN under structured-only: every one of these
+    #     exact trigger texts is free prose that USED to reach a judge that
+    #     could (and once did) mis-grade it worker.wall. There is no judge
+    #     left to mis-grade ANYTHING — each is refused at the door instead,
+    #     a strictly stronger guarantee (T10: incident subsumed, not lost). ──
+    historical_phantom_texts = [
+        "placeholder",                                          # T2-16
+        "FYI — awaiting the land grant",                        # ADR-0009 §4 / ADR-0010 §3 (T3-01)
         "land.sh fast-forwarded trunk to X; grant consumed",
         "close-out paperwork committed; waiting on the land grant",
     ]
-    for _k, fyi_text in enumerate(t301_fyis):
-        _set_stub(tron_ctx, "worker.wall", {"detail": "should never mint (ADR-0010 rig 1)"})
-        idx_before_fyi = dict(judge._stub_idx)   # {} — captured AFTER _set_stub's own reset
-        queue_len_before_fyi = len(manifest.get("architect_queue") or [])
-        tag_fyi, _slots_fyi = classify.classify(
-            eng, {"text": fyi_text, "sender": {"kind": "worker", "id": "engineer-t301"}},
-            manifest)
-        queue_after_fyi = manifest.get("architect_queue") or []
-        ok(f"S2-K11.{_k} (ADR-0010 RIG-1 PHANTOM-WALL KILLER, T3-01 FYI "
-           f"{fyi_text!r} — must be GREEN): a benign land-grant FYI the "
-           "(stubbed) judge itself grades worker.wall NEVER mints "
-           "worker.wall — collapses to unclassified (FREE_TEXT_BLOCKED "
-           "rejects worker.wall at the validator -> invalid-output-"
-           "exhausted) — the judge WAS genuinely consulted this call (stub "
-           "idx advanced past its post-_set_stub reset — the deleted regex "
-           "mint no longer short-circuits it before the judge is ever "
-           "touched), and no case/page-worthy tag reached the caller",
-           tag_fyi != "worker.wall" and tag_fyi in ("worker.progress", "unclassified")
-           and dict(judge._stub_idx) != idx_before_fyi
-           and len(queue_after_fyi) == queue_len_before_fyi + (1 if tag_fyi == "unclassified" else 0),
-           f"tag_fyi={tag_fyi} idx_before={idx_before_fyi} "
-           f"idx_after={dict(judge._stub_idx)} queue_before={queue_len_before_fyi} "
-           f"queue_after={len(queue_after_fyi)}")
+    for i, text in enumerate(historical_phantom_texts):
+        t, s = classify.classify(
+            eng, {"text": text, "sender": {"kind": "worker", "id": "engineer-t301"}}, manifest)
+        ok(f"S2-K8.{i} (PHANTOM-WALL SUBSUMED — must be GREEN): historical "
+           f"trigger {text!r} is refused at the door (never worker.wall, "
+           f"never reaches any judgment — none exists)",
+           t is None and s is None, f"tag={t} slots={s}")
 
     # ── deterministic operator CASE-<n> settle regex (bonus — "keep it
-    #     working", the design's own words) — zero model calls ──
+    #     working") — zero judgment calls, trivially, now ──
     settle_manifest = {"cases": {"case-01-01-1": {
         "case_id": "case-01-01-1", "block": BLOCK, "source": "worker.wall",
         "decision": None, "detail": "walled"}}}
-    _set_stub(tron_ctx, "SHOULD-NEVER-BE-POPPED-EITHER", {})
-    idx_before2 = dict(judge._stub_idx)   # captured AFTER the reset _set_stub itself performs
     tag4, slots4 = classify.classify(
         eng, {"text": "please resume case-01-01-1, all clear now",
               "sender": {"kind": "operator", "id": "the-operator"}},
         settle_manifest)
-    ok("S2-K6 (BONUS — CASE-SETTLE-REGEX KILLER): an operator's free text "
+    ok("S2-K9 (BONUS — CASE-SETTLE-REGEX KILLER): an operator's free text "
        "naming a GENUINELY open case id + a settle verb resolves to "
-       "operator.decision via a deterministic regex, zero model calls",
-       tag4 == "operator.decision" and slots4 == {"case_id": "case-01-01-1", "verb": "resume"}
-       and dict(judge._stub_idx) == idx_before2,
+       "operator.decision via a deterministic regex",
+       tag4 == "operator.decision" and slots4 == {"case_id": "case-01-01-1", "verb": "resume"},
        f"tag4={tag4} slots4={slots4}")
 
     # ── the SAME text against a manifest with NO open case at all must NOT
-    #     misfire — falls through to the (stubbed) real judgment instead ──
-    _set_stub(tron_ctx, "operator.status_query", {})
-    tag5, _slots5 = classify.classify(
+    #     misfire — now REFUSED (T8: no free-text fallback of any kind) ──
+    tag5, slots5 = classify.classify(
         eng, {"text": "please resume case-01-01-1, all clear now",
               "sender": {"kind": "operator", "id": "the-operator"}},
         {"cases": {}})
-    ok("S2-K7: the same CASE-<n>-shaped text against a manifest with NO "
-       "open case falls through to the real judgment (never a false-"
-       "positive settle for a case that doesn't exist)",
-       tag5 == "operator.status_query", f"tag5={tag5}")
+    ok("S2-K10: the same CASE-<n>-shaped text against a manifest with NO "
+       "open case is refused (never a false-positive settle; no free-text "
+       "fallback left to fall through to)",
+       tag5 is None and slots5 is None, f"tag5={tag5}")
 
-    # ── BRANCH-DECLARATION KILLER (T2-16 REJECT root-fix): a tag-LESS report
-    #     that declares a branch is the canonical branch declaration and
-    #     resolves DETERMINISTICALLY to worker.branch — the fuzzy judge is
-    #     NEVER consulted. The stub is poisoned with the EXACT mis-grade that
-    #     failed T2-16 (worker.wall from the bare declaration message
-    #     "placeholder"); if the fix regresses and the judge is reached, the
-    #     poisoned worker.wall would surface + the stub idx would advance. ──
-    _set_stub(tron_ctx, "worker.wall", {"block": BLOCK})
-    idx_before3 = dict(judge._stub_idx)   # captured AFTER _set_stub's own reset
+    # ── BRANCH-DECLARATION KILLER (T2-16 root-fix, still intact): a
+    #     tag-LESS report that declares a branch resolves DETERMINISTICALLY
+    #     to worker.branch ──
     tag6, slots6 = classify.classify(
-        eng, {"text": "placeholder",
+        eng, {"agent_id": "engineer-01-03", "text": "placeholder",
               "slots": {"branch": "feat/01-03-ui"},
               "sender": {"kind": "worker", "id": "engineer-01-03"}},
         manifest)
-    ok("S2-K8 (BRANCH-DECLARATION KILLER — must be GREEN): a tag-less report "
-       "carrying slots.branch resolves to worker.branch DETERMINISTICALLY — "
-       "the judge is NEVER consulted, so a contentless declaration message "
-       "('placeholder') can no longer be mis-graded worker.wall into a "
-       "phantom operator-paging case (the T2-16 REJECT)",
-       tag6 == "worker.branch" and slots6.get("branch") == "feat/01-03-ui"
-       and dict(judge._stub_idx) == idx_before3,
-       f"tag6={tag6} slots6={slots6} stub_idx_before={idx_before3} "
-       f"stub_idx_after={dict(judge._stub_idx)}")
-
-    # ── the guard NEVER swallows an EXPLICIT wall: a worker that deliberately
-    #     tags `--tag wall` while also carrying a branch still resolves to
-    #     worker.wall (stated intent wins; only the tag-LESS ambiguous case is
-    #     auto-resolved by its branch signal) — structured bypass, no judge. ──
-    _set_stub(tron_ctx, "SHOULD-NEVER-BE-POPPED-WALL", {})
-    idx_before4 = dict(judge._stub_idx)
-    tag7, slots7 = classify.classify(
-        eng, {"tag": "wall",
-              "slots": {"branch": "feat/01-03-ui", "detail": "genuinely blocked"},
-              "sender": {"kind": "worker", "id": "engineer-01-03"}},
-        manifest)
-    ok("S2-K9 (EXPLICIT-WALL-STILL-WINS — must be GREEN): an EXPLICIT --tag "
-       "wall carrying a branch still resolves to worker.wall via the "
-       "structured bypass — the branch-declaration auto-resolve never "
-       "overrides a worker's stated wall intent, and never touches the judge",
-       tag7 == "worker.wall" and slots7.get("detail") == "genuinely blocked"
-       and dict(judge._stub_idx) == idx_before4,
-       f"tag7={tag7} slots7={slots7}")
+    ok("S2-K11 (BRANCH-DECLARATION KILLER — must be GREEN): a tag-less "
+       "report carrying slots.branch resolves to worker.branch "
+       "DETERMINISTICALLY — no judgment involved, so a contentless "
+       "declaration ('placeholder') can never be mis-graded worker.wall",
+       tag6 == "worker.branch" and slots6.get("branch") == "feat/01-03-ui",
+       f"tag6={tag6} slots6={slots6}")
 
     print("\n== SCENARIO 2 (direct unit calls) ==")
     print(f"tron instance dir={tron_ctx.dir}")
@@ -682,30 +525,32 @@ def run_scenario_2():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# structural / grep proof — judge.call lives in exactly ONE core/*.py
-# module (classify.py); no raw git/subprocess crept into the edited files
+# structural / grep proof — the free-text GRADER is retired: `judge` is
+# imported by NO `core/*.py` module at all (strictly stronger than the
+# pre-01-37 "exactly one module" claim); no raw git/subprocess crept in.
 # ═══════════════════════════════════════════════════════════════════════
 def run_grep_proof():
     core_files = sorted(
         f for f in os.listdir(HERE)
         if f.endswith(".py") and not f.endswith("_rig.py") and f != "__init__.py")
+    judge_import_files = []
     judge_call_files = []
     for fname in core_files:
         with open(os.path.join(HERE, fname)) as fh:
             text = fh.read()
+        if re.search(r"^\s*import\s+judge\b", text, re.MULTILINE):
+            judge_import_files.append(fname)
         if re.search(r"\bjudge\.call\s*\(", text):
             judge_call_files.append(fname)
-    ok("G1 (GREP PROOF — must be GREEN): judge.call(...) appears in EXACTLY "
-       "ONE core/*.py module (classify.py) — decide/route/act never touch it",
-       judge_call_files == ["classify.py"], f"judge_call_files={judge_call_files}")
+    ok("G1 (GRADER-RETIRED GREP PROOF — must be GREEN, T8): NO core/*.py "
+       "module imports engine/judge.py any more — the free-text grader has "
+       "no call site left anywhere in this engine",
+       judge_import_files == [] and judge_call_files == [],
+       f"judge_import_files={judge_import_files} judge_call_files={judge_call_files}")
 
-    for fname in ("classify.py", "snapshot.py", "router.py", "tick.py"):
+    for fname in ("classify.py", "door.py", "snapshot.py", "router.py", "tick.py"):
         with open(os.path.join(HERE, fname)) as fh:
             text = fh.read()
-        # ACTUAL code usage only (`import subprocess` / `subprocess.run(...)`
-        # etc.) — every one of these files' own docstrings mentions the word
-        # "subprocess" in prose ("No git/subprocess of any kind here..."),
-        # which must never false-positive this check.
         has_subprocess = bool(re.search(
             r"^\s*import subprocess\b|subprocess\.(run|Popen|call|check_output|check_call)\s*\(",
             text, re.MULTILINE))
@@ -715,11 +560,21 @@ def run_grep_proof():
            not has_subprocess and not has_raw_git,
            f"has_subprocess={has_subprocess} has_raw_git={has_raw_git}")
 
+    # AC-1: no second hand-maintained copy of the tag/verb table remains.
+    for fname in ("classify.py",):
+        with open(os.path.join(HERE, fname)) as fh:
+            text = fh.read()
+        ok(f"G3[{fname}] (AC-1): the retired _REPORT_VERB_TAG/_canonical_tag "
+           "hand-maintained copy is gone — core/vocab.py::VERB_TO_TAG is the "
+           "single source",
+           "_REPORT_VERB_TAG" not in text and "_canonical_tag" not in text,
+           "grep clean" if ("_REPORT_VERB_TAG" not in text
+                            and "_canonical_tag" not in text) else "STILL PRESENT")
+
 
 # ═══════════════════════════════════════════════════════════════════════
-# all 12 prior core/*_rig.py fixtures — wave 13 is purely additive; every
-# one of them sends only structured inbox lines, so classify() is a
-# same-tag echo for all of them, zero behavior change
+# all prior core/*_rig.py fixtures — block 01-37's structured door is
+# purely additive; every prior rig already sends only structured lines
 # ═══════════════════════════════════════════════════════════════════════
 PRIOR_RIGS = ["landing_rig", "gate_rig", "gate_full_rig", "tick_rig", "dispatch_rig",
               "multiblock_rig", "sentry_rig", "casestate_rig", "architect_rig",
@@ -728,48 +583,45 @@ PRIOR_RIGS = ["landing_rig", "gate_rig", "gate_full_rig", "tick_rig", "dispatch_
 
 def run_prior_rigs():
     env = dict(os.environ)
-    env.pop("TRON_JUDGE_STUB", None)
     for name in PRIOR_RIGS:
         path = os.path.join(HERE, f"{name}.py")
         r = subprocess.run([sys.executable, path], cwd=HERE, capture_output=True,
                            text=True, env=env, timeout=600)
         last_line = next((ln for ln in reversed(r.stdout.strip().splitlines())
                           if ln.strip().startswith(f"core.{name}:")), "")
-        ok(f"P[{name}]: still fully green after wave 13's snapshot/router/"
-           f"tick edits (subprocess exit={r.returncode})",
+        ok(f"P[{name}]: still fully green after block 01-37's structured-door "
+           f"edits (subprocess exit={r.returncode})",
            r.returncode == 0, last_line or (r.stdout[-300:] + r.stderr[-300:]))
 
 
 def run_scenario_self_triage_guard():
-    """s3 first-honest-SIM lock: an UNCLASSIFIED message from the architect
-    ITSELF never spawns a new triage — it resolves its OWN in-flight triage
-    benignly (or drops as narration) — never the phantom-triage self-loop that
-    left the triage unresolved and wedged the architect busy at session-end.
-    A real worker's unclassified message STILL triages (GAP-E net intact)."""
+    """s3 first-honest-SIM lock: a REFUSED message from the architect ITSELF
+    never spawns a new triage — the architect narrating (a malformed/
+    prose-only line from its OWN turn) creates nothing, same R1a self-source
+    guard as before, re-expressed for the door-refusal path (`core.door.
+    refuse` short-circuits on the architect's own identity exactly like
+    `casestate.open_case`/`architect.enqueue_triage` already do). A real
+    worker's equivalent refusal STILL triages (GAP-E net intact)."""
     root = build_root()
     tron_ctx = _tron_ctx(root)
     eng = MiniEng(root, tron_ctx, worker_count=1)
     arch_id = architect.ARCHITECT_WID
-    mA = {"architect": {"status": "busy",
-                        "current_job": {"kind": "triage", "triage_id": "triage-1",
-                                        "worker_id": "engineer-01-03"}},
-          "architect_queue": []}
-    classify._triage_unclassified(
-        eng, mA, "Sorted: it's a branch declaration, no architect action.",
-        {"kind": "worker", "id": arch_id}, ["unclassified"])
-    ok("SG1 (SELF-SOURCE CREATION GUARD, R1a — must be GREEN): architect narration "
-       "of its own in-flight triage creates NOTHING — no new triage AND no verdict "
-       "write. The old source-AGNOSTIC benign 'answer' write is deleted: it swallowed "
-       "a GENUINE worker.wall the instant the architect narrated (M1). Resolution of "
-       "the in-flight triage is now the R1b architect-idle backstop, never narration",
-       not (mA.get("triage_verdicts") or {})
-       and len(mA.get("architect_queue") or []) == 0,
-       f"verdicts={mA.get('triage_verdicts')} queue={mA.get('architect_queue')}")
-    mB = {"architect": {"status": "idle", "current_job": None}, "architect_queue": []}
-    classify._triage_unclassified(
-        eng, mB, "help — I'm blocked on a missing local fixture dep",
-        {"kind": "worker", "id": "engineer-01-04"}, ["unclassified"])
-    ok("SG2 (SAFETY-NET PARITY — must be GREEN): a real worker's unclassified "
+    mA = {"architect_queue": []}
+    classify.classify(
+        eng, {"text": "Sorted: it's a branch declaration, no architect action.",
+              "sender": {"kind": "worker", "id": arch_id}},
+        mA)
+    ok("SG1 (SELF-SOURCE CREATION GUARD, R1a — must be GREEN): a refused "
+       "message FROM the architect's own identity creates NO new triage "
+       "case (open_case's own R1a guard fires, source-directional)",
+       len(mA.get("architect_queue") or []) == 0,
+       f"queue={mA.get('architect_queue')}")
+    mB = {"architect_queue": []}
+    classify.classify(
+        eng, {"text": "help — I'm blocked on a missing local fixture dep",
+              "sender": {"kind": "worker", "id": "engineer-01-04"}},
+        mB)
+    ok("SG2 (SAFETY-NET PARITY — must be GREEN): a real worker's refused "
        "message STILL enqueues an architect triage (GAP-E net intact)",
        len(mB.get("architect_queue") or []) == 1,
        f"queue={mB.get('architect_queue')}")

@@ -64,6 +64,7 @@ sys.path.insert(0, HERE)                                 # core/{gate,state,snap
 import grants               # noqa: E402 — respected contract, real, unmodified
 import trunk                 # noqa: E402 — respected contract, real, unmodified
 from ctx import Ctx          # noqa: E402 — engine/ctx.py, the real runtime-context resolver
+import architect              # noqa: E402 — core/architect.py, ARCHITECT_WID (door minters identity)
 import gate                  # noqa: E402 — core/gate.py, the DONE ladder core.tick drives
 import state                 # noqa: E402 — core/state.py
 import tick                  # noqa: E402 — core/tick.py, the module under test (+ its wave-6 wiring)
@@ -443,7 +444,8 @@ def main():
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in reconciled_reported:
             append_jsonl(tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             reconciled_reported.add(cur["block"])
 
     main_before = _git_out(["rev-parse", MAIN], root)

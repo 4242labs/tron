@@ -48,6 +48,7 @@ if _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
 import gate   # noqa: E402 — core/gate.py, the DONE-ladder stage constants (read-only vocabulary)
+import architect   # noqa: E402 — core/architect.py, ARCHITECT_WID (door minters identity, block 01-37 T9)
 
 MAIN = "main"
 PIPELINE_REL = "meta/pipeline.md"
@@ -411,7 +412,8 @@ class ScriptedDriver:
         if cur and cur.get("kind") == "reconcile" and cur.get("ordered") \
                 and cur.get("block") not in self.reconciled_reported:
             append_jsonl(self.tron_ctx.worker_inbox,
-                        {"tag": "architect.reconciled", "block": cur["block"]})
+                        {"tag": "architect.reconciled", "block": cur["block"],
+                         "agent_id": architect.ARCHITECT_WID})
             self.reconciled_reported.add(cur["block"])
 
     def react_architect_log(self, i, manifest):
