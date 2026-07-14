@@ -15,7 +15,7 @@ Preferred entry: the operator runs `/tron-clu` (see `install/README.md` — laun
    - **Merge-gate preflight (do this at boot, never discover it at the first merge):** whether agents can merge is PERMISSION-MODE-conditional, not a fixed law. In `bypassPermissions` the whole session inherits merge rights (Anthropic docs: parent bypass → subagents inherit and can't override; only explicit `ask` rules and root/home `rm -rf` still prompt — `gh pr merge` is NOT special-cased), so workers hand off *merged* PRs with no human gate. In `auto` mode subagents inherit auto and `gh pr merge` routes through the classifier that requires the operator's OWN turn — no agent, and no coordinator relay, can clear it. So at boot: verify the LIVE session mode (not `defaultMode` in settings — that's startup-only and can differ from the running mode), and if merges must be autonomous, get the run launched in bypass (`--dangerously-skip-permissions` / Shift-Tab) rather than resigning it to per-PR operator clicks. Also confirm scope = the FULL mandate (whole phase), and enumerate every human-only prerequisite in the queued blocks (required-check registration, Ask-user decisions) as one up-front checklist.
 3. Create the MANIFEST per `skills/skill-manifest.md` — run-state truth, survives context loss.
 4. Write the `.tron-clu-active` run flag and arm the PULSE per `skills/skill-pulse.md`. Run end goes through `skills/skill-session-end.md` — run log first, then the flag comes down.
-5. Load `skills/skill-voice.md` — voice is always-on; it does not reload situationally.
+5. Load `skills/skill-voice.md` (CLU's palette) and the shared law it points to, `../shared/skill-voice.md` — voice is always-on; it does not reload situationally.
 
 ## Invariants
 
@@ -56,7 +56,7 @@ Load the skill when its situation arises — don't carry them all at once.
 | `skills/skill-operator-comms.md` | Boot; every operator-relevant message |
 | `skills/skill-succession.md` | Worker unresponsive or dead |
 | `skills/skill-manifest.md` | Boot; format reference on state writes |
-| `skills/skill-voice.md` | Boot — held all run; palette + flourish limits |
+| `skills/skill-voice.md` | Boot — held all run; CLU's palette. Limits are shared law in `../shared/skill-voice.md` |
 
 ## Reporting
 
