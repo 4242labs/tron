@@ -23,10 +23,15 @@ rest, so a live L3 run has the full canon a real seeded project would.
 import os
 import shutil
 import stat
+import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))            # core/sim
 _CORE_DIR = os.path.dirname(_HERE)                              # core
 _APP_ROOT = os.path.dirname(_CORE_DIR)                            # tron-app root == canonical canon source
+
+if _CORE_DIR not in sys.path:
+    sys.path.insert(0, _CORE_DIR)
+import vocab   # noqa: E402 — core/vocab.py, T2's generated schema (write_schema)
 
 CANON_FILES = ("messages.yaml", "routing.yaml", "tron.md", "worker-contract.md")
 CANON_DIRS = ("prompts",)
@@ -76,5 +81,14 @@ def install_canon(inst_dir, app_root=_APP_ROOT):
     shutil.copy2(src_report, dst_report)
     _mkexec(dst_report)
     installed.append("scripts/report.sh")
+
+    # T2 (block 01-37): the generated vocab schema — NEVER copied from a
+    # static file (there is none to copy; `core/vocab.py` is the only
+    # source of truth) — materialized fresh at seed time, exactly like a
+    # real seeder would, so `core/engine.py::Engine.start`'s version
+    # handshake (AC-3) and `scripts/report.sh`'s own door (T3) both find it
+    # at the same seeded path a real instance ships it at.
+    vocab.write_schema(os.path.join(inst_dir, "vocab.schema.json"))
+    installed.append("vocab.schema.json")
 
     return installed

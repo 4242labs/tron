@@ -136,6 +136,7 @@ import architect            # noqa: E402 — core/architect.py, the persistent p
 import casestate              # noqa: E402 — core/casestate.py, wave 8's parked-case FSM (dispatch filter)
 import tick as core_tick       # noqa: E402 — core/tick.py, the whole per-tick pass
 import knobs as knobs_mod       # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
+import vocab                      # noqa: E402 — core/vocab.py, T2/T5's version handshake + emit-id set
 
 
 class BootupError(RuntimeError):
@@ -384,33 +385,56 @@ class Engine:
         UNMODIFIED — the reply-channel instruction lives there, once, never
         hand-rolled per call site here).
 
-        CRITICAL FALLBACK: a project that ships no canon (every `core/
-        *_rig.py` instance — no `messages.yaml`/`prompts/` on disk, the
-        scaffold every rig copies from) can't build a `Renderer` or render a
-        template at all — building it, or `render()` itself, raises
-        (`FileNotFoundError` off a missing `messages.yaml`, `KeyError` off
-        an unknown template id, `UnknownPrompt`, anything). THAT exception
-        is the signal this brick's canon-less rigs are running fallback:
-        `fallback_text` (the SAME inline text every call site emitted
-        before this method existed) is used VERBATIM, no reply-line, no
-        canon lookup — so every `core/*_rig.py` stays byte-for-byte
-        behaviorally identical. Delivery is IDENTICAL either way — the
-        fallback is a copy-source substitution only, never a second
-        delivery path. Never calls the model, never touches git — pure
-        text + mailbox."""
+        CRITICAL FALLBACK (narrowed, block 01-37 T5/AC-6): a project that
+        ships no canon at all (every `core/*_rig.py` instance — no
+        `messages.yaml`/`prompts/` on disk, the scaffold every rig copies
+        from) can't even BUILD a `Renderer` — that construction failure
+        alone is the signal this brick's canon-less rigs are running
+        fallback: `fallback_text` (the SAME inline text every call site
+        emitted before this method existed) is used VERBATIM, no
+        reply-line, no canon lookup — so every canon-less `core/*_rig.py`
+        stays byte-for-byte behaviorally identical. This is the ONLY
+        fallback left: once a `Renderer` exists (real canon is on disk),
+        `.render(template_id, slots)` raising — an unknown/removed
+        template — is NEVER swallowed into `fallback_text` any more (the
+        deleted silent swallow, R2/T5): it raises LOUD, past this method,
+        after bumping the must-be-zero `emit_missing_template` counter on
+        whatever live manifest this pass is holding (`self._manifest`,
+        R-A) — a mutation deleting one template entry must make `emit`
+        raise, never fabricate a placeholder. `template_id` itself is
+        checked against `vocab.EMIT_TEMPLATE_IDS` BEFORE either of the
+        above even runs: a literal typo/removed constant fails at THIS
+        call, not three frames down inside the renderer."""
+        if template_id not in vocab.EMIT_TEMPLATE_IDS:
+            raise vocab.UnknownTemplateError(
+                f"core.engine.Engine.emit: {template_id!r} is not a member of "
+                f"vocab.EMIT_TEMPLATE_IDS — every call site must reference a "
+                f"vocab.TPL_* constant (T5)")
+
         slots = dict(slots or {})
         if worker_id:
             slots.setdefault("worker_id", worker_id)
         slots.setdefault("report", self.ctx.p("scripts", "report.sh"))
         slots.setdefault("contract", self.ctx.worker_contract)
 
-        try:
-            if self._renderer is None:
+        if self._renderer is None:
+            try:
                 from render import Renderer   # engine/render.py — respected contract, unmodified
                 self._renderer = Renderer(self.ctx)
-            line = self._renderer.render(template_id, slots)
-        except Exception:
+            except Exception:
+                self._renderer = False   # sentinel: no canon on disk — permanent fallback, this eng
+
+        if self._renderer is False:
             line = fallback_text
+        else:
+            try:
+                line = self._renderer.render(template_id, slots)
+            except Exception:
+                if self._manifest is not None:
+                    counters = self._manifest.setdefault("counters", {})
+                    counters["emit_missing_template"] = counters.get(
+                        "emit_missing_template", 0) + 1
+                raise
 
         if worker_id and not self.dry:
             self._to_worker(worker_id, line, kind or template_id)
@@ -608,6 +632,16 @@ class Engine:
                 "engine: bootup A6/A7 — a session is already live for this instance "
                 "(manifest['session']['started_at'] on file) — stop it first; bootup "
                 "is not re-entrant onto a live session in this brick")
+
+        # T2/AC-3 — the vocab version handshake: checked BEFORE anything else
+        # runs (spawn-time, per the ADR — "a failed handshake at spawn is
+        # loud and counted, never a silent fallback"). `vocab.check_handshake`
+        # raises `vocab.HandshakeError` (uncaught, propagated exactly like
+        # `BootupError` above) and — when a real `EventLog`-shaped
+        # `self.events` is wired — records the must-be-zero
+        # `vocab_version_handshake_failed` event durably before this call
+        # ever returns.
+        vocab.check_handshake(self.ctx.vocab_schema, events=self.events)
 
         self._models = dict(models or {})
         self.paths["worker_count"] = max(1, int(worker_count or 1))

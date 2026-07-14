@@ -26,6 +26,15 @@ class Ctx:
         return self.p("messages.yaml")
 
     @property
+    def vocab_schema(self):
+        # block 01-37 T2: the GENERATED (never hand-committed) schema artifact
+        # `core/vocab.py::write_schema` materializes at seed time — `core/
+        # vocab.py::check_handshake` reads it back at spawn (`core/engine.py::
+        # Engine.start`) to prove this instance's vocabulary matches the
+        # running engine's own `vocab.VERSION`.
+        return self.p("vocab.schema.json")
+
+    @property
     def tron_md(self):
         return self.p("tron.md")
 

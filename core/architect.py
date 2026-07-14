@@ -127,6 +127,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import gitobs     # noqa: E402 — core/gitobs.py, the ONE git-observation seam
+import vocab      # noqa: E402 — core/vocab.py, emit template-id constants (block 01-37, T5/T7)
 import landing    # noqa: E402 — core/landing.py, Wave-1's ONE landing primitive
 import pipeline   # noqa: E402 — core/pipeline.py, in_flight_blocks (dedupe read)
 import casestate  # noqa: E402 — core/casestate.py, parked_blocks (dedupe read)
@@ -345,8 +346,9 @@ def _order_triage(eng, job):
            f"scope_forward|answer|operator[, note]).")
     if not eng.dry:
         eng.emit(
-            "arch.triage", text,
-            slots={"detail": job.get("detail"), "sender": job.get("source")},
+            vocab.TPL_ARCH_TRIAGE, text,
+            slots={"detail": job.get("detail"), "sender": job.get("source"),
+                  "triage_id": job["triage_id"]},
             worker_id=ARCHITECT_WID,
             kind="arch.triage")
     job["ordered"] = True
@@ -367,7 +369,14 @@ def _order_triage(eng, job):
 # `read_hwm(ARCH) >= dispatch_seq` read, R-D) — see this module's own
 # module-docstring cross-reference and `adr-0009-architect-turn-completion-
 # invariant.md` §3/§6 for the full design.
-_LOW_CONFIDENCE_TRIAGE_SOURCES = frozenset({"classify.unclassified"})
+#
+# `_LOW_CONFIDENCE_TRIAGE_SOURCES` (the R1b idle-GUESS's own genuine/
+# low-confidence source split) is DELETED here (block 01-37, T10,
+# ADR-0012 §6(b)) along with the guess itself (`_advance_triage`, below) —
+# structured-only reporting means a settled architect turn always carries a
+# real verdict; the classify-layer `unclassified` source this constant
+# named no longer exists either (T8 retired the free-text grader that
+# produced it).
 
 # R-C/R-E/R-G tunables (ordering constraint, R-G): RESPAWN_CAP * (respawn-
 # settle + turn-latency) < NO_PROGRESS_BUDGET < the run's own wall-clock
@@ -681,16 +690,37 @@ def _advance_triage(eng, manifest, job):
                     _advance_delivery(eng, manifest, job)
                 return
             _reset_delivery_state(job)   # R-G: genuine delivery flip — reset the budget
-            genuine = job.get("source") not in _LOW_CONFIDENCE_TRIAGE_SOURCES
-            job["verdict"] = "operator" if genuine else "answer"
-            job["note"] = (
-                f"architect's order was DELIVERED (read_hwm >= dispatch_seq, R-D) "
-                f"with no structured triage_verdict (source={job.get('source')!r}) -> "
-                + ("LOUD 'operator' backstop — a genuine escalation is never "
-                   "swallowed (R1b)" if genuine else
-                   "benign 'answer' backstop — a low-confidence phantom never "
-                   "wedges session-end (R1b)"))
-            eng.log("flow", f"architect[triage:{job['triage_id']}]: {job['note']}")
+            # T10 (ADR-0012 §6(b), the guess-from-silence backstop DELETED):
+            # under structured-only + the closed verdict wire (T9), a
+            # genuinely completed architect turn always carries a real
+            # `report.sh --tag verdict ...` reply — R1b's old idle-GUESS
+            # (fabricating "operator"/"answer" from `job.get("source")`
+            # alone) is now dead code by the design's own premise, and
+            # worse, a content guess. A settled turn with NO structured
+            # verdict is instead a genuine delivery gap: bounded RE-ORDER
+            # (the SAME `RESPAWN_CAP` idiom R-C already uses for a stuck
+            # DELIVERY, reused rather than a second cap), never a guess;
+            # past the cap, the operator is paged LOUD (never fabricated
+            # content) — "a truly-dead architect surfaces via the liveness
+            # budget as a page" (supersedes the HANDOVER "R1b byte-for-byte"
+            # note per ADR §6(b)).
+            reorders = job.get("_verdict_reorders", 0) + 1
+            job["_verdict_reorders"] = reorders
+            if reorders > RESPAWN_CAP:
+                job["verdict"] = "operator"
+                job["note"] = (
+                    f"architect's triage order (triage_id={job['triage_id']!r}) was "
+                    f"DELIVERED and re-ordered {reorders} time(s) with NO structured "
+                    f"architect.triage_verdict ever routed — never guessed; paged "
+                    f"LOUD instead (T10)")
+                eng.log("flow", f"architect[triage:{job['triage_id']}]: {job['note']}")
+            else:
+                eng.log("flow", f"architect[triage:{job['triage_id']}]: order "
+                                f"DELIVERED with no structured verdict yet (re-order "
+                                f"{reorders}/{RESPAWN_CAP}) — re-ordering, never guessing")
+                job["ordered"] = False
+                _order_triage(eng, job)
+                return
         else:
             _reset_delivery_state(job)   # R-G: a routed report proves delivery too
             verdict = v.get("verdict")
@@ -814,8 +844,8 @@ def _advance_forward(eng, manifest, job):
                f"Author it on {branch} (meta/blocks/{block}.md, Status: 📋 To do) "
                f"and push — I land it once it resolves.")
         if not eng.dry:
-            eng.emit("arch.forward", text, slots={"block": block},
-                    worker_id=ARCHITECT_WID, kind="arch.forward")
+            eng.emit(vocab.TPL_ARCH_FORWARD, text, slots={"block": block},
+                    worker_id=ARCHITECT_WID, kind=vocab.TPL_ARCH_FORWARD)
         job["ordered"] = True
         _stamp_dispatch(eng, job, text, "arch.forward")   # ADR-0009 R-B
         eng.log("flow", f"architect[forward:{block}]: ordered authoring on {branch} "
@@ -975,9 +1005,9 @@ def _order_reconcile(eng, job):
            f"{job.get('after')!r}'s just-landed drift and report "
            f"architect.reconciled once clear.")
     if not eng.dry:
-        eng.emit("arch.reconcile", text,
+        eng.emit(vocab.TPL_ARCH_RECONCILE, text,
                 slots={"block": job["block"], "after": job.get("after")},
-                worker_id=ARCHITECT_WID, kind="arch.reconcile")
+                worker_id=ARCHITECT_WID, kind=vocab.TPL_ARCH_RECONCILE)
     job["ordered"] = True
     _stamp_dispatch(eng, job, text, "arch.reconcile")   # ADR-0009 R-B
 
@@ -1073,4 +1103,37 @@ def advance(eng, manifest):
             _advance_triage(eng, manifest, job)
         eng.log("flow", f"architect: dispatch {job}")
 
+    # T7 (block 01-37, R5) — the batched visibility-flag digest: sent the
+    # next time the architect is IDLE (whether or not a new job was JUST
+    # popped above — sending it here, unconditionally on idle, never makes
+    # it wait a whole extra tick behind a fresh job). Purely informational:
+    # never a job of its own, never blocks/consumes the architect's queue
+    # throughput, never pages.
+    if arch["status"] == "idle":
+        _send_flag_digest(eng, manifest)
+
     return {"status": arch["status"], "current_job": arch.get("current_job")}
+
+
+def _send_flag_digest(eng, manifest):
+    """T7 — batch every `worker.flag` recorded since the last digest
+    (`core/router.py::_route_flag` appends to `manifest["architect_flags"]`)
+    into ONE `arch.flags` order, never one order per flag (R5: "a chatty
+    worker cannot starve real triage"). A no-op when nothing is pending.
+    Pages no one, opens no case, expects no reply — purely informational;
+    the durable, operator-readable record is `manifest["flag_ledger"]`
+    (`core/router.py`'s own append, untouched here)."""
+    flags = manifest.get("architect_flags") or []
+    if not flags:
+        return
+    manifest["architect_flags"] = []
+    lines = "\n".join(
+        f"  - block={f.get('block') or '(none)'} worker={f.get('worker_id')!r}: "
+        f"{f.get('detail')}" for f in flags)
+    text = (f"[TRON]  architect — VISIBILITY DIGEST ({len(flags)} flagged since "
+           f"the last digest, surfaced non-paging, R5):\n{lines}")
+    if not eng.dry:
+        eng.emit(vocab.TPL_ARCH_FLAGS, text, slots={"detail": lines},
+                 worker_id=ARCHITECT_WID, kind=vocab.TPL_ARCH_FLAGS)
+    eng.log("flow", f"architect: sent visibility digest for {len(flags)} "
+                    f"flag(s) — pages no one")

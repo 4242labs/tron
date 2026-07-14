@@ -3,29 +3,26 @@
 `build(eng) -> Snapshot` performs the WHOLE observe phase in one call
 (contracts/blueprint-contracts.md §5's "load MANIFEST → ... → build
 snapshot"): `core.state.load` (fresh manifest off disk), drain
-`ctx.worker_inbox` (`tag`+`slots` structured JSON lines, resolved without the
-model, PLUS free-text `{text, sender}` lines — the ONE real classify_message
-call, per line — since wave 13, `core/classify.py`), then one `core.gitobs`
-trunk-tip read. Nothing here is retained between ticks — `core.tick.tick`
-discards the `Snapshot` at tick end; this module keeps no module-level state
-of its own.
+`ctx.worker_inbox` (`tag`+`slots` structured JSON lines — a tag-less line
+declaring a `branch` is the one other structural shape, T3), then one
+`core.gitobs` trunk-tip read. Nothing here is retained between ticks —
+`core.tick.tick` discards the `Snapshot` at tick end; this module keeps no
+module-level state of its own.
 
-Wave 13 (`core/classify.py`): EVERY drained line — structured or free-text —
-is resolved to its `(tag, slots)` HERE, in this SAME observe pass, via
-`classify.classify(eng, rep, manifest)`: a structured line (already carrying
-its own `tag`) resolves deterministically, the model never consulted
-(`classify.py`'s own structured-bypass check, first); a genuinely free-text
-line is the one place per tick the model is touched. This is what pins the
-model to OBSERVE and keeps `decide`/`act`/`route` pure: by the time `core/
-router.py::route` or `core/gate.py::advance` ever sees a `worker_reports`
-entry, its `tag` is ALREADY resolved — neither module imports `classify`
-or `engine/judge.py`, and calls it never. `slots.block`/`slots.agent_id`
-(the shape `classify_message`'s own contract pulls a block id / agent id
-INTO, per `routing.yaml`'s `tools:` entry) are promoted to the report's
-top level when the line didn't already carry one, so a classify-derived
-`worker.done` line reads identically to a hand-written structured one to
-every downstream reader (`local_reports`, below, `core/router.py`'s own
-`_route_online`/`_route_wall`/`_route_decision`).
+Block 01-37 (T3/T8): EVERY drained line is resolved to its `(tag, slots)`
+HERE, in this SAME observe pass, via `classify.classify(eng, rep,
+manifest)` — structurally, off `core/vocab.py`'s closed vocabulary; the
+free-text GRADER is retired (§6(b)), so nothing here ever touches a model.
+A line the admission door refuses resolves to `(None, None)` and is DROPPED
+from `worker_reports` entirely (see `_classify_reports`'s own docstring) —
+by the time `core/router.py::route` or `core/gate.py::advance` ever sees a
+`worker_reports` entry, its `tag` is a real vocab member, ALREADY resolved
+— neither module imports `classify`/`door`/`vocab`, and calls neither.
+`vocab.PROMOTED_SLOT_KEYS` are promoted to the report's top level when the
+line didn't already carry one, so a classify-derived `worker.done` line
+reads identically to a hand-written structured one to every downstream
+reader (`local_reports`, below, `core/router.py`'s own `_route_online`/
+`_route_wall`/`_route_decision`).
 
 The inbox drain follows the SAME at-least-once idiom `engine/fsm.py::
 _claim_inboxes` uses (learned by reading, re-expressed fresh here — never
@@ -70,7 +67,8 @@ if _HERE not in sys.path:
 # note (it re-imports "state" too — same cached module, no re-resolution).
 import state    # noqa: E402 — core/state.py
 import gitobs   # noqa: E402 — core/gitobs.py, the ONE git-observation seam
-import classify # noqa: E402 — core/classify.py, wave 13's ONE LLM seam, run HERE (observe)
+import classify # noqa: E402 — core/classify.py, the structured-only door resolver, run HERE (observe)
+import vocab    # noqa: E402 — core/vocab.py, PROMOTED_SLOT_KEYS (block 01-37, T9)
 
 
 Snapshot = collections.namedtuple(
@@ -120,26 +118,38 @@ def _drain_inbox(ctx, log):
 
 
 def _classify_reports(eng, manifest, raw_reports):
-    """Wave 13: resolve EVERY drained line to its `(tag, slots)` here, in the
-    observe pass — `core.classify.classify` does the structured-bypass check
-    internally (a line already carrying a `tag` never touches the model);
-    a free-text line is the one real classify_message call. `slots.block`/
-    `slots.agent_id` (classify_message's own contract pulls these INTO
-    slots) are promoted to the report's top level when the line didn't
-    already carry one of its own, so a classify-derived report reads
-    identically to a hand-written structured one to every downstream reader
-    (`local_reports` below, `core/router.py`'s own per-tag handlers)."""
+    """Block 01-37 (T3/T8): resolve EVERY drained line to its `(tag, slots)`
+    here, in the observe pass — `core.classify.classify` does the
+    structured-bypass check internally (a line already carrying a `tag`
+    never touches a model — the free-text GRADER is retired; every
+    resolution is now structural or a door refusal, never an LLM guess).
+    `classify.classify` returns `(None, None)` for a line the admission
+    door already fully handled (refused: recorded + an architect-first case
+    opened, `core.door.refuse`) — such a line is DROPPED from the returned
+    list entirely, never handed to `core/router.py::route` as a report (its
+    own docstring: "never double-cased with a door refusal" — the router's
+    T4 catch-all is a separate backstop for a tag that bypasses THIS door,
+    not a second handler for one this door already refused).
+
+    `vocab.PROMOTED_SLOT_KEYS` (T9, ADR-0011 S-2 lock 4, generalized from
+    the salvage `PROMOTED_SLOT_KEYS` constant) are promoted to the report's
+    top level when the line didn't already carry one of its own, so a
+    classify-derived report reads identically to a hand-written structured
+    one to every downstream reader (`local_reports` below, `core/router.py`
+    's own per-tag handlers — `_route_architect_triage_verdict` included,
+    which reads `triage_id`/`verdict` at TOP level)."""
     resolved = []
     for rep in raw_reports:
         tag, slots = classify.classify(eng, rep, manifest)
+        if tag is None:
+            continue   # door-refused (T3/T8) — already fully handled, never routed
         out = dict(rep)
         out["tag"] = tag
         merged_slots = {**(rep.get("slots") or {}), **(slots or {})}
         out["slots"] = merged_slots
-        if "block" not in out and merged_slots.get("block"):
-            out["block"] = merged_slots["block"]
-        if "agent_id" not in out and merged_slots.get("agent_id"):
-            out["agent_id"] = merged_slots["agent_id"]
+        for key in vocab.PROMOTED_SLOT_KEYS:
+            if key not in out and merged_slots.get(key):
+                out[key] = merged_slots[key]
         # IDENTITY BRIDGE: a REAL worker report (scripts/report.sh, or the
         # courier's harvested turn-output) carries the worker id ONLY in
         # `sender.id` — `report.sh` writes `sender:{kind:"worker",id:<wid>}`

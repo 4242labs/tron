@@ -102,6 +102,7 @@ import casestate    # noqa: E402 — core/casestate.py, wave 8's parked-case FSM
 import reviewers    # noqa: E402 — core/reviewers.py, wave 10's DONE-REVIEW gate
 import liveness     # noqa: E402 — core/liveness.py, wave 11's worker-silence side-system
 import architect    # noqa: E402 — core/architect.py, block-less wall -> architect-first triage
+import vocab        # noqa: E402 — core/vocab.py, the closed tag set (block 01-37, T4/T7)
 
 
 def route(eng, manifest, worker_reports):
@@ -141,7 +142,25 @@ def route(eng, manifest, worker_reports):
             reviewers.on_review_done(eng, manifest, rep)
         elif tag == "architect.triage_verdict":
             _route_architect_triage_verdict(eng, manifest, rep)
-        # else: worker.done and anything else — not this module's concern.
+        elif tag == "worker.flag":
+            _route_flag(eng, manifest, rep)
+        elif tag in ("worker.done", "worker.branch", "worker.recorded", "unclassified"):
+            pass   # `worker.done`/`worker.recorded`: core/gate.py's own local_reports
+                   # concern (core/snapshot.py); `worker.branch`: handled below by
+                   # `_open_gate_if_branch`; `unclassified`: already recorded + cased
+                   # by `core/classify.py`'s own admission door (T3/T8) — a report
+                   # only ever reads this tag when a caller bypasses that door and
+                   # hands `router.route` a pre-tagged `unclassified` report directly
+                   # (a rig), never double-handled here.
+        else:
+            # T4/AC-5: an unknown/unroutable tag that reaches THIS module — never
+            # resolved by `core/classify.py`'s own admission door (a rig, or a real
+            # vocab tag `core/vocab.py::TAGS` declares that this dispatch chain
+            # forgot to wire) — becomes a CASE, never a silent drop (closes the D1
+            # class: a fat-fingered `--tag walls` today vanishes). A SEPARATE
+            # backstop from the door's own refusal path (`core/classify.py`'s
+            # docstring) — never double-cased with one.
+            _route_catch_all(eng, manifest, rep)
         # AFTER the per-tag dispatch: open the gate as soon as a branch is
         # known — for ANY report carrying one (the online report in the rig's
         # one-phase path; a later branch/done declaration in a real worker's
@@ -410,3 +429,48 @@ def _route_decision(eng, manifest, rep):
                         f"never crashes, never guesses a case")
         return
     casestate.settle(eng, manifest, case_id, verb, note=note)
+
+
+def _route_flag(eng, manifest, rep):
+    """`worker.flag` (T7, R5) — the surfaced, NON-PAGING visibility word:
+    replaces the deleted `worker.progress` do-nothing route (`{side: none}`
+    — "there is no do-nothing route" any more). Two durable writes, both
+    append-only:
+      `manifest["flag_ledger"]` — the operator-readable ledger (every flag
+      ever sent, forensically preserved — never trimmed here);
+      `manifest["architect_flags"]` — the BATCHED pending-digest queue
+      `core/architect.py::advance` drains as ONE order (`arch.flags`) the
+      next time the architect is idle, never one order per flag (R5: "a
+      chatty worker cannot starve real triage").
+    Never opens a case, never pages — `worker.flag` is `PROGRESS`-classed in
+    `core/vocab.py` precisely so it can never collide with a genuine wall
+    under the T6 partition."""
+    worker_id = rep.get("agent_id") or rep.get("worker_id")
+    slots = rep.get("slots") or {}
+    detail = slots.get("detail") or (rep.get("text") or "").strip() or "(no detail)"
+    block = (manifest.get("workers") or {}).get(worker_id or "", {}).get("block")
+    entry = {"worker_id": worker_id, "block": block, "detail": detail,
+             "at": rep.get("at")}
+    manifest.setdefault("flag_ledger", []).append(entry)
+    manifest.setdefault("architect_flags", []).append(entry)
+    eng.log("flow", f"router: worker.flag from {worker_id!r} (block={block!r}) "
+                    f"— ledgered + queued for the architect's next batched digest, "
+                    f"pages no one: {detail!r}")
+
+
+def _route_catch_all(eng, manifest, rep):
+    """T4/AC-5: an unknown/unroutable tag reaching `route()` — never resolved
+    by `core/classify.py`'s own admission door — becomes a CASE, never a
+    silent drop (closes the D1 class). Bumps the must-be-zero
+    `router_catch_all` counter (01-39 owns the partition/acceptance-read;
+    this block only writes it and proves it fires — T4)."""
+    tag = rep.get("tag")
+    worker_id = rep.get("agent_id") or rep.get("worker_id")
+    counters = manifest.setdefault("counters", {})
+    counters["router_catch_all"] = counters.get("router_catch_all", 0) + 1
+    block = (manifest.get("workers") or {}).get(worker_id or "", {}).get("block")
+    detail = (f"router: unrecognized/unroutable tag {tag!r} reached route() — "
+             f"never routed, never silently dropped (T4): {rep!r}")
+    eng.log("flow", f"router: CATCH-ALL fired — {detail}")
+    casestate.open_case(eng, manifest, block, "router.catch_all", detail,
+                        worker_id=worker_id, kind="catch_all")
