@@ -1,6 +1,6 @@
 ---
 name: skill-linear-cards
-description: This project's instance of the canon Linear-cards skill — fills the concrete team/project/label/state values; structure, custody model, and constraints live in canon.
+description: Project instance of the canon Linear-cards skill — fills team/project/state values; full structure and custody live in canon.
 source: canon
 canon_version: HEAD
 ---
