@@ -52,6 +52,7 @@ import classify                        # noqa: E402 — core/classify.py, the re
 import router                          # noqa: E402 — core/router.py, the real operator.decision route
 import operator_proxy as op            # noqa: E402 — core/sim/operator_proxy.py, unit under test
 import intake                          # noqa: E402 — core/intake.py, block 01-38 T1's private per-agent intake
+import vocab                           # noqa: E402 — core/vocab.py, OPERATOR kind (block 01-38 T2's typed Origin)
 
 _results = []
 
@@ -230,7 +231,8 @@ def main():
     manifest = {"cases": {"CASE-E1": _op_case("CASE-E1")}}
     op.tick(eng, manifest, set(), {}, decide_fn=lambda c: {"verb": "resume", "note": "unblock"})
     msg = _last_line(eng.ctx)
-    tag, slots = classify.classify(eng, msg, manifest)
+    tag, slots = classify.classify(
+        eng, intake.Origin(vocab.OPERATOR, op._OPERATOR_PROXY_WID), msg, manifest)
     ok("E1a: the injected line classifies as operator.decision via the real structured bypass",
        tag == "operator.decision" and slots.get("case_id") == "CASE-E1" and slots.get("verb") == "resume",
        f"tag={tag} slots={slots}")
@@ -244,7 +246,8 @@ def main():
     manifest = {"cases": {"CASE-E2": _op_case("CASE-E2", block="01-07")}}
     op.tick(eng, manifest, set(), {}, decide_fn=lambda c: {"verb": "abandon", "note": "out of scope"})
     msg = _last_line(eng.ctx)
-    tag, slots = classify.classify(eng, msg, manifest)
+    tag, slots = classify.classify(
+        eng, intake.Origin(vocab.OPERATOR, op._OPERATOR_PROXY_WID), msg, manifest)
     router._route_decision(eng, manifest, {"tag": tag, "slots": slots})
     ok("E2: injected abandon settles via the real path — case cleared AND block in abandoned_blocks",
        "CASE-E2" not in manifest.get("cases", {})

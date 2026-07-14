@@ -90,6 +90,7 @@ import reviewers              # noqa: E402 — core/reviewers.py, the module und
 import architect               # noqa: E402 — core/architect.py, the log-review job kind under test
 import router                  # noqa: E402 — core/router.py, the ASSIGN handshake (reviewer-skip under test)
 import intake                   # noqa: E402 — core/intake.py, block 01-38 T1's private per-agent intake
+import vocab                     # noqa: E402 — core/vocab.py, WORKER kind (block 01-38 T2's typed Origin)
 
 import scaffold_src               # noqa: E402 — core/scaffold_src.py, the ONE resolver
 
@@ -938,7 +939,8 @@ def run_scenario_d_review_done_type_derive():
     manifest = {"workers": {aid: {"block": reviewers.review_block("code"),
                                   "type": "code", "status": "reviewing", "wid": aid}}}
     reviewers.on_review_done(
-        eng, manifest, {"tag": "worker.review_done", "agent_id": aid})  # NO type
+        eng, manifest, {"tag": "worker.review_done",
+                        "origin": intake.Origin(vocab.WORKER, aid)})  # NO type
     ok("D-TYPE (REVIEW-DONE TYPE-DERIVE LOCK — must be GREEN): a review_done "
        "with no parsed `type`, from a reviewer on file, is accepted (type "
        "derived from its worker record) not dropped — status held, not lost",
@@ -966,7 +968,7 @@ def run_scenario_e_reviewer_never_build_assigned():
                      "status": "reviewing", "wid": aid}}
     manifest = {"workers": workers, "gates": {}}
     router._route_online(eng, manifest, workers, manifest["gates"],
-                        {"tag": "worker.online", "agent_id": aid,
+                        {"tag": "worker.online", "origin": intake.Origin(vocab.WORKER, aid),
                          "slots": {"branch": "feat/should-not-be-asked-for"}})
     to_reviewer = [o for o in eng.orders if o[0] == aid]
     build_orders = [o for o in to_reviewer
@@ -988,7 +990,7 @@ def run_scenario_e_reviewer_never_build_assigned():
     ew = {eid: {"block": "01-02", "block_file": "meta/blocks/01-02.md", "status": "spawned"}}
     m2 = {"workers": ew, "gates": {}}
     router._route_online(eng, m2, ew, m2["gates"],
-                        {"tag": "worker.online", "agent_id": eid})
+                        {"tag": "worker.online", "origin": intake.Origin(vocab.WORKER, eid)})
     eng_build = [o for o in eng.orders if o[0] == eid and "build it end to end" in (o[1] or "")]
     ok("E-K3 (ENGINEER-STILL-ASSIGNED — scope guard): an ordinary engineer's "
        "worker.online DOES still get the build-ASSIGN + is marked assigned — the "
@@ -1004,7 +1006,7 @@ def run_scenario_e_reviewer_never_build_assigned():
                 "status": "spawned"}}
     m3 = {"workers": cw, "gates": {}}
     router._route_online(eng, m3, cw, m3["gates"],
-                        {"tag": "worker.online", "agent_id": cid})
+                        {"tag": "worker.online", "origin": intake.Origin(vocab.WORKER, cid)})
     colon_build = [o for o in eng.orders if o[0] == cid and "build it end to end" in (o[1] or "")]
     ok("E-K4 (STRAY-COLON-IS-STILL-A-BUILD KILLER — must be GREEN): an engineer "
        "block id containing a stray ':' (not a `review:` prefix) still gets the "
@@ -1020,7 +1022,7 @@ def run_scenario_e_reviewer_never_build_assigned():
     rw = {aid: {"block": reviewers.review_block("code"), "type": "code",
                 "status": "reviewing", "wid": aid, "assigned": True}}
     router._open_gate_if_branch(eng, rw, gates,
-                               {"tag": "worker.online", "agent_id": aid,
+                               {"tag": "worker.online", "origin": intake.Origin(vocab.WORKER, aid),
                                 "slots": {"branch": "feat/reviewer-should-not-gate"}})
     ok("E-K5 (REVIEWER-NEVER-GATED KILLER — must be GREEN): a reviewer report "
        "carrying a stray branch does NOT open a gate.local — no `review:<type>` "

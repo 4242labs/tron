@@ -42,17 +42,16 @@ import vocab       # noqa: E402 — core/vocab.py, the ONE closed vocabulary
 import casestate    # noqa: E402 — core/casestate.py, the parked-case FSM (reused, never forked)
 
 
-def admit(tag, slots, msg, architect_wid):
+def admit(tag, slots, origin):
     """Pure predicate: `(ok, reason)`. `ok=False` iff `tag` is not a known
-    vocab tag, `msg`'s resolved origin is not a legal minter of `tag`
-    (ADR-0011 S-1), or the report combines a progress-advancing and a
-    blocking class signal (R5/T6, `vocab.classes_conflict` — the
-    enumerated partition over every (tag, slot) pair, not just one seen
-    pair). `msg` is the FULL drained report dict (see `vocab.resolve_
-    origin` — a scripted rig's bare top-level `agent_id` is equally valid
-    ambient identity, never just `sender`). Never touches `manifest`/`eng`
-    — the caller decides what a refusal DOES; this only decides whether
-    one occurred."""
+    vocab tag, `origin` (the typed `core.intake.Origin` the door resolved
+    for this report — block 01-38 T1/T2, never derived from the message
+    body) is not a legal minter of `tag` (ADR-0011 S-1), or the report
+    combines a progress-advancing and a blocking class signal (R5/T6,
+    `vocab.classes_conflict` — the enumerated partition over every (tag,
+    slot) pair, not just one seen pair). Never touches `manifest`/`eng` —
+    the caller decides what a refusal DOES; this only decides whether one
+    occurred."""
     if tag not in vocab.TAGS:
         return False, (f"unknown tag {tag!r} — not in the closed vocabulary. "
                        f"Legal --tag values:\n{vocab.legal_set_text()}")
@@ -69,13 +68,10 @@ def admit(tag, slots, msg, architect_wid):
     # classify at all. There is no impersonation surface to close for a
     # verb-less tag, so minters is not enforced here for one — enforcing it
     # anyway would refuse every existing operator-settle-adjacent rig
-    # against an identity shape (`sender.kind: "operator"`) the operator
+    # against an identity shape (`origin.kind == OPERATOR`) the operator
     # channel doesn't structurally provide yet.
-    if vocab.TAGS[tag].verb is not None and not vocab.minters_ok(tag, msg, architect_wid):
-        origin = vocab.resolve_origin(msg, architect_wid)
-        return False, (f"tag {tag!r} may not be minted by origin {origin!r} "
-                       f"(sender={(msg or {}).get('sender')!r}, "
-                       f"agent_id={(msg or {}).get('agent_id')!r}) — legal "
+    if vocab.TAGS[tag].verb is not None and not vocab.minters_ok(tag, origin):
+        return False, (f"tag {tag!r} may not be minted by origin {origin!r} — legal "
                        f"minters: {sorted(vocab.TAGS[tag].minters)}")
     if vocab.classes_conflict(tag, (slots or {}).keys()):
         return False, (f"report combines a progress-advancing and a blocking "
@@ -84,21 +80,25 @@ def admit(tag, slots, msg, architect_wid):
     return True, None
 
 
-def refuse(eng, manifest, sender, attempted_tag, raw_text, reason, worker_id=None):
-    """Record a door refusal durably (R2: full text + sender, never just a
+def refuse(eng, manifest, origin, attempted_tag, raw_text, reason):
+    """Record a door refusal durably (R2: full text + origin, never just a
     count) and open a case via the SAME architect-first path a `worker.
     wall` already uses — reused wholesale, never forked, so a refusal
     inherits triage, the reping floor, and session-end open-case detection
-    for free. `manifest` may carry no durable `workers[worker_id]["block"]`
-    binding yet (a malformed report from a not-yet-ASSIGNED sender) — the
+    for free. `origin` is the typed `core.intake.Origin` the door resolved
+    for this report (block 01-38 T2 — never a message-borne `sender`
+    field). `manifest` may carry no durable `workers[origin.id]["block"]`
+    binding yet (a malformed report from a not-yet-ASSIGNED channel) — the
     case is minted block-less in that case (`casestate.open_case(block=
     None, ...)`, the identical fallback `core/router.py::_route_wall`
     already uses for an unmapped worker)."""
     text = (raw_text or "")[:2000]
-    eng.log("flow", f"door: REFUSED a report from sender={sender!r} "
+    worker_id = origin.id if origin else None
+    eng.log("flow", f"door: REFUSED a report from origin={origin!r} "
                     f"attempted_tag={attempted_tag!r} — {reason} — raw={text!r}")
-    eng.events.event("door_refusal", sender=sender, attempted_tag=attempted_tag,
-                     reason=reason, raw=text)
+    eng.events.event("door_refusal",
+                     origin={"kind": origin.kind, "id": origin.id} if origin else None,
+                     attempted_tag=attempted_tag, reason=reason, raw=text)
     if manifest is None:
         return None
     durable_block = (manifest.get("workers") or {}).get(worker_id or "", {}).get("block")

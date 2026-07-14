@@ -243,16 +243,20 @@ def touch(workers, gates, rep):
     tick" fact `sweep` (below) turns into a fresh `last_seen` reading once
     per tick, off the ONE clock reading that call mints.
 
-    Resolution: `agent_id` (or `worker_id`) directly off the report when
-    present — `worker.online`, `worker.wall`, `worker.progress`, `worker.
-    review_done` all carry one. `worker.done` is the ONE report shape that
-    names a `block` instead (no `agent_id` — `core/gate.py`'s own
-    `local_report` contract never required one) — resolved back to that
-    block's OWN gate-recorded `wid`, exactly the same "the worker names
-    itself; the engine only ever records what it reports" discipline `core/
-    router.py::_route_online`'s ASSIGN already keeps. Any other structured
-    tag (`operator.decision`, `architect.reconciled`) names no WORKER of its
-    own and is left untouched — never guessed at.
+    Resolution (block 01-38 T2 — the root invariant): the typed `origin`
+    (`rep.get("origin")`, a `core.intake.Origin`, threaded out-of-band by
+    `core/snapshot.py` — NEVER a message-borne `agent_id`/`worker_id`
+    field, which no longer exists on a resolved report at all) directly off
+    the report when present — `worker.online`, `worker.wall`, `worker.
+    progress`, `worker.review_done` all carry one. `worker.done` is the ONE
+    report shape that names a `block` instead (no identity needed at the
+    door — `core/gate.py`'s own `local_report` contract never required
+    one) — resolved back to that block's OWN gate-recorded `wid`, exactly
+    the same "the worker names itself; the engine only ever records what it
+    reports" discipline `core/router.py::_route_online`'s ASSIGN already
+    keeps. Any other structured tag (`operator.decision`, `architect.
+    reconciled`) names no WORKER of its own and is left untouched — never
+    guessed at.
 
     Unknown/unrecorded agent-id (no matching `manifest["workers"]` entry —
     e.g. a rig that seeds a gate directly, bypassing `core/switchboard.py`'s
@@ -260,7 +264,8 @@ def touch(workers, gates, rep):
     no-op, same forgiving discipline every other structured-report handler
     in this stack already keeps for an unrecorded sender."""
     tag = rep.get("tag")
-    agent_id = rep.get("agent_id") or rep.get("worker_id")
+    origin = rep.get("origin")
+    agent_id = origin.id if origin else None
     if not agent_id and tag == "worker.done":
         block = rep.get("block")
         gate_state = gates.get(block) if block else None

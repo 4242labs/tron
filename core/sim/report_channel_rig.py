@@ -208,18 +208,35 @@ def main():
     # naming neither the architect nor any real worker — the resulting
     # Origin must still resolve ARCHITECT/architect's own id, purely from
     # WHICH intake the line was drained from.
-    _report(inst, intake_arch, "definitely-not-architect", "--tag", "flag", "--block", "01-09",
+    #
+    # Block 01-38 T2 (CHANGED from T1): the probe tag is now `reconciled`
+    # (architect.reconciled, minters=(ARCHITECT,)), not `flag` (worker.flag,
+    # minters=(WORKER,)). Under T1 this used `--tag flag` and still passed,
+    # because admission (`vocab.minters_ok`) still ran off the message's OWN
+    # forgeable `sender`/`agent_id` claim at that point (T2's own job was
+    # deleting that) — a worker-shaped body claim satisfied worker.flag's
+    # minters regardless of which channel the line actually arrived on. Now
+    # that T2 has deleted the payload-trusting fallback, minters is checked
+    # against the TRUE channel origin: the architect's own intake can never
+    # mint a WORKER-only tag, so `--tag flag` here would now be correctly
+    # REFUSED (the exact impersonation gap this task closes) — a `flag`
+    # probe can no longer prove "origin resolves from channel, body claim
+    # ignored" for an ARCHITECT channel, because it would never reach
+    # admission at all. `reconciled` is architect-legal, so the message is
+    # admitted, letting this test isolate the SAME "channel decides, body
+    # claim is powerless" property it always meant to prove.
+    _report(inst, intake_arch, "definitely-not-architect", "--tag", "reconciled", "--block", "01-09",
             "channel says architect; the message body names nobody real")
     snap = snapshot.build(eng)
-    arch_flags = [r for r in snap.worker_reports if r.get("tag") == "worker.flag"
-                 and r.get("block") == "01-09"]
+    arch_reconciled = [r for r in snap.worker_reports if r.get("tag") == "architect.reconciled"
+                       and r.get("block") == "01-09"]
     ok("test:<origin_from_channel_only> — the door's Origin is resolved purely "
        "from WHICH intake the line drained from (the architect's own), "
        "independent of the 'definitely-not-architect' name the message body "
        "itself carries",
-       bool(arch_flags)
-       and arch_flags[-1]["origin"] == intake.Origin(vocab.ARCHITECT, architect.ARCHITECT_WID),
-       f"origin={arch_flags[-1].get('origin') if arch_flags else None}")
+       bool(arch_reconciled)
+       and arch_reconciled[-1]["origin"] == intake.Origin(vocab.ARCHITECT, architect.ARCHITECT_WID),
+       f"origin={arch_reconciled[-1].get('origin') if arch_reconciled else None}")
     snapshot.release(snap)
 
     passed = sum(1 for _, c, _ in _results if c)

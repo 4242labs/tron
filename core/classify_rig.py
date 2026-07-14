@@ -361,24 +361,29 @@ def run_scenario_2():
     eng = MiniEng(root, tron_ctx, worker_count=1)
     manifest = {}
 
-    # ── structured bypass: a real vocab tag resolves deterministically ──
+    # ── structured bypass: a real vocab tag resolves deterministically.
+    #     Block 01-38 T2 (the root invariant): identity is now the typed
+    #     `origin` parameter (`core.intake.Origin`), never a message-borne
+    #     `agent_id`/`sender` field — `classify.classify` no longer reads
+    #     either off `msg` at all. ──
     tag, slots = classify.classify(
-        eng, {"tag": "worker.done", "agent_id": AGENT_ID, "block": BLOCK,
-              "slots": {"verdict": "pass", "evidence": "x"}}, manifest)
+        eng, intake.Origin(vocab.WORKER, AGENT_ID),
+        {"tag": "worker.done", "block": BLOCK,
+         "slots": {"verdict": "pass", "evidence": "x"}}, manifest)
     ok("S2-K1: a structured report resolves via classify.classify() "
        "deterministically off core/vocab.py",
        tag == "worker.done" and slots == {"verdict": "pass", "evidence": "x"},
        f"tag={tag} slots={slots}")
 
     # ── unrecognized --tag verb -> REFUSED at the door (T3/AC-4): recorded
-    #     with full text + sender, an architect-first case opened, never a
+    #     with full text + origin, an architect-first case opened, never a
     #     crash, never a guessed flow decision ──
     raw_text_invalid = "the deploy pipeline is on fire, someone please look"
     queue_len_before = len(manifest.get("architect_queue") or [])
     events_before = len(eng.events.log)
     tag2, slots2 = classify.classify(
-        eng, {"tag": "totally-not-a-real-verb", "text": raw_text_invalid,
-              "sender": {"kind": "worker", "id": "engineer-99"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-99"),
+        {"tag": "totally-not-a-real-verb", "text": raw_text_invalid},
         manifest)
     queue_after = manifest.get("architect_queue") or []
     triage_job = next((j for j in queue_after if j.get("kind") == "triage"
@@ -405,7 +410,7 @@ def run_scenario_2():
     #     (T8: structured-only, no free-text judgment behind it at all) ──
     raw_prose = "hey, quick heads up, this one's tricky"
     tag_prose, slots_prose = classify.classify(
-        eng, {"text": raw_prose, "sender": {"kind": "worker", "id": "engineer-01"}}, manifest)
+        eng, intake.Origin(vocab.WORKER, "engineer-01"), {"text": raw_prose}, manifest)
     ok("S2-K5 (PROSE-ONLY REFUSED — must be GREEN, T8): a message with "
        "NEITHER --tag NOR --branch is refused at the door — structured-only "
        "reporting, no free-text judgment behind it",
@@ -419,10 +424,9 @@ def run_scenario_2():
     #     CLASS — a worker cannot assert "I'm blocked" and "here is my new
     #     branch" in the SAME report any more; send them separately. ──
     tag_conflict, slots_conflict = classify.classify(
-        eng, {"tag": "wall", "agent_id": "engineer-01-03",
-              "slots": {"branch": "feat/01-03-ui"},
-              "text": "genuinely blocked",
-              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-01-03"),
+        {"tag": "wall", "slots": {"branch": "feat/01-03-ui"},
+         "text": "genuinely blocked"},
         manifest)
     ok("S2-K6 (R5/T6 PARTITION KILLER — must be GREEN, AC-7): --tag wall "
        "combined with a --branch modifier (progress-advancing + blocking in "
@@ -433,27 +437,30 @@ def run_scenario_2():
     # ...but a wall with NO branch modifier still resolves normally —
     # the partition never blocks a genuine, uncombined wall.
     tag_wall_ok, slots_wall_ok = classify.classify(
-        eng, {"tag": "wall", "agent_id": "engineer-01-03", "text": "genuinely blocked",
-              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-01-03"),
+        {"tag": "wall", "text": "genuinely blocked"},
         manifest)
     ok("S2-K6b: an UN-combined wall (no branch modifier) still resolves to "
        "worker.wall normally — the partition never blocks a genuine wall",
        tag_wall_ok == "worker.wall", f"tag={tag_wall_ok} slots={slots_wall_ok}")
 
-    # ── ADR-0011 S-1 minters (T9): a worker-shaped sender cannot mint
-    #     architect.reconciled just by knowing the shape ──
+    # ── ADR-0011 S-1 minters (T9): a WORKER-channel origin cannot mint
+    #     architect.reconciled just by claiming the right tag shape ──
     tag_forge, slots_forge = classify.classify(
-        eng, {"tag": "reconciled", "agent_id": "engineer-99", "block": BLOCK,
-              "sender": {"kind": "worker", "id": "engineer-99"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-99"),
+        {"tag": "reconciled", "block": BLOCK},
         manifest)
     ok("S2-K7 (MINTERS-ENFORCED KILLER — must be GREEN, T9): a WORKER "
-       "sender cannot mint architect.reconciled — refused, never trusted "
+       "origin cannot mint architect.reconciled — refused, never trusted "
        "just because it named the right shape",
        tag_forge is None and slots_forge is None,
        f"tag={tag_forge} slots={slots_forge}")
-    # ...but the architect's OWN identity (agent_id == ARCHITECT_WID) may.
+    # ...but the architect's OWN identity (origin.id == ARCHITECT_WID,
+    # origin.kind == ARCHITECT — the real channel a spawn-time intake
+    # resolves it to) may.
     tag_real, slots_real = classify.classify(
-        eng, {"tag": "reconciled", "agent_id": architect.ARCHITECT_WID, "block": BLOCK},
+        eng, intake.Origin(vocab.ARCHITECT, architect.ARCHITECT_WID),
+        {"tag": "reconciled", "block": BLOCK},
         manifest)
     ok("S2-K7b: the architect's OWN identity mints architect.reconciled fine",
        tag_real == "architect.reconciled", f"tag={tag_real} slots={slots_real}")
@@ -472,7 +479,7 @@ def run_scenario_2():
     ]
     for i, text in enumerate(historical_phantom_texts):
         t, s = classify.classify(
-            eng, {"text": text, "sender": {"kind": "worker", "id": "engineer-t301"}}, manifest)
+            eng, intake.Origin(vocab.WORKER, "engineer-t301"), {"text": text}, manifest)
         ok(f"S2-K8.{i} (PHANTOM-WALL SUBSUMED — must be GREEN): historical "
            f"trigger {text!r} is refused at the door (never worker.wall, "
            f"never reaches any judgment — none exists)",
@@ -484,8 +491,8 @@ def run_scenario_2():
         "case_id": "case-01-01-1", "block": BLOCK, "source": "worker.wall",
         "decision": None, "detail": "walled"}}}
     tag4, slots4 = classify.classify(
-        eng, {"text": "please resume case-01-01-1, all clear now",
-              "sender": {"kind": "operator", "id": "the-operator"}},
+        eng, intake.Origin(vocab.OPERATOR, "the-operator"),
+        {"text": "please resume case-01-01-1, all clear now"},
         settle_manifest)
     ok("S2-K9 (BONUS — CASE-SETTLE-REGEX KILLER): an operator's free text "
        "naming a GENUINELY open case id + a settle verb resolves to "
@@ -496,8 +503,8 @@ def run_scenario_2():
     # ── the SAME text against a manifest with NO open case at all must NOT
     #     misfire — now REFUSED (T8: no free-text fallback of any kind) ──
     tag5, slots5 = classify.classify(
-        eng, {"text": "please resume case-01-01-1, all clear now",
-              "sender": {"kind": "operator", "id": "the-operator"}},
+        eng, intake.Origin(vocab.OPERATOR, "the-operator"),
+        {"text": "please resume case-01-01-1, all clear now"},
         {"cases": {}})
     ok("S2-K10: the same CASE-<n>-shaped text against a manifest with NO "
        "open case is refused (never a false-positive settle; no free-text "
@@ -508,9 +515,8 @@ def run_scenario_2():
     #     tag-LESS report that declares a branch resolves DETERMINISTICALLY
     #     to worker.branch ──
     tag6, slots6 = classify.classify(
-        eng, {"agent_id": "engineer-01-03", "text": "placeholder",
-              "slots": {"branch": "feat/01-03-ui"},
-              "sender": {"kind": "worker", "id": "engineer-01-03"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-01-03"),
+        {"text": "placeholder", "slots": {"branch": "feat/01-03-ui"}},
         manifest)
     ok("S2-K11 (BRANCH-DECLARATION KILLER — must be GREEN): a tag-less "
        "report carrying slots.branch resolves to worker.branch "
@@ -609,8 +615,8 @@ def run_scenario_self_triage_guard():
     arch_id = architect.ARCHITECT_WID
     mA = {"architect_queue": []}
     classify.classify(
-        eng, {"text": "Sorted: it's a branch declaration, no architect action.",
-              "sender": {"kind": "worker", "id": arch_id}},
+        eng, intake.Origin(vocab.ARCHITECT, arch_id),
+        {"text": "Sorted: it's a branch declaration, no architect action."},
         mA)
     ok("SG1 (SELF-SOURCE CREATION GUARD, R1a — must be GREEN): a refused "
        "message FROM the architect's own identity creates NO new triage "
@@ -619,8 +625,8 @@ def run_scenario_self_triage_guard():
        f"queue={mA.get('architect_queue')}")
     mB = {"architect_queue": []}
     classify.classify(
-        eng, {"text": "help — I'm blocked on a missing local fixture dep",
-              "sender": {"kind": "worker", "id": "engineer-01-04"}},
+        eng, intake.Origin(vocab.WORKER, "engineer-01-04"),
+        {"text": "help — I'm blocked on a missing local fixture dep"},
         mB)
     ok("SG2 (SAFETY-NET PARITY — must be GREEN): a real worker's refused "
        "message STILL enqueues an architect triage (GAP-E net intact)",

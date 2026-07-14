@@ -806,7 +806,8 @@ def main():
         iso_manifest_u = {}
         raw_unclassified = "the whole staging environment is on fire, someone please look — this is nobody's block"
         tag_u, _slots_u = classify.classify(
-            eng_iso, {"text": raw_unclassified, "sender": {"kind": "worker", "id": "engineer-99"}},
+            eng_iso, intake.Origin(vocab.WORKER, "engineer-99"),
+            {"text": raw_unclassified},
             iso_manifest_u)
         triage_job_u = next((j for j in (iso_manifest_u.get("architect_queue") or [])
                              if j.get("kind") == "triage" and j.get("source") == "worker.report_refused"),
@@ -921,7 +922,7 @@ def main():
         WID_B7 = "engineer-01-02"
         iso_manifest_b7 = {"workers": {WID_B7: {"block": "01-02", "status": "busy"}}}
         router.route(eng_iso, iso_manifest_b7, [
-            {"tag": "worker.wall", "agent_id": WID_B7,
+            {"tag": "worker.wall", "origin": intake.Origin(vocab.WORKER, WID_B7),
              # deliberately NO "block" key at all — the exact shape a real
              # `report.sh <id> --tag wall "<text>"` line carries (worker-
              # contract.md §6: "say exactly what blocks you", never a block

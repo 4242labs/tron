@@ -18,6 +18,19 @@ line itself claims; `_classify_reports`, below, threads that `Origin`
 onto the resolved report as `out["origin"]` (an engine-computed field no
 vocab slot/report.sh flag can ever set — the sole write site is here).
 
+Block 01-38 T2: the resolved report `_classify_reports` returns is now a
+`core.report.Report` — a typed record whose five identity keys (`sender`,
+`worker`, `actor`, `agent_id`, `worker_id`) do not exist as readable/
+writable slots (see `core/report.py`'s own docstring: a read/write of one
+raises `IdentityNotOnMessage`, never returns `None`). The old "IDENTITY
+BRIDGE" that promoted a raw line's `sender.id` onto `agent_id`/`worker_id`
+top-level keys is DELETED — there is nothing left to bridge onto. Every
+raw line's own `sender`/`agent_id`/`worker_id` keys (still written by a
+not-yet-T6-honest rig, or a hostile line) are dropped at construction,
+never copied through: `origin` (block 01-38 T1's typed value, resolved
+purely from WHICH intake the line drained from) is the SOLE identity
+carrier from here on.
+
 Block 01-37 (T3/T8): EVERY drained line is resolved to its `(tag, slots)`
 HERE, in this SAME observe pass, via `classify.classify(eng, rep,
 manifest)` — structurally, off `core/vocab.py`'s closed vocabulary; the
@@ -78,6 +91,7 @@ import gitobs   # noqa: E402 — core/gitobs.py, the ONE git-observation seam
 import classify # noqa: E402 — core/classify.py, the structured-only door resolver, run HERE (observe)
 import vocab    # noqa: E402 — core/vocab.py, PROMOTED_SLOT_KEYS (block 01-37, T9)
 import intake   # noqa: E402 — core/intake.py, block 01-38 T1's per-agent drain + Origin
+import report as report_mod   # noqa: E402 — core/report.py, block 01-38 T2's identity-slot-free typed record
 
 
 Snapshot = collections.namedtuple(
@@ -107,42 +121,41 @@ def _classify_reports(eng, manifest, raw_reports):
     's own per-tag handlers — `_route_architect_triage_verdict` included,
     which reads `triage_id`/`verdict` at TOP level).
 
-    Block 01-38 T1: `raw_reports` is now a list of `(Origin, dict)` pairs
-    (`core.intake.drain_all`'s own return shape) — an admitted report is
-    stamped `out["origin"] = origin` (engine-computed, the ONE write site
-    for this key; no vocab slot/report.sh flag can ever set it), threaded
-    out-of-band alongside the still-unchanged `sender`/`agent_id`/
-    `worker_id` fields below (T2's job is deleting those — not this
-    task's)."""
+    Block 01-38 T1/T2: `raw_reports` is a list of `(Origin, dict)` pairs
+    (`core.intake.drain_all`'s own return shape). `classify.classify` is
+    handed the resolved `origin` directly (never derived from the raw
+    line's own claimed `sender` — T2 deletes that derivation entirely, see
+    `core/classify.py`). The returned report is a `core.report.Report`
+    (block 01-38 T2's typed record, `core/report.py`): every key the raw
+    line or `slots` carried is copied through EXCEPT the five identity keys
+    `core.report.FORBIDDEN_IDENTITY_KEYS` names (`sender`/`worker`/`actor`/
+    `agent_id`/`worker_id`) — dropped here, never copied through, whether or
+    not a not-yet-T6-honest rig (or a hostile line) still writes one. `out
+    ["origin"] = origin` is the ONE write site for identity from here on;
+    every downstream reader (`core/router.py`, `core/liveness.py`, `core/
+    reviewers.py`) reads `rep["origin"]`, never a message-borne field."""
     resolved = []
     for origin, rep in raw_reports:
-        tag, slots = classify.classify(eng, rep, manifest)
+        tag, slots = classify.classify(eng, origin, rep, manifest)
         if tag is None:
             continue   # door-refused (T3/T8) — already fully handled, never routed
-        out = dict(rep)
+        out = report_mod.Report(
+            {k: v for k, v in rep.items() if k not in report_mod.FORBIDDEN_IDENTITY_KEYS})
         out["tag"] = tag
         out["origin"] = origin
         merged_slots = {**(rep.get("slots") or {}), **(slots or {})}
         out["slots"] = merged_slots
         for key in vocab.PROMOTED_SLOT_KEYS:
+            # T2: a forbidden identity key can never be promoted onto a
+            # `Report` (it has no such slot at all — see core/report.py) —
+            # skipped unconditionally, independent of whatever
+            # `vocab.PROMOTED_SLOT_KEYS` happens to declare (a mutation rig,
+            # e.g. core/verdict_wire_rig.py's own A-MUTATE scenario, may
+            # temporarily include one; that must never crash this loop).
+            if key in report_mod.FORBIDDEN_IDENTITY_KEYS:
+                continue
             if key not in out and merged_slots.get(key):
                 out[key] = merged_slots[key]
-        # IDENTITY BRIDGE: a REAL worker report (scripts/report.sh, or the
-        # courier's harvested turn-output) carries the worker id ONLY in
-        # `sender.id` — `report.sh` writes `sender:{kind:"worker",id:<wid>}`
-        # and never a top-level `agent_id`, and `classify_message` emits none
-        # either. Every downstream handler (`core/router.py::_route_online`/
-        # `_route_wall`, `core/reviewers.py::on_review_done`, `core/liveness.py
-        # ::touch`) reads `agent_id`/`worker_id` at the top level, so without
-        # this bridge a real report is dropped as "malformed" (the T2-01
-        # wall). Promote `sender.id` -> both keys when absent; every scripted
-        # rig writes a top-level `agent_id` directly, so this is inert for
-        # them. (T2 deletes this bridge once every reader is converted to
-        # `origin` instead — T3's job, not this one.)
-        sender_id = (rep.get("sender") or {}).get("id")
-        if sender_id:
-            out.setdefault("agent_id", sender_id)
-            out.setdefault("worker_id", sender_id)
         resolved.append(out)
     return resolved
 

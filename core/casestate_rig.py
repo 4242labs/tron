@@ -692,7 +692,7 @@ def main():
         router.route(eng, m, [rep])   # MUST NOT raise — a wall never crashes the run
         return m
 
-    m_w1 = _route_wall_result({"tag": "worker.wall", "agent_id": "x",
+    m_w1 = _route_wall_result({"tag": "worker.wall", "origin": intake.Origin(vocab.WORKER, "x"),
                                "slots": {"detail": "d"}})
     triage_w1 = [j for j in (m_w1.get("architect_queue") or []) if j.get("kind") == "triage"]
     ok("W1 (WALL-SURFACED KILLER — must be GREEN): a BLOCK-LESS worker.wall is "
@@ -702,7 +702,7 @@ def main():
        f"architect_queue={m_w1.get('architect_queue')}")
 
     m_w2 = _route_wall_result({"tag": "worker.wall", "block": "some-block",
-                               "agent_id": "x", "slots": {}})
+                               "origin": intake.Origin(vocab.WORKER, "x"), "slots": {}})
     cases_w2 = m_w2.get("cases") or {}
     ok("W2 (WALL-SURFACED KILLER — must be GREEN): a worker.wall naming a block "
        "but carrying NO detail is SURFACED as a parked case with a non-empty "
@@ -907,7 +907,7 @@ def main():
                         "current_job": {"kind": "triage", "triage_id": "triage-9"}},
            "cases": {}, "architect_queue": [], "workers": {}, "gates": {}}
     router._route_wall(lock_eng, m_d,
-        {"tag": "worker.wall", "agent_id": architect.ARCHITECT_WID,
+        {"tag": "worker.wall", "origin": intake.Origin(vocab.ARCHITECT, architect.ARCHITECT_WID),
          "text": "Operator's call — grant re-mint, a clean one; worker proceeds."})
     ok("Z4 (SELF-SOURCE CREATION GUARD — must be GREEN): a worker.wall from the "
        "architect creates NOTHING — no case, no triage, no verdict write (R1a); its "

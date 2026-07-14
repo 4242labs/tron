@@ -156,12 +156,17 @@ SLOT_CLASS = {
 # resolved report's TOP LEVEL when the raw line didn't already carry one of
 # its own (T9, lock 4 of the ADR-0011 four-lock verdict-wire closure,
 # ported + generalized from the salvage `PROMOTED_SLOT_KEYS` constant).
-# `block`/`agent_id` are wave-13's original two; `triage_id`/`verdict` are
-# the verdict wire's own addition — without these two, `core/router.py::
+# `block` is wave-13's original one; `triage_id`/`verdict` are the verdict
+# wire's own addition — without these two, `core/router.py::
 # _route_architect_triage_verdict` reads `rep.get("triage_id")`/`rep.get(
 # "verdict")` at TOP LEVEL and drops every real `report.sh --tag verdict`
-# report as malformed.
-PROMOTED_SLOT_KEYS = ("block", "agent_id", "triage_id", "verdict")
+# report as malformed. `agent_id` is DELETED (block 01-38 T2, the root
+# invariant): a resolved report's typed record (`core.report.Report`) has
+# no such slot to promote onto at all — `core/snapshot.py::
+# _classify_reports` skips ANY forbidden identity key here unconditionally,
+# independent of this tuple's own contents, as a second, belt-and-braces
+# guard.
+PROMOTED_SLOT_KEYS = ("block", "triage_id", "verdict")
 
 # `architect.triage_verdict`'s own closed verdict enum (T9) — single source
 # for `core/router.py`/`core/architect.py`'s own membership checks.
@@ -235,59 +240,30 @@ def verb_to_tag(verb):
     return VERB_TO_TAG.get(verb.strip().lower())
 
 
-def resolve_origin(msg, architect_wid):
-    """The closed set a report's origin resolves to — `worker` | `architect`
-    | `operator` — or `None` if `msg` names none of them. `msg` is the FULL
-    drained report dict (never just `sender`): a REAL `report.sh` line
-    always writes `sender.kind: "worker"` (ADR-0011 S-1) — the architect is
-    a worker-SHAPED sender whose `sender.id` is literally `architect_wid`,
-    so origin is resolved by IDENTITY, never by `sender.kind` alone (a
-    worker can never forge an architect-only tag just by knowing the shape
-    — a real worker id is never reachable at that literal value, `core/
-    switchboard.py`'s deterministic agent-id minting never produces it).
-    A SCRIPTED report (every `core/*_rig.py` fixture, per `core/
-    snapshot.py`'s own documented "IDENTITY BRIDGE" precedent) carries no
-    `sender` dict at all — just a bare top-level `agent_id`/`worker_id` —
-    which resolves to `worker` (or `architect`, on the architect's own id)
-    the identical way; this is the SAME ambient identity `core/router.py`/
-    `core/liveness.py` already trust, never a second convention."""
-    sender = (msg or {}).get("sender") or {}
-    kind = sender.get("kind")
-    sid = sender.get("id") or (msg or {}).get("agent_id") or (msg or {}).get("worker_id")
-    if kind == "operator":
-        return OPERATOR
-    if sid == architect_wid:
-        return ARCHITECT
-    if kind == "worker":
-        return WORKER
-    if sid:
-        return WORKER
-    # No identity marker of ANY kind (no `sender`, no `agent_id`/
-    # `worker_id`) — the real door (`report.sh`) always stamps `sender.
-    # kind: "worker"`, so the only way a report reaches here with zero
-    # identity is a WORKER-legal-tag test fixture that never bothered to
-    # name a sender (`worker.done`/`worker.recorded` are commonly reported
-    # block-scoped, not worker-scoped — the gate's own `wid` resolves WHICH
-    # worker). Default to WORKER rather than refuse: this default is NEVER
-    # granted for an ARCHITECT/OPERATOR-only tag either way, since `minters_
-    # ok` checks WORKER against THAT tag's own narrower declared set —
-    # `architect.reconciled`/`architect.triage_verdict` still require
-    # genuine architect identity (`sid == architect_wid`), the actual
-    # impersonation surface ADR-0011 S-1 closes.
-    return WORKER
+# `resolve_origin` (msg-derived, payload-trusting) is DELETED (block 01-38
+# T2, the root invariant) — its whole job was deriving a kind/id from
+# `msg["sender"]`/`msg["agent_id"]`/`msg["worker_id"]`, exactly the
+# forgeable read the root invariant closes. `core.intake.Origin` (block
+# 01-38 T1) is the sole, engine-resolved replacement: it is minted purely
+# from WHICH per-agent intake a line drained from, never from anything the
+# line's body claims, and threaded to every caller below as an explicit
+# `origin` parameter instead.
 
 
-def minters_ok(tag, msg, architect_wid):
-    """True iff `msg`'s resolved origin (`resolve_origin`) is a legal
-    minter of `tag` per its declared `minters` (ADR-0011 S-1, ported) — an
-    origin NOT in a tag's `minters` never reaches the flow as that tag: a
-    worker-shaped sender can never mint `architect.triage_verdict` just by
-    knowing the shape. Unknown tag -> True (nothing to check; the caller's
-    own tag-legality check already refuses it first)."""
+def minters_ok(tag, origin):
+    """True iff `origin` (the typed `core.intake.Origin` the door resolved
+    for this report — block 01-38 T1/T2, NEVER derived from the message
+    body any more) is a legal minter of `tag` per its declared `minters`
+    (ADR-0011 S-1, ported) — an origin whose `.kind` is not in a tag's
+    `minters` never reaches the flow as that tag: a worker's own channel
+    can never mint `architect.triage_verdict` just by claiming the shape,
+    because `origin.kind` is resolved from WHICH intake the line drained
+    from, not from anything in the line. Unknown tag -> True (nothing to
+    check; the caller's own tag-legality check already refuses it first)."""
     w = TAGS.get(tag)
     if w is None:
         return True
-    return resolve_origin(msg, architect_wid) in w.minters
+    return bool(origin) and origin.kind in w.minters
 
 
 def word_class(tag):

@@ -255,13 +255,15 @@ def _release(eng, manifest, agent_id, reason):
 
 def on_review_done(eng, manifest, rep):
     """Routed from `core/router.py` for a `worker.review_done` report
-    (`{"tag": "worker.review_done", "agent_id": <id>, "type": <type>,
-    "slots": {"findings": [...]}}`). Malformed (no type/agent_id) or STALE
-    (naming a worker not on file, or on file for a DIFFERENT block/type —
-    an already-released or never-dispatched reviewer) is LOGGED and dropped
-    — same forgiving discipline `core/router.py::_route_online` already
-    gives an unrecordable `worker.online` sender, never a crash on an
-    internal, engine-scripted signal.
+    (`{"tag": "worker.review_done", "type": <type>, "slots": {"findings":
+    [...]}}`, identity off the typed `origin` — block 01-38 T2, the root
+    invariant: a message-borne `agent_id` no longer exists to read at all).
+    Malformed (no type/identity) or STALE (naming a worker not on file, or
+    on file for a DIFFERENT block/type — an already-released or
+    never-dispatched reviewer) is LOGGED and dropped — same forgiving
+    discipline `core/router.py::_route_online` already gives an
+    unrecordable `worker.online` origin, never a crash on an internal,
+    engine-scripted signal.
 
     FIRST hand-back (worker status not yet `"held"`) -> HOLD: flip the
     record to `"held"`, stash whatever findings THIS call carried, re-order
@@ -271,7 +273,8 @@ def on_review_done(eng, manifest, rep):
     whatever the FIRST hand-back stashed, never silently dropped either
     way)."""
     slots = rep.get("slots") or {}
-    agent_id = rep.get("agent_id")
+    origin = rep.get("origin")
+    agent_id = origin.id if origin else None
     workers = manifest.get("workers") or {}
     w = workers.get(agent_id) if agent_id else None
     # The reviewer's TYPE is authoritative on its own worker record (set at

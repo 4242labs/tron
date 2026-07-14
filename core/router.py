@@ -43,8 +43,9 @@ Wave 8 (`core/casestate.py`) adds TWO more structured tags this SAME pass
 drains, each acted on exactly like `worker.online` above — no LLM/classify,
 same discipline:
 
-  `worker.wall` — a worker's structured wall report (`block`, `agent_id`,
-  `slots.detail`). FAIL-LOUD on malformed (a `worker.wall` naming no block or
+  `worker.wall` — a worker's structured wall report (`block`, `slots.detail`
+  — identity read off the typed `origin`, block 01-38 T2, never a
+  message-borne field). FAIL-LOUD on malformed (a `worker.wall` naming no block or
   carrying no detail RAISES — never a silent drop; a wall is exactly the
   kind of signal this whole brick exists to make sure never vanishes). A
   well-formed one opens a parked case via `core.casestate.open_case` — the
@@ -59,9 +60,9 @@ same discipline:
   content can).
 
 Wave 10 (`core/reviewers.py`) adds ONE more structured tag this SAME pass
-drains: `worker.review_done` (`{"tag": "worker.review_done", "agent_id":
-<id>, "type": <type>, "slots": {"findings": [...]}}`) — the DONE-REVIEW
-gate's hand-back (first HOLDS/attest-coverage, second RELEASES + queues an
+drains: `worker.review_done` (`{"tag": "worker.review_done", "type": <type>,
+"slots": {"findings": [...]}}`, identity off `origin` — block 01-38 T2) —
+the DONE-REVIEW gate's hand-back (first HOLDS/attest-coverage, second RELEASES + queues an
 architect log-review), routed to `reviewers.on_review_done` exactly like
 every other structured report here; that module owns its own malformed/
 stale handling (logged, dropped, never a crash on an internal signal).
@@ -103,6 +104,20 @@ import reviewers    # noqa: E402 — core/reviewers.py, wave 10's DONE-REVIEW ga
 import liveness     # noqa: E402 — core/liveness.py, wave 11's worker-silence side-system
 import architect    # noqa: E402 — core/architect.py, block-less wall -> architect-first triage
 import vocab        # noqa: E402 — core/vocab.py, the closed tag set (block 01-37, T4/T7)
+
+
+def _origin_id(rep):
+    """The reporting agent's own id — block 01-38 T2 (the root invariant):
+    read from the typed `core.intake.Origin` (`rep.get("origin")`, threaded
+    out-of-band by `core/snapshot.py`), NEVER from a message-borne
+    `agent_id`/`worker_id` field (that slot does not exist on a resolved
+    `core.report.Report` at all any more — reading it raises). `origin.id`
+    is the exact same concrete channel id `agent_id` always was for a real
+    report (the intake a report drained from IS the agent that sent it);
+    `None` when the report carries no origin at all (a bare rig-constructed
+    dict fed directly to this module, bypassing the real drain)."""
+    origin = rep.get("origin")
+    return origin.id if origin else None
 
 
 def route(eng, manifest, worker_reports):
@@ -188,10 +203,10 @@ def _route_online(eng, manifest, workers, gates, rep):
     later, the moment a branch is declared, via `_open_gate_if_branch` (which
     also fires THIS same tick when the rig's one-phase online already carries
     `slots.branch`)."""
-    agent_id = rep.get("agent_id") or rep.get("worker_id")
+    agent_id = _origin_id(rep)
     if not agent_id:
         eng.log("flow", f"router: dropped a worker.online report with no "
-                        f"identity (agent_id/sender.id): {rep!r}")
+                        f"origin: {rep!r}")
         return
 
     worker = workers.get(agent_id)
@@ -251,7 +266,7 @@ def _open_gate_if_branch(eng, workers, gates, rep):
     a real worker's two-phase path). Guarded so it never opens a gate before
     the worker was ASSIGNED, never overwrites an in-flight gate, and is inert
     for a report with no branch."""
-    agent_id = rep.get("agent_id") or rep.get("worker_id")
+    agent_id = _origin_id(rep)
     slots = rep.get("slots") or {}
     branch = slots.get("branch") or rep.get("branch")
     if not agent_id or not branch:
@@ -305,7 +320,7 @@ def _route_wall(eng, manifest, rep):
     `_route_architect_reconciled` already applies to a report's own block
     claim."""
     block = rep.get("block")
-    worker_id = rep.get("agent_id") or rep.get("worker_id")
+    worker_id = _origin_id(rep)
     slots = rep.get("slots") or {}
     detail = slots.get("detail") or (rep.get("text") or "").strip() \
         or f"worker {worker_id!r} raised a wall (no detail text)"
@@ -445,7 +460,7 @@ def _route_flag(eng, manifest, rep):
     Never opens a case, never pages — `worker.flag` is `PROGRESS`-classed in
     `core/vocab.py` precisely so it can never collide with a genuine wall
     under the T6 partition."""
-    worker_id = rep.get("agent_id") or rep.get("worker_id")
+    worker_id = _origin_id(rep)
     slots = rep.get("slots") or {}
     detail = slots.get("detail") or (rep.get("text") or "").strip() or "(no detail)"
     block = (manifest.get("workers") or {}).get(worker_id or "", {}).get("block")
@@ -465,7 +480,7 @@ def _route_catch_all(eng, manifest, rep):
     `router_catch_all` counter (01-39 owns the partition/acceptance-read;
     this block only writes it and proves it fires — T4)."""
     tag = rep.get("tag")
-    worker_id = rep.get("agent_id") or rep.get("worker_id")
+    worker_id = _origin_id(rep)
     counters = manifest.setdefault("counters", {})
     counters["router_catch_all"] = counters.get("router_catch_all", 0) + 1
     block = (manifest.get("workers") or {}).get(worker_id or "", {}).get("block")

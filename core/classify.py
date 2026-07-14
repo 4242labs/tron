@@ -43,6 +43,14 @@ refused.
 Duck-typed `eng` contract: `eng.log`, `eng.events` (an `EventLog`/`_Events`
 -shaped `.event(...)` sink). No git/subprocess/LLM of any kind in this
 module anymore.
+
+Block 01-38 T2 (the root invariant): `classify(eng, origin, msg, manifest)`
+now takes the typed `core.intake.Origin` as an explicit parameter (threaded
+out-of-band by `core/snapshot.py`, which resolves it purely from WHICH
+per-agent intake the line drained from). The message-borne `msg["sender"]`
+field this module used to read to decide "is this the operator" / "who do I
+attribute a refusal to" is GONE — `origin` is authoritative instead, never
+a claim the message body makes.
 """
 import os
 import re
@@ -52,7 +60,6 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-import architect    # noqa: E402 — core/architect.py, ARCHITECT_WID (door origin resolution)
 import casestate     # noqa: E402 — core/casestate.py, VERBS (the settle-regex verb vocabulary)
 import door           # noqa: E402 — core/door.py, the T3/T6 admission door
 import vocab           # noqa: E402 — core/vocab.py, the ONE closed vocabulary
@@ -120,12 +127,16 @@ def _settle_from_text(manifest, text):
     return {"case_id": hit_id, "verb": verb}
 
 
-def classify(eng, msg, manifest=None):
+def classify(eng, origin, msg, manifest=None):
     """Resolve ONE drained inbox line to `(tag, slots)` — called from `core/
-    snapshot.py::build`'s observe pass, once per drained report. Returns
-    `(None, None)` for a line the admission door REFUSED (already fully
-    handled: recorded + an architect-first case opened, `core.door.refuse`)
-    — `core/snapshot.py` drops such a resolution from `worker_reports`
+    snapshot.py::build`'s observe pass, once per drained report. `origin`
+    is the typed `core.intake.Origin` the door resolved for this line
+    (block 01-38 T1/T2 — purely from WHICH per-agent intake it drained
+    from, never from anything the line's own body claims: the message-borne
+    `sender` field this module used to read is DELETED). Returns `(None,
+    None)` for a line the admission door REFUSED (already fully handled:
+    recorded + an architect-first case opened, `core.door.refuse`) —
+    `core/snapshot.py` drops such a resolution from `worker_reports`
     entirely, never handing a refused line to `core/router.py::route`.
     Otherwise returns `(tag, slots)` with `tag` a real `core/vocab.py::TAGS`
     member.
@@ -136,10 +147,9 @@ def classify(eng, msg, manifest=None):
     scope (a direct unit-level `classify()` call) still gets the door's
     admission CHECK and the forensic event, just no case bookkeeping (mirrors
     the pre-existing `_triage_unclassified` contract this replaces)."""
-    sender = msg.get("sender") or {}
     text = msg.get("text", "") or ""
 
-    if sender.get("kind") == "operator":
+    if origin and origin.kind == vocab.OPERATOR:
         settled = _settle_from_text(manifest, text)
         if settled:
             return "operator.decision", settled
@@ -156,15 +166,12 @@ def classify(eng, msg, manifest=None):
                  "prose-only report with no --tag and no --branch — "
                  "structured-only reporting: use `report.sh --tag <verb> ...`. "
                  f"Legal --tag values:\n{vocab.legal_set_text()}")
-        door.refuse(eng, manifest, sender, raw_tag, text, reason,
-                    worker_id=sender.get("id"))
+        door.refuse(eng, manifest, origin, raw_tag, text, reason)
         return None, None
 
-    ok, reason = door.admit(tag, slots, msg, architect.ARCHITECT_WID)
+    ok, reason = door.admit(tag, slots, origin)
     if not ok:
-        worker_id = sender.get("id") or msg.get("agent_id") or msg.get("worker_id")
-        door.refuse(eng, manifest, sender, tag, text, reason,
-                    worker_id=worker_id)
+        door.refuse(eng, manifest, origin, tag, text, reason)
         return None, None
 
     return tag, slots
