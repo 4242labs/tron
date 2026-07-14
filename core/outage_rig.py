@@ -25,9 +25,11 @@ place — a real deployment's architect is not drawn from the same exhausted
 worker-model quota/credentials the fleet's engineer pool is, ADR-0002 D4's
 own fleet-as-config split). Every other `Engine` hook (`_to_worker`,
 `_release_worker`, `_grant_ttl`, `log`) runs FOR REAL; `_page_operator` is
-the REAL wave-17 implementation, deliberately given NO `eng._deliver_page`
-hook (the "absent hook, production-shaped" path `core/opfloor_rig.py`'s own
-BL3 already proves floors identically to a `"failed"` receipt).
+the REAL wave-17 implementation. Block 01-38 T5 made `_deliver_page` a
+REAL, non-stubbed transport by default — this rig explicitly OVERRIDES it
+to answer `None` (the outage's own paging channel, thematically down too),
+the SAME floor outcome a `"failed"` receipt gets (`core/opfloor_rig.py`'s
+own explicit-override convention, never an ambient absent hook).
 
 THREE independent drives, each its own real scaffold + real `Engine`:
 
@@ -527,9 +529,17 @@ def drive_outage():
     try:
         eng = Engine(Ctx(inst))
         eng.dry = False   # HARD RULE: real trunk observation throughout
-        # Deliberately NO eng._deliver_page hook — the absent-hook,
-        # production-shaped path (`core/opfloor_rig.py`'s own BL3): a
-        # receipt of `None` floors identically to `"failed"`.
+        # Block 01-38 T5: `Engine._deliver_page` is now a REAL, non-stubbed
+        # transport by default (a durable file write) — no longer an absent
+        # hook in production. THIS rig models a genuine FLEET OUTAGE, whose
+        # own operator-paging channel is thematically down too (an outage
+        # that still delivered pages perfectly wouldn't be much of an
+        # outage) — so it explicitly overrides the transport to answer
+        # `None` (absent/unconfirmed), the SAME floor outcome a `"failed"`
+        # receipt gets, exactly like `core/opfloor_rig.py`'s own explicit
+        # `page-failed-01`-style override (never relying on an ambient
+        # absent hook that no longer exists on a real Engine).
+        eng._deliver_page = lambda *a, **k: None
 
         spawned_at_boot = eng.start(scope="all", worker_count=1, models={})
         manifest_boot = state.load(tron_ctx)
@@ -645,8 +655,9 @@ def drive_outage():
         ok("O7 (FLOORED-OPERATOR-CASE KILLER — must be GREEN): once the "
            "architect verdicted 'operator', THE FLOOR forced MULTIPLE "
            "operator_pages entries across the observe window (never a "
-           "single silently-dropped page) — an ABSENT eng._deliver_page "
-           "hook floors identically to a 'failed' receipt",
+           "single silently-dropped page) — the rig's own explicitly "
+           "overridden `None`-answering transport (the outage's own paging "
+           "channel, modeled down) floors identically to a 'failed' receipt",
            pages_at_resume is not None and pages_at_resume > 1,
            f"pages_at_resume={pages_at_resume}")
         ok("O8 (NEVER-CLOSED / NEVER-SILENT-DIE / NEVER-BURNED-TO-END "

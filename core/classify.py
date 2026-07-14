@@ -99,7 +99,7 @@ def _structured(msg):
     return None, None, None
 
 
-def _settle_from_text(manifest, text):
+def _settle_from_text(eng, manifest, text):
     """Operator CASE-<n> <verb> settles via a deterministic regex — zero
     model calls (shape learned from `engine/fsm.py::_settle_regex`,
     re-expressed for THIS stack's own case-id vocabulary). Only matches a
@@ -107,7 +107,14 @@ def _settle_from_text(manifest, text):
     is None`) — an operator's prose that happens to contain the substring
     "case" never misfires into a settle for a case that doesn't exist; a
     hit with no recognizable verb, or naming no open case at all, returns
-    `None` (falls through to the door refusal below, unchanged)."""
+    `None` (falls through to the door refusal below, unchanged).
+
+    Block 01-38 T5 (R8's "seen" receipt): the instant a GENUINE inbound
+    operator-channel reply names an open case — REGARDLESS of whether this
+    SAME reply's verb goes on to resolve it — `core.casestate.mark_seen` is
+    called. A malformed-verb reply that still names the case is already
+    proof a human read it; `seen_at` must not wait on a well-formed verb to
+    land."""
     if not manifest or not text:
         return None
     cases = manifest.get("cases") or {}
@@ -118,6 +125,7 @@ def _settle_from_text(manifest, text):
     hit_id = next((cid for cid in open_ids if cid.lower() in low), None)
     if not hit_id:
         return None
+    casestate.mark_seen(eng, manifest, hit_id)
     vm = _VERB_RE.search(text)
     if not vm:
         return None
@@ -150,7 +158,7 @@ def classify(eng, origin, msg, manifest=None):
     text = msg.get("text", "") or ""
 
     if origin and origin.kind == vocab.OPERATOR:
-        settled = _settle_from_text(manifest, text)
+        settled = _settle_from_text(eng, manifest, text)
         if settled:
             return "operator.decision", settled
 

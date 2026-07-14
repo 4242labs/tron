@@ -137,6 +137,7 @@ both now respect ownership: `reping` skips any case still `owner="architect"`
 `owner="architect"` — the operator can never bypass the architect's own
 triage, structurally.
 """
+import copy
 import datetime
 import os
 import sys
@@ -152,13 +153,24 @@ VERBS = ("resume", "amend", "abandon")
 
 # ── THE FLOOR (GAP-A, wave 17) — page re-ping ladder, `reping` below.
 #     Mirrors `core/sentry.py`'s `GATE_NUDGE_AFTER`/`GATE_IDLE_CAP` shape,
-#     off the SAME shared clock, but the cap here NEVER turns a CASE
-#     terminal the way a sentry cap turns a GATE terminal — it only ever
-#     escalates the paging CHANNEL (a louder `page_kind` + a forensic,
-#     WARNING-and-retry `manifest["escalations"]` record); the case itself
-#     stays open, forever, exactly like before the cap. ──
+#     off the SAME shared clock. Two tiers now (block 01-38 T5/R8 adds the
+#     second): a failed/absent-receipt run first escalates the paging
+#     CHANNEL (a louder `page_kind` + a forensic, WARNING-and-retry
+#     `manifest["escalations"]` record) — still never terminal, still
+#     retrying; ONLY past the FAR higher permanent-fail ceiling does THE
+#     FLOOR itself halt (see `PAGE_PERMANENT_FAIL_AFTER` below) — the case
+#     stays open forever either way (never dropped; `core/session.py`'s own
+#     R3 keeps a run alive on any open case, permanently-failed or not). ──
 PAGE_REPING_AFTER = 1             # pace units an un-delivered page holds before a forced re-ping (bounded — at most once per pace() call, never a busy-loop)
 PAGE_CHANNEL_ESCALATE_AFTER = 3   # consecutive failed/absent deliveries -> escalate the CHANNEL — never terminal, never stops the ladder
+# R8 — "permanent transport failure is counted (must-be-zero) and drives a
+# named safe-park-and-halt with a full snapshot": a FAR higher ceiling than
+# the channel-escalate one above (a proven-dead transport, not a blip) at
+# which THE FLOOR stops hammering a channel that has never once delivered —
+# never a reason to drop the case (it stays open, forever, exactly as
+# before), only a reason to stop wasting further attempts on a channel this
+# many consecutive tries have proven dead.
+PAGE_PERMANENT_FAIL_AFTER = 6
 
 
 def _now_iso():
@@ -387,6 +399,7 @@ def architect_resolve(eng, manifest, case_id, verdict, note=None):
             "last_receipt": receipt,
             "holding_since": None,
             "channel_escalated": False,
+            "permanently_failed": False,
         }
         eng.log("flow", f"casestate: architect ESCALATED case {case_id!r} to "
                         f"the OPERATOR (paged, receipt={receipt!r}): "
@@ -457,6 +470,7 @@ def open_operator_case(eng, manifest, block, source, detail, worker_id=None, kin
         "last_receipt": receipt,
         "holding_since": None,
         "channel_escalated": False,
+        "permanently_failed": False,
     }
     eng.log("flow", f"casestate: architect verdict=operator minted operator-"
                     f"owned case {case_id!r} (source={source!r}, "
@@ -534,7 +548,15 @@ def reping(eng, manifest, now):
         paging = case.setdefault("paging", {
             "attempts": 0, "consecutive_fail": 0, "last_receipt": None,
             "holding_since": None, "channel_escalated": False,
+            "permanently_failed": False,
         })
+
+        if paging.get("permanently_failed"):
+            continue   # R8's SAFE-PARK-AND-HALT: a proven-dead transport —
+                       # THE FLOOR stops attempting further deliveries for
+                       # THIS case (the case itself stays open, forever,
+                       # exactly like every other still-unsettled case;
+                       # only the paging ATTEMPTS halt, never the case)
 
         if paging.get("last_receipt") == "delivered":
             continue   # satisfied — no more pings than the backoff dictates
@@ -581,7 +603,67 @@ def reping(eng, manifest, now):
                 "consecutive_fail": paging["consecutive_fail"], "detail": detail, "at": now})
             eng.log("operator", f"casestate: CHANNEL ESCALATED for case {case_id!r} — {detail}")
 
+        # R8 (block 01-38 T5) — permanent transport failure: a FAR higher
+        # ceiling than channel-escalate above, proving the transport is not
+        # a blip but genuinely dead. Counted (must-be-zero — a primary
+        # delivery path silently failing forever is exactly what must-be-
+        # zero means) and drives a NAMED safe-park-and-halt: a full
+        # manifest snapshot captured durably (`manifest["safe_park_halts"]
+        # [case_id]`, forensic — the operator can inspect the WHOLE state at
+        # the moment delivery was proven dead) and THE FLOOR halts further
+        # attempts for this one case (the `permanently_failed` skip-guard,
+        # above) — the case itself is NEVER dropped: it stays open forever,
+        # exactly like any other unsettled case, so `core/session.py`'s own
+        # R3 keeps the run alive on it and a real inbound operator reply
+        # (naming the case through the real transport — `settle`, below)
+        # can still resolve it at any time; only the OUTBOUND paging
+        # attempts stop, never the case's own openness.
+        if (paging["consecutive_fail"] >= PAGE_PERMANENT_FAIL_AFTER
+                and not paging["permanently_failed"]):
+            paging["permanently_failed"] = True
+            snapshot = copy.deepcopy(manifest)
+            halt_detail = (f"case {case_id!r} (target_block={case.get('block')!r}) — "
+                          f"{paging['consecutive_fail']} consecutive failed/absent "
+                          f"operator-page deliveries (>= PAGE_PERMANENT_FAIL_AFTER="
+                          f"{PAGE_PERMANENT_FAIL_AFTER}) — a PROVEN-dead transport; "
+                          f"SAFE-PARK-AND-HALT: paging halts for this case (never hammer "
+                          f"a dead channel further), the case stays OPEN forever (never a "
+                          f"silent drop), a full manifest snapshot is captured durably")
+            manifest.setdefault("safe_park_halts", {})[case_id] = {
+                "case_id": case_id, "block": case.get("block"), "detail": halt_detail,
+                "consecutive_fail": paging["consecutive_fail"], "at": now,
+                "snapshot": snapshot,
+            }
+            eng.events.event("must_be_zero", counter="operator_page_permanent_fail",
+                             case_id=case_id, block=case.get("block"),
+                             consecutive_fail=paging["consecutive_fail"])
+            eng.log("operator", f"casestate: SAFE-PARK-AND-HALT for case {case_id!r} — {halt_detail}")
+
     return repinged
+
+
+def mark_seen(eng, manifest, case_id):
+    """R8's "seen" receipt (block 01-38 T5) — operator-ACK, derived from ANY
+    genuine inbound reply that NAMES an open case (`core/classify.py::
+    _settle_from_text`'s own case-id substring match) — deliberately NEVER a
+    transport read receipt (the transport gives no such signal; R8's own
+    words: "not a transport read receipt"). Marked the instant the case is
+    named, independent of whether the SAME reply's verb is well-formed
+    enough to actually settle it — a malformed-verb reply that still names
+    the case is already genuine proof a human read it; `_settle_from_text`
+    calls this BEFORE its own verb check. Idempotent: `seen_at` is set once,
+    on first sighting only, never overwritten by a later reply — never
+    defaults true on silence (an unseen case's `seen_at` stays `None` until
+    a real reply names it, exactly like `paging["last_receipt"]` never
+    defaults to `"delivered"`)."""
+    cases = manifest.get("cases") or {}
+    case = cases.get(case_id)
+    if case is None or case.get("seen_at") is not None:
+        return
+    case["seen_at"] = _now_iso()
+    eng.log("operator", f"casestate: case {case_id!r} marked SEEN — a genuine "
+                        f"inbound reply named it (operator-ack, never a "
+                        f"transport read receipt)")
 
 
 def settle(eng, manifest, case_id, verb, note=None):

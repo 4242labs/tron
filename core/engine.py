@@ -471,7 +471,43 @@ class Engine:
         self.log("flow", f"engine: released {worker_id} ({reason})")
 
     # ── duck-typed surface: operator paging (real — a durable, structured
-    #     trace + THE FLOOR, wave 17/GAP-A) ──
+    #     trace + THE FLOOR, wave 17/GAP-A; real OUTBOUND transport, block
+    #     01-38 T5/R8) ──
+    def _deliver_page(self, case_id, block, detail, worker_id=None, page_id=None):
+        """Real, non-stubbed OUTBOUND transport (block 01-38 T5, R8 —
+        replaces the formerly-ABSENT hook `_page_operator`'s own docstring
+        used to call out as "no real transport wired this wave"). Appends
+        ONE durable, fsynced line to this instance's OWN operator outbound
+        channel (`ctx.p('operator-outbox.jsonl')` — deliberately separate
+        from any INBOUND intake: this is the engine's own write-OUT
+        surface; whatever real human-facing delivery mechanism sits outside
+        this engine's scope, e.g. a Telegram bridge, tails it). "delivered"
+        (transport-ack) means exactly one thing: THIS engine's own write
+        genuinely landed on disk — never assumed, never defaulted true on
+        silence (R8's own words). A genuine OS-level write failure (ENOSPC,
+        permission, ...) is CAUGHT and returned as "failed", never left to
+        propagate and take the whole tick down with it — paging a case must
+        never crash the engine it's trying to report through. A rig that
+        wants a DETERMINISTIC failure (to drive THE FLOOR's ladder on a
+        fixed clock, `core/opfloor_rig.py`'s own established pattern) still
+        overrides this method on its own `Engine` instance — unchanged."""
+        line = {"page_id": page_id, "case_id": case_id, "block": block,
+                "detail": detail, "worker_id": worker_id, "at": util.now_iso()}
+        path = self.ctx.p("operator-outbox.jsonl")
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(line) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError as e:
+            self.log("flow", f"engine: _deliver_page REAL transport write FAILED for "
+                             f"case={case_id!r} page_id={page_id!r}: {e}")
+            return "failed"
+        return "delivered"
+
     def _page_operator(self, case_id, block, detail, worker_id=None,
                        manifest=None, page_kind="operator_page"):
         """Real, non-stubbed: RECORDS the page durably —
@@ -483,17 +519,16 @@ class Engine:
         silent shape every other duck-typed hook already has) — as a
         structured event (`operator_page`, the SAME type `engine/
         eventlog.py`'s own closed vocabulary already names for this hand-
-        off) plus a home-log line, THEN reads a delivery RECEIPT off the
-        injected `eng._deliver_page` hook (stubbed like `_to_worker` — no
-        real transport wired this wave; `core/opfloor_rig.py` is what
-        actually exercises delivered vs failed on a real, deterministic
-        clock). An ABSENT hook (production, this wave — a real transport is
-        a LATER wave's concern) or a return value that isn't literally
-        `"delivered"`/`"failed"` reads as `None` (absent) — the SAME "not
-        yet confirmed, keep re-pinging" floor outcome a `"failed"` receipt
-        gets; there is NO default-delivered assumption anywhere in this
-        stack (GAP-A's own bug, made structurally impossible). Returns the
-        receipt so the caller (`core/casestate.py`) can drive THE FLOOR."""
+        off) plus a home-log line, THEN reads a delivery RECEIPT off
+        `self._deliver_page` — block 01-38 T5: REAL, non-stubbed above (a
+        rig may still override it on its own instance for a deterministic
+        clock, `core/opfloor_rig.py`'s established pattern — unchanged). A
+        return value that isn't literally `"delivered"`/`"failed"` reads as
+        `None` (absent) — the SAME "not yet confirmed, keep re-pinging"
+        floor outcome a `"failed"` receipt gets; there is NO
+        default-delivered assumption anywhere in this stack (GAP-A's own
+        bug, made structurally impossible). Returns the receipt so the
+        caller (`core/casestate.py`) can drive THE FLOOR."""
         page_id = None
         pages = None
         if manifest is not None:

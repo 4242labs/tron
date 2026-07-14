@@ -69,10 +69,14 @@ idempotent SESSION-END on real git, exactly like any ordinary
 Finally, an ISOLATED, throwaway `core.engine.Engine` (same real ctx/
 project, never `.start()`-ed, never touching the main drive's own
 manifest) proves the minimal GAP-E slice this brick's spec calls for: a
-BLOCK-LESS escalation (`block=None`, no pipeline row behind it at all,
-no `eng._deliver_page` hook wired — the "absent hook, production-shaped"
-path) still durably pages the operator — never a silent, unclassified
-discard.
+BLOCK-LESS escalation (`block=None`, no pipeline row behind it at all)
+still durably pages the operator — never a silent, unclassified discard.
+Block 01-38 T5 (R8): `eng._deliver_page` is no longer an absent/stubbed
+hook in production — `core/engine.py::Engine` now wires a REAL transport
+(a durable file write) by default, with no override needed; this rig's own
+`BL3` proves that DEFAULT (no override at all on `eng_iso`) genuinely
+delivers, off the same real `Ctx` every other real-git rig in this stack
+already uses.
 
 `ok(name, cond, detail)` collector; `main()` prints `PASS (n/m)` and every
 line, exits non-zero on any fail.
@@ -714,8 +718,10 @@ def main():
         # ══════════════════════════════════════════════════════════════
         eng_iso = Engine(Ctx(inst))   # a FRESH, throwaway Engine — never .start()-ed,
         eng_iso.dry = False           # never touching the main drive's own manifest;
-                                       # deliberately carries NO eng._deliver_page hook
-                                       # (the "absent hook, production-shaped" path).
+                                       # deliberately carries NO _deliver_page OVERRIDE —
+                                       # block 01-38 T5: the DEFAULT `_deliver_page` on
+                                       # a real Engine is now a REAL transport (a durable
+                                       # file write), never an absent hook.
         iso_manifest = {}
         cid = casestate.open_case(eng_iso, iso_manifest, None, "test.blockless",
                                   "a block-less escalation — never a silent "
@@ -773,12 +779,20 @@ def main():
            "event (`eng.events`) — the durable trace is never manifest-only",
            len(iso_page_events) == 1 and iso_page_events[0]["payload"].get("block") is None,
            f"iso_page_events={iso_page_events}")
-        ok("BL3 (ABSENT-HOOK KILLER — must be GREEN): with NO eng._deliver_page "
-           "hook wired (this wave's real production shape — no transport yet), "
-           "the receipt reads None (absent) — the SAME floor outcome a 'failed' "
-           "receipt gets, never a default-delivered assumption",
-           iso_pages[0].get("receipt") is None,
-           f"iso_pages={iso_pages}")
+        outbox = os.path.join(inst, "operator-outbox.jsonl")
+        outbox_lines = []
+        if os.path.exists(outbox):
+            with open(outbox) as fh:
+                outbox_lines = [json.loads(ln) for ln in fh if ln.strip()]
+        ok("BL3 (REAL-TRANSPORT-BY-DEFAULT KILLER, block 01-38 T5 — must be "
+           "GREEN): with NO `_deliver_page` OVERRIDE at all on `eng_iso` "
+           "(production shape), the receipt reads 'delivered' — the REAL, "
+           "non-stubbed transport (a durable write to `operator-outbox."
+           "jsonl`) fired for real, genuinely readable back off disk; never "
+           "an absent hook, never an assumed receipt",
+           iso_pages[0].get("receipt") == "delivered"
+           and any(ln.get("case_id") == cid for ln in outbox_lines),
+           f"iso_pages={iso_pages} outbox_lines={outbox_lines}")
 
         # ══════════════════════════════════════════════════════════════
         # GREP PROOF — no code path drops/permanently-fails an unanswered
