@@ -17,9 +17,15 @@ then travels the SAME classify->router->settle path a real operator reply would.
 
 Honest-surface guarantees (why this cannot reintroduce the false-green disease):
   • acts ONLY on `owner=="operator" and decision is None` (engine-escalated);
-  • injects through the real inbox->classify->router->settle path (path A: a
-    TAGGED structured report, `sender.kind=="operator"`), never by mutating a
-    case dict directly;
+  • injects through the REAL operator door — `scripts/operator-reply.sh`, a
+    genuine `bash` subprocess, the exact script a human (or a trusted relay)
+    runs to reply (block 01-38 T3/T4, R8) — writing to `ctx.operator_inbox`,
+    drained EVERY TICK by `core/snapshot.py::build` alongside every per-agent
+    channel, and resolved via the REAL classify->router->settle path exactly
+    like a human's reply would be. NEVER a direct Python file write of its
+    own (that was the R3 violation this module was KNOWN_RED for: injecting
+    into `ctx.worker_inbox`, a channel a real operator can never write to at
+    all) and never by mutating a case dict directly;
   • provides the DECISION and nothing else — orphans, escalation counts, the
     planted signature and `session_end` all stay the engine's to produce, so it
     can only green a run a real operator settling the same case would also green;
@@ -51,7 +57,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import casestate                       # noqa: E402 — VERBS + the settle path's own module
 
-_OPERATOR_PROXY_WID = "operator-proxy"
 _DECIDE_TIMEOUT_S = 90.0               # one-shot claude call ceiling (RD)
 _MAX_ATTEMPTS = 3                      # per case: guard a malformed-output retry storm (RC)
 _DECIDE_MODEL = "claude-opus-4-8"      # the operator is an LLM; opus by design
@@ -138,29 +143,32 @@ def _claude_decide(case):
 
 
 def _inject_decision(eng, case_id, decision):
-    """Path A honest injection: append a TAGGED `operator.decision` report to the
-    engine inbox. `classify` short-circuits on the tag (no model spend) and
-    `router._route_decision` -> `casestate.settle` applies it. `sender.kind ==
-    "operator"` marks it a genuine operator reply, exactly as a human's would.
-    Returns True on a written line, False if the inbox append failed (mirrors the
-    courier's own tolerant append — an IO fault must not raise out of the poll
-    loop, and the caller must NOT mark a case decided on a write that never
-    landed; the case simply stays open and is retried)."""
-    rep = {
-        "tag": "operator.decision",
-        "slots": {
-            "case_id": case_id,
-            "verb": decision["verb"],
-            "note": decision.get("note") or "operator-proxy (moderate SIM)",
-        },
-        "sender": {"kind": "operator", "id": _OPERATOR_PROXY_WID},
-    }
+    """R8/R3 honest injection (block 01-38 T4): run the REAL operator door,
+    `scripts/operator-reply.sh <case_id> <verb> [note]`, as a genuine `bash`
+    subprocess — never a Python file write of any engine-owned inbox. The
+    script writes ONE structured `operator.decision` line to `ctx.
+    operator_inbox`; `core/snapshot.py::build` drains it EVERY TICK (T3),
+    stamps its ambient `sender.kind="operator"`, and the SAME classify->
+    router->settle path a human's reply travels applies it. Returns True on
+    a zero exit (the line landed), False on ANY failure (missing script,
+    nonzero exit, or the subprocess call itself raising) — mirrors the prior
+    tolerant-append contract: an IO/subprocess fault must not raise out of
+    the poll loop, and the caller must NOT mark a case decided on a write
+    that never landed; the case simply stays open and is retried."""
+    script = eng.ctx.p("scripts", "operator-reply.sh")
+    note = decision.get("note") or "operator-proxy (moderate SIM)"
     try:
-        with open(eng.ctx.worker_inbox, "a") as ib:
-            ib.write(json.dumps(rep) + "\n")
-    except OSError as e:
-        eng.log("flow", f"operator-proxy: inbox write FAILED for case {case_id!r} "
-                        f"({e}) — decision NOT injected, case stays open (retried)")
+        r = subprocess.run([script, case_id, decision["verb"], note],
+                           capture_output=True, text=True, timeout=15)
+    except Exception as e:   # noqa: BLE001 — missing script, timeout, OSError, ... -> honest failure
+        eng.log("flow", f"operator-proxy: operator-reply.sh invocation FAILED for "
+                        f"case {case_id!r} ({e}) — decision NOT injected, case stays "
+                        f"open (retried)")
+        return False
+    if r.returncode != 0:
+        eng.log("flow", f"operator-proxy: operator-reply.sh exited {r.returncode} for "
+                        f"case {case_id!r} ({(r.stderr or '').strip()}) — decision NOT "
+                        f"injected, case stays open (retried)")
         return False
     return True
 

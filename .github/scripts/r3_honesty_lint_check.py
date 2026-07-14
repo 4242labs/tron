@@ -114,11 +114,24 @@ case can only cause a false RED, never a false GREEN. Proves, live:
              not also hide a real evasion — rule 3's OWN call-graph
              propagation still catches it independently.
   GREEN/tree the real `core/` proof-harness tree is clean except the
-             explicit, visible KNOWN_RED list (core/sim/operator_proxy.py
-             + core/architect_rig.py, at minimum — see core/r3_lint.py's
-             KNOWN_RED for the latter's block-01-40-introduced entry) —
-             every KNOWN_RED entry is re-verified genuinely red on THIS
-             run, never a silent whitelist.
+             explicit, visible KNOWN_RED list (core/architect_rig.py, at
+             minimum — see core/r3_lint.py's KNOWN_RED for its block-01-40-
+             introduced entry) — every KNOWN_RED entry is re-verified
+             genuinely red on THIS run, never a silent whitelist.
+  GREEN      block 01-38 T4: `core/sim/operator_proxy.py` — the ADR's
+             NAMED historical offender ("the current harness injects into
+             the worker channel and lies exactly the way the old rigs
+             lied") — is REMOVED from KNOWN_RED and confirmed genuinely
+             clean by this SAME lint: it no longer touches `ctx.
+             worker_inbox`/`ctx.operator_inbox` in Python at all (it shells
+             out to the REAL operator door, `scripts/operator-reply.sh`,
+             invisible to this static prover by construction — a
+             DIFFERENT process, the same honest pattern `scripts/report.sh`
+             already is for every real worker report). A synthetic fixture
+             carrying the OLD violation shape (a fabricated `sender.kind==
+             "operator"` payload appended straight to `ctx.worker_inbox`)
+             proves the RULE itself still fires — this is not a loosened
+             rule, only a genuinely rebuilt file.
   MECHANISM  the lint's own stale/unlisted detectors fire correctly — a
              known-red entry that has gone clean is caught, and a red file
              missing from KNOWN_RED is caught — proven with synthetic
@@ -933,15 +946,47 @@ def main():
         print("GREEN proof (tree) confirmed: the proof-harness tree is clean "
               f"except the tracked KNOWN_RED set: {sorted(r3_lint.KNOWN_RED)}")
 
-    # ── the named offender is, concretely, red ──
+    # ── block 01-38 T4: the ADR's named offender is now genuinely HONEST —
+    #     removed from KNOWN_RED, and confirmed clean by this SAME lint (not
+    #     a loosened rule: it no longer touches ctx.worker_inbox/ctx.
+    #     operator_inbox in Python at all — see its own module docstring) ──
     op_proxy = "core/sim/operator_proxy.py"
-    if op_proxy not in result.violations_by_file:
-        print(f"AC-2 FAILURE: {op_proxy} (the ADR's named offender) is NOT "
-              "flagged red.", file=sys.stderr)
+    if op_proxy in r3_lint.KNOWN_RED:
+        print(f"AC-2 FAILURE: {op_proxy} is STILL in KNOWN_RED — block 01-38 "
+              "T4 rebuilt it honestly and it must be REMOVED, not carried "
+              "forever.", file=sys.stderr)
+        failed = True
+    elif op_proxy in result.violations_by_file:
+        print(f"AC-2 FAILURE: {op_proxy} is not in KNOWN_RED but the lint "
+              f"still flags it red — {[str(v) for v in result.violations_by_file[op_proxy]]}",
+              file=sys.stderr)
         failed = True
     else:
-        print(f"Previously-dishonest rig confirmed RED: {op_proxy} -> "
-              f"{[str(v) for v in result.violations_by_file[op_proxy]]}")
+        print(f"Block 01-38 T4 confirmed: {op_proxy} is genuinely CLEAN "
+              "(not KNOWN_RED, not flagged) — the ADR's named offender is "
+              "honest now, not merely un-checked.")
+
+    # ── the RULE itself still fires on the OLD violation shape (a synthetic
+    #     fixture, never the real file — proves this is a genuine rebuild,
+    #     not a loosened rule) ──
+    old_shape_src = (
+        "import json\n"
+        "def _inject_decision(eng, case_id, decision):\n"
+        "    rep = {'tag': 'operator.decision', 'sender': {'kind': 'operator', 'id': 'x'},\n"
+        "           'slots': {'case_id': case_id, 'verb': decision['verb']}}\n"
+        "    with open(eng.ctx.worker_inbox, 'a') as ib:\n"
+        "        ib.write(json.dumps(rep) + '\\n')\n"
+    )
+    old_shape_violations = r3_lint.lint_source(old_shape_src, path="<old-operator-proxy-shape>")
+    if not any(v.rule == "INBOX_FABRICATED_SENDER" for v in old_shape_violations):
+        print("AC-2 REGRESSION: the pre-01-38 operator_proxy.py violation shape "
+              "(a fabricated operator sender appended to ctx.worker_inbox) is no "
+              "longer caught — the RULE regressed, not just the file.", file=sys.stderr)
+        failed = True
+    else:
+        print(f"RULE proof confirmed: the OLD operator_proxy.py violation shape "
+              f"is still caught by this lint (a synthetic fixture, never the "
+              f"real — now honest — file): {[str(v) for v in old_shape_violations]}")
 
     # ── mechanism self-test: stale-entry detection (synthetic KNOWN_RED,
     #     never touches the real list) ──
@@ -961,10 +1006,14 @@ def main():
         r3_lint.KNOWN_RED = orig_known_red
 
     # ── mechanism self-test: unlisted-offender detection (synthetic) ──
+    # block 01-38 T4: core/sim/operator_proxy.py is genuinely clean now, so
+    # it can no longer serve as this self-test's offender — core/
+    # architect_rig.py (still legitimately KNOWN_RED, owning block 01-40)
+    # takes its place.
     try:
         r3_lint.KNOWN_RED = {}
         unlisted_check = r3_lint.run()
-        if "core/sim/operator_proxy.py" not in unlisted_check.unlisted_offenders:
+        if "core/architect_rig.py" not in unlisted_check.unlisted_offenders:
             print("AC-2 REGRESSION: unlisted-offender detection did not fire "
                   "when KNOWN_RED was emptied.", file=sys.stderr)
             failed = True

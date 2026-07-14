@@ -274,17 +274,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # it regressed silently); a red file NOT listed here is an unlisted offender
 # (FAIL, add it with its owning block or fix it).
 KNOWN_RED = {
-    "core/sim/operator_proxy.py": {
-        "owning_block": "01-38",
-        "reason": ('_inject_decision fabricates sender.kind="operator" and appends '
-                   "it straight to eng.ctx.worker_inbox (the WORKER channel) — "
-                   "report.sh, the one real door, can only ever emit "
-                   'sender.kind="worker"; there is no real operator transport yet '
-                   "(that is R8/R6, later blocks). ADR-0012 §2 R8 names this exact "
-                   'harness: "the current harness injects into the worker channel '
-                   'and lies exactly the way the old rigs lied." Rebuilt honestly '
-                   "in 01-38 T4 once the real operator channel exists."),
-    },
+    # core/sim/operator_proxy.py: REMOVED from KNOWN_RED by block 01-38 T4.
+    # `_inject_decision` no longer touches `eng.ctx.worker_inbox`/`ctx.
+    # operator_inbox` (or any engine-owned inbox) in Python at all — it
+    # shells out to the REAL operator door, `scripts/operator-reply.sh`, a
+    # genuine bash subprocess, exactly the same door a human operator (or a
+    # trusted relay) runs. That write is invisible to this module's static
+    # taint substrate (rules 1/5) BECAUSE it is genuinely a different
+    # process — the SAME honest pattern `scripts/report.sh` already is for
+    # every real worker report; see core/r3_guard.py's own "child processes"
+    # section for why that is the correct, not a gamed, closure of R3 here.
     "core/architect_rig.py": {
         "owning_block": "01-40",
         "reason": ("RIG2-C2 (run_seq_reconcile_rig) monkeypatches "
