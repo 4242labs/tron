@@ -371,9 +371,95 @@ def _courier(eng, manifest, delivered):
     return couriered
 
 
+def _install_fleet_outage_injection(eng, ctx, started_at, inject_after_min):
+    """block 01-38 T19 gate fix H2b — a spawn-TIME fleet-outage injection
+    knob: wraps `eng._spawn_worker` so that, once wall-clock T (elapsed
+    minutes since run start, the SAME clock `budget_min` is checked against)
+    reaches `inject_after_min`, every subsequent spawn ATTEMPT raises a
+    simulated CLI-refusal (the exact `_spawn_worker`-raises shape `core/
+    outage_rig.py` already uses) — driving `core/switchboard.py::
+    _record_fleet_death` past `fleet_outage_deaths` (`core/knobs.py`) exactly
+    the way a REAL quota/auth/CLI-down outage would. Faithful because the
+    engine cannot distinguish an injected raise from a real refusal — it IS
+    the real §2b.1 trigger (`switchboard.py::fill`'s own
+    `try: eng._spawn_worker(...) except Exception`). Orphan-free: the raise
+    happens BEFORE `Engine._real_spawn` (`core/engine.py:660`) ever runs, so
+    no dir/session/process is created for an injected attempt.
+
+    OFF-SWITCH IS RESUME-COUPLED, NEVER A SPAWN COUNT (AMENDMENTS 260715 —
+    a count wedges unless it happens to exactly equal the live
+    `fleet_outage_deaths` threshold: leftover raises re-death the FIRST
+    post-resume spawn -> re-pause forever; too few -> the case never opens
+    at all). Mirrors `core/outage_rig.py:598`'s `dying[0] = False` at
+    resume: `core/switchboard.py::fill` SHORT-CIRCUITS to a no-op the ENTIRE
+    time `casestate.fleet_paused` reads true (see that module's own
+    docstring) — so this wrapper is structurally NEVER called again while
+    the pause holds. The instant `manifest["fleet"]["outage_case_id"]` is
+    already on file when this wrapper DOES run again, dispatch MUST have
+    already un-paused (the only way `fill` reaches a spawn attempt at all) —
+    i.e. the injected outage already tripped+escalated once. The wrapper
+    self-disables there, permanently (one injected outage per run, never a
+    repeating latch — a SECOND, later, genuine outage is still free to raise
+    its own fresh case per the engine's own design, just never THIS knob's
+    doing twice), so the very next real spawn genuinely succeeds — true
+    self-recovery, never a wedge.
+
+    NARROWED FAITHFULNESS CLAIM (AMENDMENTS 260715 item 3): this exercises
+    EXACTLY the SYNCHRONOUS spawn-time refusal class §2b.1 keys on
+    (`engine/jobs.py::spawn_runner` raising before a process/session ever
+    exists — quota/auth exhausted, host CLI down). It is not the only real
+    outage shape: a runtime quota exhaustion AFTER a worker is already
+    spawned and running is `core/liveness.py`'s silence-ladder territory
+    entirely, untouched by this knob.
+
+    SCOPE CAVEAT: this wraps THE seam `core/reviewers.py::dispatch` also
+    calls (`eng._spawn_worker`) — but unlike `switchboard.py::fill`,
+    `reviewers.dispatch` does not catch a raised exception (deliberately,
+    per that module's own docstring: no rig in this stack configures a
+    `cadence:` that could dispatch a reviewer during a simulated outage). An
+    injected raise landing on a reviewer-dispatch call would propagate
+    uncaught and abort the run — so any live recipe using this knob must
+    carry no `cadence:` config, exactly the existing assumption
+    `core/switchboard.py`'s own module docstring already states.
+
+    Returns a mutable stats dict the caller threads into the result:
+    `{"activated": bool, "injected_raises": int, "resumed": bool}` —
+    `activated` true the first time T >= inject_after_min is observed;
+    `injected_raises` the count of raises actually thrown; `resumed` true
+    once the self-disable fires (the non-vacuity signal `core/sim/
+    invariants_2b_rig.py` checks — proves the injection genuinely ran, not
+    just installed inert)."""
+    real_spawn_worker = eng._spawn_worker
+    stats = {"activated": False, "injected_raises": 0, "resumed": False}
+
+    def _wrapped(agent_id, block):
+        manifest = state.load(ctx)
+        fleet = manifest.get("fleet") or {}
+        if fleet.get("outage_case_id"):
+            # Structurally unreachable unless dispatch already un-paused
+            # (fill() short-circuits while `casestate.fleet_paused` reads
+            # true) — the injected outage already tripped once. Self-disable
+            # permanently; let the real spawn through.
+            stats["resumed"] = True
+            return real_spawn_worker(agent_id, block)
+        elapsed_min = (time.time() - started_at) / 60.0
+        if elapsed_min >= inject_after_min:
+            stats["activated"] = True
+            stats["injected_raises"] += 1
+            raise RuntimeError(
+                f"simulated fleet outage: spawn refused for {agent_id!r} "
+                f"(injected by --inject-fleet-outage-after={inject_after_min}, "
+                f"quota/auth/credit exhausted)")
+        return real_spawn_worker(agent_id, block)
+
+    eng._spawn_worker = _wrapped
+    return stats
+
+
 def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
              poll_sec=DEFAULT_POLL_SEC, scope="all", max_loops=100000,
-             adapter="host-cli", operator_proxy=False, expect_pages=0):
+             adapter="host-cli", operator_proxy=False, expect_pages=0,
+             inject_fleet_outage_after=None):
     """Boot + drive a real-LLM E2E SIM to a clean session-end (or a pause
     condition). Returns a structured result dict. ALWAYS tears the real fleet
     down. See module docstring for the clock, PULSE, and pause semantics.
@@ -392,7 +478,14 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     the instant acceptance is MATHEMATICALLY LOST (see `_verdict_sealed_reasons`
     for the exact, narrower subset of conditions that qualify), capturing a
     full state snapshot at the stop point. Default 0 preserves every existing
-    caller's behavior for a trivial run with no explicit expectation."""
+    caller's behavior for a trivial run with no explicit expectation.
+
+    `inject_fleet_outage_after` (block 01-38 T19 gate fix H2b, minutes, None
+    = disabled): see `_install_fleet_outage_injection`'s own docstring —
+    installed right after `eng` is constructed (before `eng.start()`), so it
+    covers the whole run including bootup's own first dispatch. `None` (the
+    default) installs nothing at all — zero behavior change for every other
+    caller of this function."""
     if scaffold_src:
         os.environ["TRON_REAL_SCAFFOLD_SRC"] = scaffold_src
 
@@ -419,6 +512,13 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     boot_spawn = None
     proxy_settled = 0   # ADR-0007: operator-proxy-settled case count (result surface)
     verdict_sealed_snapshot = None   # T16/AC-10: set only if the run stops early
+    fleet_outage_injection_stats = None   # H2b: set only when the knob is enabled
+
+    if inject_fleet_outage_after is not None:
+        fleet_outage_injection_stats = _install_fleet_outage_injection(
+            eng, ctx, started_at, inject_fleet_outage_after)
+        print(f"live: fleet-outage injection ARMED — activates at "
+              f"t+{inject_fleet_outage_after:.1f}min (--inject-fleet-outage-after)")
 
     rs = real_tier.real_spawn(adapter=adapter)
     rs.__enter__()                                # install REAL spawn wiring (host-cli or echo)
@@ -555,6 +655,10 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         "abandoned_blocks": final_manifest.get("abandoned_blocks") or [],   # ADR-0007 §7: must be []
         "verdict_sealed_snapshot": verdict_sealed_snapshot,   # T16/AC-10: set iff outcome=="verdict_sealed_lost"
         "leftover_branches": leftover_branches,   # T19/row-19: must be [] at a clean session_end
+        # H2b: None unless --inject-fleet-outage-after was set; otherwise
+        # {"activated", "injected_raises", "resumed"} — see
+        # _install_fleet_outage_injection's own docstring.
+        "fleet_outage_injection": fleet_outage_injection_stats,
         # R4/AC-5a (block 01-38 T9): the whole run's event stream, the sole
         # source `core/counters.py::evaluate` reads (never manifest state) —
         # `eng.events` is the in-memory `_Events` sink `Engine(ctx)` defaults
@@ -588,6 +692,8 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
               f"gate will REJECT on this")
     else:
         print("live: leftover-branch sweep clean (row 19/GAP-F empirical check: 0)")
+    if fleet_outage_injection_stats is not None:
+        print(f"live: fleet-outage injection stats: {fleet_outage_injection_stats}")
     # R4/AC-5a: every declared counter — both classes — printed EVERY run,
     # not only on a breach (`core/counters.py::evaluate`'s own `lines`).
     _counters_ok, _counters_lines, _counters_reasons = counters.evaluate(result["events"])
@@ -643,6 +749,18 @@ def build_parser():
                         "claude call (resume/amend/abandon), injected via the real "
                         "settle path. OFF by default: a COMPLEX SIM omits this and its "
                         "pages reach the real human — NEVER enable it for a complex run.")
+    ap.add_argument("--inject-fleet-outage-after", type=float, default=None,
+                    dest="inject_fleet_outage_after", metavar="MIN",
+                    help="block 01-38 T19 gate fix H2b: from wall-clock MIN minutes "
+                        "after run start, every `eng._spawn_worker` ATTEMPT raises a "
+                        "simulated CLI-refusal (the real §2b.1 spawn-time-refusal shape) "
+                        "until the engine's own fleet-outage pause+self-release opens, "
+                        "escalates, and resumes — a faithful, orphan-free full-fleet "
+                        "outage injection, NOT a manual pkill (see _install_fleet_outage_"
+                        "injection's own docstring for the resume-coupled off-switch). "
+                        "Omitted (default None) installs nothing — zero behavior change "
+                        "for every other caller. Use `--workers` >= 2 so \"full fleet\" "
+                        "is meaningful.")
     return ap
 
 
@@ -973,7 +1091,8 @@ def main(argv=None):
                               budget_min=args.budget_min, poll_sec=args.poll_sec,
                               scope=args.scope, adapter=args.adapter,
                               operator_proxy=args.operator_proxy,
-                              expect_pages=args.expect_pages)
+                              expect_pages=args.expect_pages,
+                              inject_fleet_outage_after=args.inject_fleet_outage_after)
         except LiveRunError as e:
             print(f"REFUSED: {e}", file=sys.stderr)
             exit_code = 2
