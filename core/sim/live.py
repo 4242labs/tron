@@ -847,30 +847,97 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     return (not reasons), reasons
 
 
+# block 01-38 T19 gate fix H2a (AMENDMENTS 260715): a BENIGN-CHURN DENYLIST,
+# not an allowlist — an allowlist can only ever catch KNOWN sensitive paths;
+# inverting means an UNKNOWN sensitive gitignored path (a live worker
+# breaching into `.claude/settings.json`, `.env`, `config.yaml`, `.sandbox/`,
+# or anything else nobody thought to allowlist) still trips the breach. The
+# denylist itself must stay comprehensive enough to cover every write this
+# harness's OWN normal operation legitimately makes into the REAL worktree
+# (imports firing after this module's own `_git_state()` baseline writes
+# fresh `.pyc`s into `core/__pycache__/`, a coverage run, ...) — an
+# incomplete denylist here means every real run FALSE-REJECTs on the
+# harness's own footprint, not a worker's.
+_BENIGN_IGNORED_CHURN_DIRS = frozenset({
+    "__pycache__", ".pytest_cache", ".venv", "venv", "dist", "build", "htmlcov",
+})
+
+
+def _is_benign_churn(path):
+    """True iff `path` (a repo-relative, forward-slash `git status --porcelain`
+    path) is harness-generated churn the containment self-proof must NEVER
+    treat as a breach — block 01-38 T19 gate fix H2a's denylist, matched at
+    ANY path depth (a component match, not just a root prefix), comprehensive
+    per the AMENDMENTS 260715 list: `__pycache__/`, `*.py[cod]`, `*.pyo`,
+    `.pytest_cache/`, `.venv/`/`venv/`, `dist/`, `build/`, `*.egg-info/`,
+    `.coverage`, `htmlcov/`, `logs/*.log`. Everything else gitignored — an
+    UNKNOWN path, deliberately, since this is a denylist — is sensitive."""
+    parts = path.split("/")
+    if any(p in _BENIGN_IGNORED_CHURN_DIRS for p in parts):
+        return True
+    if any(p.endswith(".egg-info") for p in parts):
+        return True
+    base = parts[-1]
+    if base.endswith((".pyc", ".pyo", ".pyd")):
+        return True
+    if base == ".coverage" or base.startswith(".coverage."):
+        return True
+    if path.startswith("logs/") and base.endswith(".log"):
+        return True
+    return False
+
+
 def _git_state():
-    """(HEAD, porcelain) of the REAL tron-app worktree — the T19 Completion-
-    Gate containment self-proof baseline (`core/prompt_conformance.py`'s own
-    pattern, reused verbatim here since this harness carries the SAME risk:
-    it spawns REAL claude agents). `git -C <ABSOLUTE APP_ROOT>` reads the
-    worktree's own repo state regardless of this process's cwd;
-    `--untracked-files=all` means a NEW untracked file (not just a commit or
-    a tracked-file edit) also trips the after-check. A live run's spawned
-    workers are cwd-isolated to the DISPOSABLE scaffold copy this driver
-    creates (`copy_real_scaffold`) and never given any reason (prompt
-    content, task scope) to touch APP_ROOT — but unlike `core/
-    prompt_conformance.py`'s `--tools ""` containment, a live worker is a
-    FULL agentic session by necessity (it must really build the scaffold
-    app), so cwd-isolation is a strong deterrent, not an OS-level sandbox
-    boundary. This self-proof is the DETECTION backstop for that gap: it
-    cannot physically stop a worker from writing outside its cwd, but it
-    guarantees any such write is caught, loud, immediately — never a silent
-    breach discovered days later, the exact T15 failure shape."""
+    """(HEAD, tracked+untracked porcelain, sensitive-ignored path set) of the
+    REAL tron-app worktree — the T19 Completion-Gate containment self-proof
+    baseline (`core/prompt_conformance.py`'s own pattern, reused verbatim
+    here since this harness carries the SAME risk: it spawns REAL claude
+    agents). `git -C <ABSOLUTE APP_ROOT>` reads the worktree's own repo state
+    regardless of this process's cwd; `--untracked-files=all` means a NEW
+    untracked file (not just a commit or a tracked-file edit) also trips the
+    after-check. A live run's spawned workers are cwd-isolated to the
+    DISPOSABLE scaffold copy this driver creates (`copy_real_scaffold`) and
+    never given any reason (prompt content, task scope) to touch APP_ROOT —
+    but unlike `core/prompt_conformance.py`'s `--tools ""` containment, a
+    live worker is a FULL agentic session by necessity (it must really build
+    the scaffold app), so cwd-isolation is a strong deterrent, not an
+    OS-level sandbox boundary. This self-proof is the DETECTION backstop for
+    that gap: it cannot physically stop a worker from writing outside its
+    cwd, but it guarantees any such write is caught, loud, immediately —
+    never a silent breach discovered days later, the exact T15 failure shape.
+
+    H2a (block 01-38 T19 gate fix): plain `git status --porcelain
+    --untracked-files=all` is BLIND to a write under a GITIGNORED path
+    (`.gitignore:4 .claude/`, `:12 .env`, `:17 config.yaml`, ...) — a live
+    worker breaching into `.claude/settings.json` (alters every future
+    Claude session), `.env`, `config.yaml`, `.sandbox/` would pass the old
+    self-proof with ZERO trace, strictly worse than the T15 incident (no
+    trace at all). This function ALSO runs `git status --porcelain
+    --untracked-files=all --ignored` and returns the SENSITIVE subset of the
+    `!!`-marked ignored paths — every one NOT matched by
+    `_is_benign_churn`'s denylist (see its own docstring). `main`'s breach
+    check becomes `head changed OR tracked-porcelain changed OR
+    sensitive-ignored changed`.
+
+    KNOWN BOUNDARY (stated, not solved, here): `git -C _APP_ROOT` can only
+    ever see writes INSIDE this worktree. A write OUTSIDE it — `~/.claude/
+    CLAUDE.md`, `~/.ssh`, `~/.bashrc`, any other path off a spawned worker's
+    real home directory or the filesystem at large — is invisible to this
+    self-proof entirely, by construction; it is not this function's reach to
+    defend, only cwd-isolation (the worker's task scope + prompt content)
+    deters it at all."""
     head = subprocess.run(["git", "-C", _APP_ROOT, "rev-parse", "HEAD"],
                           capture_output=True, text=True).stdout.strip()
     status = subprocess.run(["git", "-C", _APP_ROOT, "status", "--porcelain",
                             "--untracked-files=all"],
                            capture_output=True, text=True).stdout
-    return head, status
+    ignored_raw = subprocess.run(["git", "-C", _APP_ROOT, "status", "--porcelain",
+                                  "--untracked-files=all", "--ignored"],
+                                 capture_output=True, text=True).stdout
+    sensitive_ignored = frozenset(
+        line[3:] for line in ignored_raw.splitlines()
+        if line.startswith("!! ") and not _is_benign_churn(line[3:]))
+    return head, status, sensitive_ignored
 
 
 def _install_sigterm():
@@ -898,7 +965,7 @@ def main(argv=None):
     # backstop, not a physical sandbox boundary — a live worker is a full
     # agentic session by necessity, cwd-isolated to a disposable scaffold
     # copy, never an OS-level jail.
-    head_before, status_before = _git_state()
+    head_before, status_before, sensitive_before = _git_state()
     exit_code = 1
     try:
         try:
@@ -926,16 +993,26 @@ def main(argv=None):
         exit_code = 0 if ok else 1
         return exit_code
     finally:
-        head_after, status_after = _git_state()
-        breach = head_after != head_before or status_after != status_before
+        head_after, status_after, sensitive_after = _git_state()
+        # H2a (block 01-38 T19 gate fix, AMENDMENTS 260715): breach = head
+        # changed OR tracked-porcelain changed OR sensitive-ignored changed
+        # — the third arm is the denylist-filtered gitignored-path set
+        # (`_is_benign_churn`), catching a write under ANY unknown sensitive
+        # gitignored path (`.claude/`, `.env`, `config.yaml`, `.sandbox/`,
+        # ...) the plain porcelain status is structurally blind to.
+        sensitive_changed = sensitive_after != sensitive_before
+        breach = (head_after != head_before or status_after != status_before
+                  or sensitive_changed)
         if breach:
             print(f"live: CRITICAL — CONTAINMENT SELF-PROOF FAILED: the real tron-app "
                   f"worktree's git HEAD/working-tree changed during this run "
                   f"(head_before={head_before[:12]} head_after={head_after[:12]} "
-                  f"status_changed={status_after != status_before}) — a spawned agent "
-                  f"wrote into the REAL engineering repo, not the disposable scaffold "
-                  f"copy. STOP, investigate, do not trust this run's result "
-                  f"(exit_code would have been {exit_code}; overriding to 3).",
+                  f"status_changed={status_after != status_before} "
+                  f"sensitive_ignored_changed={sensitive_changed} "
+                  f"sensitive_ignored_new={sorted(sensitive_after - sensitive_before)}) — "
+                  f"a spawned agent wrote into the REAL engineering repo, not the "
+                  f"disposable scaffold copy. STOP, investigate, do not trust this run's "
+                  f"result (exit_code would have been {exit_code}; overriding to 3).",
                   file=sys.stderr)
             return 3   # a `finally` return OVERRIDES the try block's — deliberate: a
                        # containment breach must never be masked by an otherwise-clean
