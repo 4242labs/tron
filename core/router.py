@@ -308,7 +308,7 @@ def _route_online(eng, manifest, workers, gates, rep):
                       f"acceptance suite passes.")
         assignment += _handover_briefing(manifest, block)
         eng.emit(
-            "assign.worker",
+            vocab.TPL_ASSIGN_WORKER,
             assignment,
             slots={"assignment": assignment, "merge_path": ""},
             worker_id=agent_id,

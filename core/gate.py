@@ -168,6 +168,7 @@ if _HERE not in sys.path:
 import gitobs   # noqa: E402 — core/gitobs.py, the ONE git-observation seam
 import landing  # noqa: E402 — core/landing.py, Wave-1's ONE landing primitive
 import emit      # noqa: E402 — core/emit.py, block 01-38 T7's single emit API (patch_obj on gate_state)
+import vocab      # noqa: E402 — core/vocab.py, R2 emit-id constants (T14 totality: reference, never a literal)
 
 # NOTE (wave 7 consolidation): there is deliberately NO per-stage attempt cap
 # in this module — not here, not anywhere below. This gate is a PURE
@@ -336,7 +337,7 @@ def _advance_local(eng, block, gate_state, local_report):
     if not gate_state["local_ordered"]:
         if wid and not eng.dry:
             eng.emit(
-                "gate.local",
+                vocab.TPL_GATE_LOCAL,
                 f"[TRON]  {wid} — gate.local: run the block's acceptance "
                 f"suite locally on {branch} and report a structured "
                 f"local-pass verdict (evidence, not a bare 'done').",
@@ -484,7 +485,7 @@ def _advance_record(eng, block, gate_state):
                            eng.paths["root"], truth_ref, block_file)}, block=block)
         if wid and not eng.dry:
             eng.emit(
-                "gate.record",
+                vocab.TPL_GATE_RECORD,
                 f"[TRON]  {wid} — gate.record: commit your block-doc completion on "
                 f"{branch} per your session-end skill (§6): flip {block_file} to "
                 f"`**Status:** ✅ Done` and add the `**Completed:**` date. Your §6 "
@@ -565,7 +566,7 @@ def _advance_close(eng, block, gate_state):
     if not gate_state["close_ordered"]:
         if wid and not eng.dry:
             eng.emit(
-                "close.worker",
+                vocab.TPL_CLOSE_WORKER,
                 f"[TRON]  {wid} — ✅ on trunk. Session-end: commit your close-out "
                 f"paperwork on {branch} and reply `clean {block}:`. I mint your land "
                 f"grant and order the land the moment I read it; then run land.sh, "

@@ -135,6 +135,7 @@ import architect   # noqa: E402 — core/architect.py, the log-review queue this
 import knobs as knobs_mod   # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (wave 16)
 import intake as intake_mod   # noqa: E402 — core/intake.py, block 01-38 T1's private per-agent intake
 import emit         # noqa: E402 — core/emit.py, block 01-38 T7's single emit API
+import vocab         # noqa: E402 — core/vocab.py, R2 emit-id constants (T14 totality: reference, never a literal)
 
 
 def review_block(typ):
@@ -306,7 +307,7 @@ def on_review_done(eng, manifest, rep):
                        agent_id=agent_id, typ=typ)
         if not eng.dry:
             eng.emit(
-                "gate.review",
+                vocab.TPL_GATE_REVIEW,
                 f"[TRON]  {agent_id} — gate.review: attest FULL coverage since "
                 f"the last {typ} review before I release you (a second "
                 f"worker.review_done confirms).",

@@ -85,6 +85,7 @@ import casestate  # noqa: E402 — core/casestate.py, wave 18's architect-first 
 import knobs as knobs_mod   # noqa: E402 — core/knobs.py, the ONE knobs.yaml seam (fleet_outage_deaths)
 import intake as intake_mod   # noqa: E402 — core/intake.py, block 01-38 T1's private per-agent intake
 import emit   # noqa: E402 — core/emit.py, block 01-38 T7's single emit API
+import vocab   # noqa: E402 — core/vocab.py, R2 emit-id constants (T14 totality: reference, never a literal)
 
 
 def _agent_id(block):
@@ -294,7 +295,7 @@ def fill(eng, snapshot, view=None):
             except Exception:   # noqa: BLE001 — never let role resolution block a spawn
                 _role, _persona = "engineer", ""
         eng.emit(
-            "spawn.worker",
+            vocab.TPL_SPAWN_WORKER,
             f"[TRON]  {agent_id} — you're spawned for block {block['id']}. "
             f"Report online with your OWN feature branch name (a structured "
             f"`worker.online` report carrying `worker.branch`) — I assign "
