@@ -41,10 +41,16 @@ Two scenarios:
   operator CASE-<n> settle regex still works, zero judgment calls (now
   trivially true — there is no judgment tool left to call).
 
-Plus a structural/grep proof: `judge` is imported by NO `core/*.py` module
-at all (the free-text grader's sole call site, `core/classify.py`, no
-longer imports `engine/judge.py` — a strictly stronger claim than the
-pre-01-37 "exactly one module" proof) and, at the end, a live re-run of
+Plus a structural/grep proof: the free-text classify GRADER
+(`judge.call("classify_message", ...)`) has NO `core/*.py` call site, and
+`core/classify.py` (the grader's former sole home) touches `judge` nowhere
+at all. Block 01-38 T24 (ADR-0003 D-J) then adds the ONE judge lane that
+legitimately survives in `core/*` — AIDE (`judge.call_aide`), a real LLM BY
+DESIGN — so the proof is TIGHTENED (not loosened): the only core modules
+importing `judge` are the two PINNED AIDE consumers (`bootup.py` +
+`casestate.py`), each using it EXCLUSIVELY via the aide lane, never the
+grader — a new/unexpected judge consumer, or any non-aide judge use, FAILS.
+At the end, a live re-run of
 every prior `core/*_rig.py` fixture as subprocesses — block 01-37's
 structured-only door is purely additive to every one of them: every prior
 rig already sent only structured lines, so `classify()` remains a same-tag
@@ -547,28 +553,71 @@ def run_scenario_2():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# structural / grep proof — the free-text GRADER is retired: `judge` is
-# imported by NO `core/*.py` module at all (strictly stronger than the
-# pre-01-37 "exactly one module" claim); no raw git/subprocess crept in.
+# structural / grep proof — the free-text CLASSIFY GRADER is retired
+# (`judge.call("classify_message", ...)` has no core call site) AND the ONLY
+# judge lane that legitimately survives in `core/*` is AIDE (`judge.call_aide`,
+# block 01-38 T24, ADR-0003 D-J — AIDE is a real LLM BY DESIGN, the binding
+# AIDE-must-be-LLM mandate), pinned to exactly its two sanctioned call sites.
+# No raw git/subprocess crept in.
 # ═══════════════════════════════════════════════════════════════════════
+
+# block 01-38 T24: the ONLY `core/*.py` modules that may touch `engine/judge.
+# py`, and ONLY for the AIDE advisory lane (never the retired classify
+# grader). PINNED (identity, not bare membership — the carried tightening
+# rule): a NEW, unexpected core judge consumer is a FAIL here, and any judge
+# usage that is NOT the aide lane is a FAIL even in these two.
+_ALLOWED_JUDGE_AIDE_CONSUMERS = {"bootup.py", "casestate.py"}
+
+
 def run_grep_proof():
     core_files = sorted(
         f for f in os.listdir(HERE)
         if f.endswith(".py") and not f.endswith("_rig.py") and f != "__init__.py")
+    # (a) the retired free-text GRADER — `judge.call("classify_message", ...)`
+    #     — has NO core call site anywhere (T8's real invariant).
+    grader_call_files = []
+    # (b) every module that imports judge at all, and whether its judge usage
+    #     is EXCLUSIVELY the AIDE lane (call_aide / a call("aide") reference).
     judge_import_files = []
-    judge_call_files = []
+    non_aide_judge_users = []
     for fname in core_files:
         with open(os.path.join(HERE, fname)) as fh:
             text = fh.read()
+        if re.search(r"""\bjudge\.call\s*\(\s*["']classify_message["']""", text):
+            grader_call_files.append(fname)
         if re.search(r"^\s*import\s+judge\b", text, re.MULTILINE):
             judge_import_files.append(fname)
-        if re.search(r"\bjudge\.call\s*\(", text):
-            judge_call_files.append(fname)
-    ok("G1 (GRADER-RETIRED GREP PROOF — must be GREEN, T8): NO core/*.py "
-       "module imports engine/judge.py any more — the free-text grader has "
-       "no call site left anywhere in this engine",
-       judge_import_files == [] and judge_call_files == [],
-       f"judge_import_files={judge_import_files} judge_call_files={judge_call_files}")
+            # A bare `judge.call(` that is NOT `call_aide` and NOT a
+            # `call("aide"...)` reference would be a non-AIDE judge use. The
+            # only `judge.call(` token in the aide consumers is the docstring
+            # phrase `judge.call("aide")` (the aide lane itself) — allow the
+            # "aide" tool literal, forbid any other tool literal.
+            bad = re.findall(r"""\bjudge\.call\s*\(\s*["'](?!aide["'])[a-z_]+["']""", text)
+            if bad:
+                non_aide_judge_users.append((fname, bad))
+    # classify.py — the grader's OWN former home — must be fully judge-free
+    # in its CODE (imports none, invokes none): the strongest form of
+    # "retired at its site". A docstring mention of `engine/judge.py` (prose
+    # naming the retired tool) is not a use — key on `import judge` and a
+    # real `judge.<attr>(` invocation, never a bare token.
+    with open(os.path.join(HERE, "classify.py")) as fh:
+        classify_text = fh.read()
+    classify_judge_free = (not re.search(r"^\s*import\s+judge\b", classify_text, re.MULTILINE)
+                           and not re.search(r"\bjudge\.\w+\s*\(", classify_text))
+
+    ok("G1 (GRADER-RETIRED GREP PROOF — must be GREEN, T8; TIGHTENED for "
+       "block 01-38 T24): the free-text classify GRADER "
+       "(judge.call('classify_message', ...)) has NO core call site; "
+       "core/classify.py (its former home) touches judge NOWHERE; and the "
+       "ONLY core modules importing judge are the PINNED AIDE-lane consumers "
+       "(bootup.py + casestate.py, ADR-0003 D-J — AIDE is a real LLM by "
+       "design), each using judge EXCLUSIVELY via call_aide, never the grader",
+       grader_call_files == []
+       and classify_judge_free
+       and set(judge_import_files) == _ALLOWED_JUDGE_AIDE_CONSUMERS
+       and non_aide_judge_users == [],
+       f"grader_call_files={grader_call_files} classify_judge_free={classify_judge_free} "
+       f"judge_import_files={judge_import_files} non_aide_judge_users={non_aide_judge_users}")
 
     for fname in ("classify.py", "door.py", "snapshot.py", "router.py", "tick.py"):
         with open(os.path.join(HERE, fname)) as fh:

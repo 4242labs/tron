@@ -184,6 +184,15 @@ class Engine:
         self._mailbox_seq = {}   # wid -> next engine->worker mailbox seq (fallback only)
         self._manifest = None    # the live manifest for the CURRENT tick/bootup pass (R-A)
         self._models = {}        # role -> model, the session override start(models=...) layers
+        # Block 01-38 T24 (ADR-0003 D-J reconciliation (a)): AIDE's OWN model —
+        # an engine-builtin LLM lane, NOT a roles.yaml capability class (BUILD/
+        # REVIEW/TRIAGE/CLOSE stay sealed); explicitly EXEMPT from D-D's "model-
+        # absent = boot-fatal" law (`validate_models` above never reads this).
+        # Set via `set_aide_model` (`core/bootup.py::_ask_aide_model`, the
+        # restored session-knob question) or left `None`, in which case
+        # `engine/judge.py::_call_llm`'s own `model or TIER[tool]` already
+        # fails OPEN to `judge.AIDE_DEFAULT_MODEL` — no fallback duplicated here.
+        self._aide_model = None
         self._roles = None       # engine/roles.py::RolesConfig, resolved lazily on first spawn
         self._renderer = None    # engine/render.py::Renderer, resolved lazily on first emit
         project = ctx.load_project()
@@ -575,6 +584,25 @@ class Engine:
         if isinstance(m, str) and m.strip():
             return m.strip()
         return self._roles_config().model_for(role)
+
+    # ── block 01-38 T24 (ADR-0003 D-J): AIDE's own model — engine-builtin,
+    #     fail-open, never a roles.yaml role ──
+    def set_aide_model(self, model):
+        """Set the session's AIDE model knob (`core/bootup.py::_ask_aide_model`
+        is the one caller). `model` may be falsy (a blank/absent answer) — a
+        no-op stored as `None`, never boot-fatal (D-J reconciliation (a) is
+        explicitly exempt from the per-role `validate_models` fail-closed
+        law): the next `aide_model()` read (below) still resolves via
+        `judge.py`'s own built-in fail-open default."""
+        self._aide_model = (model or "").strip() or None
+
+    def aide_model(self):
+        """The session's AIDE model override, or `None` — callers pass this
+        straight through as `judge.call_aide(..., model=eng.aide_model())`;
+        `engine/judge.py::_call_llm`'s own `model or TIER[tool]` already
+        supplies the fail-open built-in default when this reads `None`, so
+        no fallback value is duplicated here."""
+        return self._aide_model
 
     def _resolve_role_for_block(self, block):
         """No `Role:`/`Tags:` header data flows through `core/switchboard.py

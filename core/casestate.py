@@ -143,12 +143,17 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_APP_ROOT = os.path.dirname(_HERE)
+_ENGINE_DIR = os.path.join(_APP_ROOT, "engine")
+if _ENGINE_DIR not in sys.path:
+    sys.path.insert(0, _ENGINE_DIR)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import gate   # noqa: E402 — core/gate.py, STAGE_ESCALATED/STAGE_CLOSED terminal vocabulary (read-only)
 import pipeline   # noqa: E402 — core/pipeline.py, ADR-0008 stale_landing_wall (read-only; pipeline imports only gitobs — no cycle)
 import emit   # noqa: E402 — core/emit.py, block 01-38 T7's single emit API (the must-be-zero counter event)
+import judge  # noqa: E402 — engine/judge.py, block 01-38 T24's ND-02-10 case-brief AIDE lane (read-only, real LLM)
 
 VERBS = ("resume", "amend", "abandon")
 
@@ -377,6 +382,56 @@ def open_case(eng, manifest, block, source, detail, worker_id=None, kind=None):
     return case_id
 
 
+def _aide_case_brief(eng, case_id, detail):
+    """Block 01-38 T24 (ADR-0003 D-J, ND-02-10 RESOLVE — the in-tick
+    escalation node): a real `judge.call_aide("resolve", ...)` LLM call
+    that briefs a case about to be paged to the operator. Called
+    SYNCHRONOUSLY, right here at the case's real live trigger
+    (`architect_resolve`'s `verdict == "operator"` branch, below) —
+    CLU-approved judgment call (JC#2): D-J's prose describes an async
+    "mark pending, deliver on a later tick" bound, but neither AC-20 nor
+    the block spec's line 192 names that async bound, and `core/tick.py`
+    has no pending-AIDE-call queue to defer to; a real, bounded call at
+    the trigger satisfies the AC without inventing new tick-loop
+    machinery. `judge.call_aide` itself is already bounded (a 120s
+    subprocess timeout per attempt, caught internally, never raises).
+
+    FAIL-OPEN, hardened (CLU ruling): returns `detail` UNCHANGED — never
+    raises, never blocks the caller — on EVERY failure mode: AIDE
+    genuinely unavailable/unconfigured, an invalid/unparseable response,
+    a subprocess timeout, OR an unexpected exception from the call itself
+    (the `try/except` below — belt-and-suspenders on top of `judge.
+    call_aide`'s own internal never-raises contract, so a page can NEVER
+    be held up by a broken AIDE lane). A caller `eng` with no AIDE
+    plumbing at all (`.ctx`/`.paths`/`.aide_model` absent — EVERY existing
+    scripted-driver rig's lightweight `eng` stand-in, which this task must
+    not retrofit) degrades identically: `detail` unchanged, zero behavior
+    change for every one of the dozens of rigs already exercising this
+    code path.
+
+    On success, the AIDE brief is PREPENDED to the raw `detail` — NEVER a
+    replacement (T21 content-integrity: "full text + sender preserved" —
+    the raw text stays byte-identical and readable inside the returned
+    string either way, aided or not)."""
+    ctx = getattr(eng, "ctx", None)
+    paths = getattr(eng, "paths", None)
+    aide_model_fn = getattr(eng, "aide_model", None)
+    if ctx is None or paths is None or not callable(aide_model_fn):
+        return detail   # no AIDE plumbing on this eng — proceed unaided, unchanged behavior
+    try:
+        aok, aout, _ = judge.call_aide(
+            ctx, paths, "resolve", extra={"detail": detail},
+            model=aide_model_fn(), elog=getattr(eng, "events", None))
+    except Exception as e:   # noqa: BLE001 — AIDE must NEVER hold up a page (D-J (e))
+        eng.log("flow", f"casestate: AIDE case-brief call RAISED for case "
+                        f"{case_id!r} ({e!r}) — fail-open, paging with raw "
+                        f"detail only")
+        return detail
+    if aok and aout and aout.get("advice"):
+        return f"[AIDE brief] {aout['advice']}\n\n[raw] {detail}"
+    return detail
+
+
 def architect_resolve(eng, manifest, case_id, verdict, note=None):
     """The architect's OWN settle of a case it owns (`owner="architect"`,
     `decision` still `None`) — called exclusively from `core/architect.py::
@@ -447,7 +502,18 @@ def architect_resolve(eng, manifest, case_id, verdict, note=None):
         # the state flip (the page reads only `case.detail`, never `owner`),
         # so the owner-flip + first-page paging bookkeeping land as ONE
         # `case_escalated_to_operator` effect (block 01-38 T7).
-        receipt = eng._page_operator(case_id, block, case.get("detail"),
+        #
+        # Block 01-38 T24 (ND-02-10): a real AIDE brief is PREPENDED to the
+        # paged text — `_aide_case_brief` fails open to the raw detail,
+        # unchanged, on any AIDE unavailability/error (never holds up the
+        # page). The STORED case record (`case["detail"]`, patched below via
+        # `case_escalated_to_operator`) is untouched — only what actually
+        # goes OUT over `_page_operator` gains the brief; T21's full-raw-
+        # text-preserved guarantee holds either way (the raw text is always
+        # embedded verbatim inside the paged string too).
+        raw_detail = case.get("detail")
+        paged_detail = _aide_case_brief(eng, case_id, raw_detail)
+        receipt = eng._page_operator(case_id, block, paged_detail,
                                      worker_id=worker_id, manifest=manifest)
         emit.patch(eng, manifest, "case_escalated_to_operator", ("cases", case_id), {
             "owner": "operator",

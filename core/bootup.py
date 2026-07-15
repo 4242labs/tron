@@ -28,10 +28,19 @@ Every prompt string below is copied verbatim from `engine/console.py`
 `_ask_role_models`/`_recommended_model`/`_role_label`) — this is the check
 against which `test:<bootup_journey_sequence_frozen>` holds the sequence.
 
+Block 01-38 T24 (ADR-0003 D-J) layers the AIDE advisory lane onto this SAME
+sequence, ahead of the two questions it advises — `_ask_aide_model` (a new
+session knob, fail-open) -> `_aide_advise_scope` (ND-01-08) -> the scope
+question -> `_aide_advise_counts` (ND-01-09) -> the worker_count question.
+AIDE is advisory ONLY (never decides scope/worker_count itself) and is a
+REAL LLM call every time (`engine/judge.py::call_aide`, never a heuristic/
+deterministic stand-in — the binding AIDE-must-be-LLM mandate) that
+degrades to "proceeding unaided" on any failure (fail-open, never blocks
+boot). `judge.call_aide`'s own chokepoint already writes the
+`aide_invocation` forensic event on every real call (T7's registry entry,
+`core/emit.py`) — this module does not duplicate that emission.
+
 NOT in this module (deliberately, by task split):
-  - The AIDE advisory calls (`_ask_aide_model`/`_aide_advise_scope`/
-    `_aide_advise_counts` in the legacy console) — block 01-38 T24's job
-    ("T24 wires the AIDE lane"); T23's own proof list names no AIDE test.
   - The REPL / fleet-view / attach / run-control commands — not named by
     any T23-25 acceptance criterion; only the BOOTUP JOURNEY is in scope
     here. Restoring the full interactive shell is not requested by this
@@ -55,7 +64,26 @@ not re-implemented here — so BOTH this interactive journey and a headless
 caller that bypasses this module entirely (`eng.start(...)` directly, the
 harness's own documented shape) get the identical fail-closed guarantee. A
 `roles.RolesError` raised there propagates straight up through `bootup()`
-uncaught, exactly like `engine.BootupError` already does.
+uncaught, exactly like `engine.BootupError` already does. (AIDE's OWN model
+is the opposite — explicitly FAIL-OPEN, D-J reconciliation (a); see
+`_ask_aide_model` below.)
+
+ND-01-14 RESOLVE / ND-09 PARLEY `ask` (disclosed T24 scope note): D-J maps
+FIVE AIDE nodes total. The two bootup nodes (scope/counts, above) and the
+runtime escalation case-brief (`core/casestate.py::architect_resolve`,
+wired by this same task) all have REAL, live triggers in `core/*` and are
+wired for real. `ask` (an operator posing a fresh free-text question
+mid-run) has NO live trigger anywhere in `core/*` today — grepped, no
+"operator asks a new question" concept exists (only the OPPOSITE: an
+operator ANSWERING an already-open case, `core/casestate.py::settle`, a
+different thing). The REFERENCE implementation has the SAME disclosed gap
+for its own ND-01-14 node (`engine/console.py::_aide_resolve`'s own
+docstring: "this block's frozen journey does not itself wire a live
+resume-conflict TRIGGER... this is the advisory half ready for it to
+call"). `_aide_answer_ask` below mirrors that shape exactly: a real,
+directly-callable, real-LLM primitive (tested directly), not wired to any
+live in-tick trigger, since none exists to wire it to — inventing a new
+"operator asks mid-run" subsystem is not named by any T23-25 AC.
 """
 import os
 import sys
@@ -67,6 +95,7 @@ if _HERE not in sys.path:
 import emit               # noqa: E402 — core/emit.py, the one emit API (the scope-fallback event)
 import pipeline            # noqa: E402 — core/pipeline.py, the trunk-pinned view (scope resolution)
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, the module this fronts
+import judge                              # noqa: E402 — engine/judge.py, the ONE real-LLM AIDE lane
 
 DIM, RST, BOLD = "\033[2m", "\033[0m", "\033[1m"
 
@@ -92,6 +121,88 @@ class Bootup:
         self.ask_before_merging = None   # set by bootup() — T25 persists this
         self.worker_models = None        # set by bootup() — T25 persists this
         self.engine = None                # the booted Engine instance, post-bootup
+
+    # ── AIDE (block 01-38 T24, ADR-0003 D-J): a real judge.call("aide") LLM
+    #     lane, NEVER a heuristic/deterministic stand-in — advisory only.
+    #     `judge.call_aide`'s own chokepoint writes the `aide_invocation`
+    #     forensic event on every real call (T7's registry, core/emit.py);
+    #     not duplicated here. ──
+    def _ask_aide_model(self, eng, staged=None):
+        """AIDE's own model (D-J reconciliation (a)): a session knob,
+        FAIL-OPEN to judge's built-in default — resolved BEFORE any AIDE
+        call below so the very first advisory already rides the
+        operator's choice. Never boot-fatal (unlike the per-role model
+        question): a headless/staged caller with no "aide" answer
+        silently keeps the built-in default. Byte-for-byte copy of
+        `engine/console.py::_ask_aide_model`."""
+        default = judge.TIER.get("aide", judge.AIDE_DEFAULT_MODEL)
+        if staged is not None:
+            v = (staged.get("aide") or "").strip()
+        else:
+            v = input(f"Model for AIDE (the operator's LLM advisor) [{default}]? ").strip()
+        eng.set_aide_model(v or default)
+
+    def _aide_advise_scope(self, eng):
+        """ND-01-08 SET SCOPE: AIDE — a REAL LLM (`judge.call_aide`, never
+        a heuristic) — advises on scope, including which block to pick,
+        over the dispatch-eligible candidates on the current trunk-pinned
+        view. Advisory only — never sets scope itself; the operator's own
+        answer right after this always wins. Fail-safe: AIDE unavailable
+        -> proceeds unaided, never a deterministic substitute. Byte-for-
+        byte copy of `engine/console.py::_aide_advise_scope`, retargeted
+        at `core.pipeline` (this stack's dispatch-eligible read) instead
+        of the legacy `reader.dispatchable(row, idx)` loop."""
+        view, _sha = pipeline.read_view(eng)
+        candidates = pipeline.dispatchable(eng, {}, view=view)[:5]
+        block_files = [c["block_file"] for c in candidates if c.get("block_file")]
+        ok, out, _ = judge.call_aide(
+            eng.ctx, eng.paths, "scope",
+            extra={"candidate_blocks": [c["id"] for c in candidates]},
+            block_files=block_files, model=eng.aide_model(), elog=eng.events)
+        if ok and out and out.get("advice"):
+            print(f"{DIM}  AIDE: {out['advice']}{RST}")
+            if out.get("recommended_block"):
+                print(f"{DIM}  AIDE recommends: block {out['recommended_block']}{RST}")
+        else:
+            print(f"{DIM}  AIDE: unavailable — proceeding unaided; your scope choice "
+                  f"below decides.{RST}")
+
+    def _aide_advise_counts(self, eng, scope):
+        """ND-01-09 SET COUNTS: AIDE advises on `worker_count` only
+        (`#architects` is fixed at 1 this version — no count to advise,
+        ADR-0003 D-D/D-J BLOCKER-2) via a real `judge.call_aide`, given
+        the JUST-ANSWERED scope. Fail-safe: unavailable -> proceeds
+        unaided. Byte-for-byte copy of `engine/console.py::
+        _aide_advise_counts` (passed `scope` directly — this module has
+        no `eng.st.scope` to read back)."""
+        ok, out, _ = judge.call_aide(
+            eng.ctx, eng.paths, "counts", extra={"scope": scope},
+            model=eng.aide_model(), elog=eng.events)
+        if ok and out and out.get("advice"):
+            print(f"{DIM}  AIDE: {out['advice']}{RST}")
+        else:
+            print(f"{DIM}  AIDE: unavailable — proceeding unaided.{RST}")
+
+    def _aide_answer_ask(self, eng, question):
+        """ND-09 PARLEY open `ask` (ADR-0003 D-J): a real `judge.call_aide`
+        'ask'-mode call attempting to answer `question` strictly from the
+        Project Docs. A directly-callable, testable, REAL-LLM primitive —
+        see this module's own docstring for why no live in-tick trigger
+        exists in `core/*` to wire it to yet (no "operator poses a fresh
+        question mid-run" concept exists anywhere in `core/*` today;
+        mirrors the reference `engine/console.py::_aide_resolve`'s own
+        disclosed same-shape gap for ND-01-14). Returns `(answered,
+        advice)`: `answered` is True ONLY when AIDE both responded AND
+        explicitly signaled it could answer from the docs (`out.get
+        ("answered")` — the ask-mode-only field `engine/judge.py::_v_aide`
+        validates); `(False, None)` on any failure or an explicit "can't
+        answer from the docs" — never a heuristic guess either way."""
+        ok, out, _ = judge.call_aide(
+            eng.ctx, eng.paths, "ask", extra={"question": question},
+            model=eng.aide_model(), elog=eng.events)
+        if ok and out and out.get("advice"):
+            return bool(out.get("answered")), out["advice"]
+        return False, None
 
     # ── 1. scope: [1] all / [2] a phase / [3] a range of blocks ──
     def _ask_scope(self, eng):
@@ -274,7 +385,15 @@ class Bootup:
         print(f"{BOLD}== TRON bootup =={RST}")
         eng = Engine(self.ctx)
 
+        # ADR-0003 D-J: AIDE's own model, resolved BEFORE any AIDE call
+        # (fail-open — never boot-fatal, unlike the per-role model question
+        # below). Then ND-01-08 SET SCOPE (advisory only — never sets scope
+        # itself) ahead of the real scope question, then ND-01-09 SET COUNTS
+        # ahead of the worker_count question, given the just-answered scope.
+        self._ask_aide_model(eng, staged=staged_model)
+        self._aide_advise_scope(eng)
         scope = self._ask_scope(eng)
+        self._aide_advise_counts(eng, scope)
         worker_count = self._ask_worker_count()
         self.ask_before_merging = self._ask_before_merging_q()
         self.worker_models = self._ask_role_models(eng, staged=staged_model)
