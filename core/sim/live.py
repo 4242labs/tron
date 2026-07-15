@@ -56,6 +56,7 @@ CLI: `python3 -m core.sim.live --workers 1 --budget-min 60 [--poll-sec 20]
 [--scaffold-src <dir>]`. Run SPARINGLY — this spends real tokens.
 """
 import argparse
+import copy
 import json
 import os
 import subprocess
@@ -337,7 +338,7 @@ def _courier(eng, manifest, delivered):
 
 def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
              poll_sec=DEFAULT_POLL_SEC, scope="all", max_loops=100000,
-             adapter="host-cli", operator_proxy=False):
+             adapter="host-cli", operator_proxy=False, expect_pages=0):
     """Boot + drive a real-LLM E2E SIM to a clean session-end (or a pause
     condition). Returns a structured result dict. ALWAYS tears the real fleet
     down. See module docstring for the clock, PULSE, and pause semantics.
@@ -346,7 +347,17 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     FREE integration smoke — real `worker_runner.py` OS processes, no `claude`,
     so the loop exercises boot -> tick -> PULSE (real pid probes) -> teardown
     -> 0-orphans without spending a token (echo workers never build/land, so
-    it ends on `budget`, never `session_end`; that is expected)."""
+    it ends on `budget`, never `session_end`; that is expected).
+
+    `expect_pages` (block 01-38 T16/AC-10 — VERDICT-SEALED EARLY STOP): the
+    SAME declared expectation `_acceptance_verdict` grades at the end (trivial
+    0, moderate exactly 1), now also read EVERY LOOP, mid-run. A page WITHIN
+    expectation stops nothing (the existing data-gathering continue-and-log
+    behavior, unchanged). The loop stops EARLY — before session_end/budget —
+    the instant acceptance is MATHEMATICALLY LOST (see `_verdict_sealed_reasons`
+    for the exact, narrower subset of conditions that qualify), capturing a
+    full state snapshot at the stop point. Default 0 preserves every existing
+    caller's behavior for a trivial run with no explicit expectation."""
     if scaffold_src:
         os.environ["TRON_REAL_SCAFFOLD_SRC"] = scaffold_src
 
@@ -372,6 +383,7 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     loop_i = 0
     boot_spawn = None
     proxy_settled = 0   # ADR-0007: operator-proxy-settled case count (result surface)
+    verdict_sealed_snapshot = None   # T16/AC-10: set only if the run stops early
 
     rs = real_tier.real_spawn(adapter=adapter)
     rs.__enter__()                                # install REAL spawn wiring (host-cli or echo)
@@ -425,6 +437,37 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
             manifest = state.load(ctx)
             pulse = _pulse(eng, root, manifest, loop_i, started_at)
 
+            # T16/AC-10 — VERDICT-SEALED EARLY STOP. Checked BEFORE the
+            # session_end branch below, EVERY loop, off whatever state exists
+            # so far: a mathematically-lost condition, once true, can never
+            # un-fire — so it must pre-empt even a LATER session_end. Letting
+            # the loop run on to a hollow "clean" completion after acceptance
+            # is already lost would be exactly the false-green shape
+            # R3-ACCEPT (`_acceptance_verdict`) exists to catch at the END;
+            # this catches it the INSTANT it becomes unrecoverable instead.
+            lost_reasons = _verdict_sealed_reasons(
+                {"events": list(eng.events.log), "cases": manifest.get("cases") or {},
+                 "operator_pages": manifest.get("operator_pages") or {},
+                 "abandoned_blocks": manifest.get("abandoned_blocks") or []},
+                expect_pages)
+            if lost_reasons:
+                outcome = "verdict_sealed_lost"
+                reason = "; ".join(lost_reasons)
+                verdict_sealed_snapshot = {
+                    "loop": loop_i,
+                    "elapsed_min": (time.time() - started_at) / 60.0,
+                    # a REAL deepcopy, never a live reference (same idiom
+                    # `core/casestate.py`'s safe-park-and-halt snapshot uses) —
+                    # a later mutation of the live manifest must never
+                    # retroactively reach into the captured snapshot.
+                    "manifest": copy.deepcopy(manifest),
+                    "events": list(eng.events.log),
+                    "reasons": lost_reasons,
+                }
+                print(f"  [VERDICT-SEALED] acceptance mathematically lost — "
+                      f"stopping early + snapshotting: {reason}", flush=True)
+                break
+
             if res.get("session_end") is not None:
                 session_end = res["session_end"]
                 outcome = "session_end"
@@ -470,6 +513,7 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         "scope": final_manifest.get("scope") or {},
         "proxy_settled": proxy_settled,   # ADR-0007: operator cases the LLM proxy settled
         "abandoned_blocks": final_manifest.get("abandoned_blocks") or [],   # ADR-0007 §7: must be []
+        "verdict_sealed_snapshot": verdict_sealed_snapshot,   # T16/AC-10: set iff outcome=="verdict_sealed_lost"
         # R4/AC-5a (block 01-38 T9): the whole run's event stream, the sole
         # source `core/counters.py::evaluate` reads (never manifest state) —
         # `eng.events` is the in-memory `_Events` sink `Engine(ctx)` defaults
@@ -481,6 +525,11 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     print(f"live: OUTCOME={outcome} reason={reason}")
     print(f"live: loops={loop_i} elapsed_min={result['elapsed_min']:.1f} "
           f"final_trunk_tip={final_tip}")
+    if verdict_sealed_snapshot is not None:
+        print(f"live: ⚠ VERDICT-SEALED early stop @ loop {verdict_sealed_snapshot['loop']} "
+              f"t+{verdict_sealed_snapshot['elapsed_min']:.2f}min — snapshot captured "
+              f"({len(verdict_sealed_snapshot['events'])} events, "
+              f"{len(verdict_sealed_snapshot['manifest'].get('cases') or {})} cases)")
     print(f"live: orphans_at_exit={orphans} (hard-killed: {escalated_kills})")
     if outcome == "session_end" and escalated_kills:
         # ADR-0006 R2e (WARNING, not a verdict REJECT): a clean session_end should
@@ -550,6 +599,83 @@ def build_parser():
     return ap
 
 
+def _stale_resolved_cases(result):
+    """ADR-0008 — case ids the engine PROVABLY self-resolved on trunk (a
+    landing `worker.wall` whose block closed out; `decision ==
+    "stale-resolved-on-trunk"`, set only by `casestate.reping`'s trunk-truth
+    guard) — a transient the engine retracted, not a standing escalation.
+    Factored out (block 01-38 T16) so `_acceptance_verdict`'s end-of-run
+    grading and `_verdict_sealed_reasons`'s mid-run early-stop check read
+    the EXACT same discount and can never drift on what counts as
+    "no longer standing"."""
+    return {cid for cid, c in (result.get("cases") or {}).items()
+            if isinstance(c, dict) and c.get("decision") == "stale-resolved-on-trunk"}
+
+
+def _distinct_escalated_cases(result):
+    """The set of DISTINCT operator-escalated case ids, net of the
+    `_stale_resolved_cases` discount above. `result["operator_pages"]`
+    accumulates one entry per page DELIVERY ATTEMPT (THE FLOOR re-pages an
+    unsettled case every tick), so counting raw entries would over-count;
+    this is the one place both callers (`_acceptance_verdict`,
+    `_verdict_sealed_reasons`) derive "how many distinct pages so far.\""""
+    stale_resolved = _stale_resolved_cases(result)
+    pages = result.get("operator_pages") or {}
+    return {p.get("case_id") for p in pages.values()
+            if isinstance(p, dict) and p.get("case_id")
+            and p.get("case_id") not in stale_resolved}
+
+
+def _verdict_sealed_reasons(partial, expect_pages):
+    """Block 01-38 T16/AC-10 — VERDICT-SEALED EARLY STOP. `partial` carries
+    the same shape `_acceptance_verdict` reads (`events`/`cases`/
+    `operator_pages`/`abandoned_blocks`), but need not be a FINISHED run's
+    result — `run_live`'s loop calls this every iteration, mid-run, on
+    whatever state exists so far.
+
+    Returns the SUBSET of `_acceptance_verdict`'s reject reasons that, once
+    true, can NEVER become false again within this same run — i.e.
+    acceptance is MATHEMATICALLY LOST, not merely "not yet settled":
+      • an R4 must-be-zero counter fired, or a may-fire counter is already
+        past its declared ceiling (`core/counters.py::evaluate`, read off
+        the event stream) — both are monotonic tallies over an append-only
+        event log, so a nonzero / over-ceiling count can only grow, never
+        self-heal, within one run;
+      • an `abandoned_blocks` entry exists (ADR-0007 §7) — an `abandon` is
+        terminal for that block; it can never retroactively get built
+        within this same run;
+      • distinct operator escalations already EXCEED `expect_pages` — a
+        page BEYOND expectation. `_distinct_escalated_cases` nets out the
+        ADR-0008 stale-resolved discount the SAME way the final gate does,
+        so a landing wall the engine itself resolves on trunk is never
+        miscounted as a lost page. (Reaching exactly `expect_pages` is NOT
+        an overage — that is precisely "a page WITHIN expectation," which
+        must stop nothing; see the moderate-tier acceptance bar.)
+
+    Deliberately EXCLUDES conditions `_acceptance_verdict` ALSO checks but
+    that can still settle LATER in the run, so testing them mid-run would
+    call every in-flight run "lost": a dangling OPEN case (`decision is
+    None` — still pending, may yet resolve this run) and `orphans`/
+    `outcome != session_end` (only meaningful once the run has actually
+    ended — every run is mid-flight until then).
+
+    Returns reasons[] — empty means "not (yet) lost, keep driving.\""""
+    reasons = []
+    _counters_ok, _, _counters_reasons = counters.evaluate(partial.get("events") or [])
+    if not _counters_ok:
+        reasons.extend(f"R4 counter partition: {r}" for r in _counters_reasons)
+    abandoned = partial.get("abandoned_blocks") or []
+    if abandoned:
+        reasons.append(f"abandoned block(s) {abandoned} — terminal for this run "
+                       f"(ADR-0007 §7), can never un-fire")
+    n_escalations = len(_distinct_escalated_cases(partial))
+    if n_escalations > expect_pages:
+        reasons.append(f"{n_escalations} distinct operator escalation(s) already "
+                       f"exceeds expect_pages={expect_pages} — a page BEYOND "
+                       f"expectation, can never shrink back within this run")
+    return reasons
+
+
 def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     """R3-ACCEPT (ADR-0005) — escalation-fidelity acceptance gate. A clean pass is
     NOT merely `session_end and not orphans` (which proves nothing about whether a
@@ -608,12 +734,12 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     # is never `closed`, a genuine standing escalation is never so-decided, a
     # sentry/gate cap carries no matching `case`, an architect self-escalation is
     # not an `engineer-` worker — so this can mask no other page class.
-    stale_resolved = {cid for cid, c in (result.get("cases") or {}).items()
-                      if isinstance(c, dict) and c.get("decision") == "stale-resolved-on-trunk"}
+    # (block 01-38 T16: `_stale_resolved_cases`/`_distinct_escalated_cases` are
+    # now shared with `_verdict_sealed_reasons`'s mid-run early-stop check, so
+    # the two can never drift on what "a page" means.)
+    stale_resolved = _stale_resolved_cases(result)
     pages = result.get("operator_pages") or {}
-    escalated_cases = {p.get("case_id") for p in pages.values()
-                       if isinstance(p, dict) and p.get("case_id")
-                       and p.get("case_id") not in stale_resolved}
+    escalated_cases = _distinct_escalated_cases(result)
     n_escalations = len(escalated_cases)
     if n_escalations != expect_pages:
         reasons.append(f"distinct operator escalations {n_escalations} != expected "
@@ -680,7 +806,8 @@ def main(argv=None):
         result = run_live(scaffold_src=args.scaffold_src, worker_count=args.worker_count,
                           budget_min=args.budget_min, poll_sec=args.poll_sec,
                           scope=args.scope, adapter=args.adapter,
-                          operator_proxy=args.operator_proxy)
+                          operator_proxy=args.operator_proxy,
+                          expect_pages=args.expect_pages)
     except LiveRunError as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
