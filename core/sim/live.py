@@ -847,6 +847,32 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
     return (not reasons), reasons
 
 
+def _git_state():
+    """(HEAD, porcelain) of the REAL tron-app worktree — the T19 Completion-
+    Gate containment self-proof baseline (`core/prompt_conformance.py`'s own
+    pattern, reused verbatim here since this harness carries the SAME risk:
+    it spawns REAL claude agents). `git -C <ABSOLUTE APP_ROOT>` reads the
+    worktree's own repo state regardless of this process's cwd;
+    `--untracked-files=all` means a NEW untracked file (not just a commit or
+    a tracked-file edit) also trips the after-check. A live run's spawned
+    workers are cwd-isolated to the DISPOSABLE scaffold copy this driver
+    creates (`copy_real_scaffold`) and never given any reason (prompt
+    content, task scope) to touch APP_ROOT — but unlike `core/
+    prompt_conformance.py`'s `--tools ""` containment, a live worker is a
+    FULL agentic session by necessity (it must really build the scaffold
+    app), so cwd-isolation is a strong deterrent, not an OS-level sandbox
+    boundary. This self-proof is the DETECTION backstop for that gap: it
+    cannot physically stop a worker from writing outside its cwd, but it
+    guarantees any such write is caught, loud, immediately — never a silent
+    breach discovered days later, the exact T15 failure shape."""
+    head = subprocess.run(["git", "-C", _APP_ROOT, "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    status = subprocess.run(["git", "-C", _APP_ROOT, "status", "--porcelain",
+                            "--untracked-files=all"],
+                           capture_output=True, text=True).stdout
+    return head, status
+
+
 def _install_sigterm():
     """SIGTERM -> KeyboardInterrupt so `run_live`'s `finally` (fleet teardown)
     runs on an external `kill`, not just on a graceful exit — no orphans when
@@ -864,28 +890,58 @@ def _install_sigterm():
 def main(argv=None):
     _install_sigterm()
     args = build_parser().parse_args(argv)
+    # T19 Completion-Gate CONTAINMENT SELF-PROOF (prompt_conformance.py's own
+    # pattern, reused verbatim): capture the REAL tron-app worktree's git
+    # state BEFORE spawning any real agent, and assert it is byte-identical
+    # AFTER, in a `finally` so it fires even on an exception/refused-boot
+    # path. See `_git_state`'s own docstring for why this is a DETECTION
+    # backstop, not a physical sandbox boundary — a live worker is a full
+    # agentic session by necessity, cwd-isolated to a disposable scaffold
+    # copy, never an OS-level jail.
+    head_before, status_before = _git_state()
+    exit_code = 1
     try:
-        result = run_live(scaffold_src=args.scaffold_src, worker_count=args.worker_count,
-                          budget_min=args.budget_min, poll_sec=args.poll_sec,
-                          scope=args.scope, adapter=args.adapter,
-                          operator_proxy=args.operator_proxy,
-                          expect_pages=args.expect_pages)
-    except LiveRunError as e:
-        print(f"REFUSED: {e}", file=sys.stderr)
-        return 2
-    # exit 0 only on a clean session-end with no orphan AND full escalation fidelity
-    # (R3-ACCEPT): no dangling open case + the expected operator-page count. A bare
-    # `session_end and not orphans` gate could report a hollow run — one that swallowed
-    # or dropped a planted wall — as clean; this cannot.
-    ok, reasons = _acceptance_verdict(result, expect_pages=args.expect_pages,
-                                      expect_signature=args.expect_signature)
-    if ok:
-        print(f"live: ACCEPT — clean session-end, no orphans, escalation fidelity OK "
-              f"(pages={len(result.get('operator_pages') or {})}=={args.expect_pages}, "
-              f"no dangling case)")
-    else:
-        print(f"live: REJECT — " + " ; ".join(reasons))
-    return 0 if ok else 1
+        try:
+            result = run_live(scaffold_src=args.scaffold_src, worker_count=args.worker_count,
+                              budget_min=args.budget_min, poll_sec=args.poll_sec,
+                              scope=args.scope, adapter=args.adapter,
+                              operator_proxy=args.operator_proxy,
+                              expect_pages=args.expect_pages)
+        except LiveRunError as e:
+            print(f"REFUSED: {e}", file=sys.stderr)
+            exit_code = 2
+            return exit_code
+        # exit 0 only on a clean session-end with no orphan AND full escalation fidelity
+        # (R3-ACCEPT): no dangling open case + the expected operator-page count. A bare
+        # `session_end and not orphans` gate could report a hollow run — one that swallowed
+        # or dropped a planted wall — as clean; this cannot.
+        ok, reasons = _acceptance_verdict(result, expect_pages=args.expect_pages,
+                                          expect_signature=args.expect_signature)
+        if ok:
+            print(f"live: ACCEPT — clean session-end, no orphans, escalation fidelity OK "
+                  f"(pages={len(result.get('operator_pages') or {})}=={args.expect_pages}, "
+                  f"no dangling case)")
+        else:
+            print(f"live: REJECT — " + " ; ".join(reasons))
+        exit_code = 0 if ok else 1
+        return exit_code
+    finally:
+        head_after, status_after = _git_state()
+        breach = head_after != head_before or status_after != status_before
+        if breach:
+            print(f"live: CRITICAL — CONTAINMENT SELF-PROOF FAILED: the real tron-app "
+                  f"worktree's git HEAD/working-tree changed during this run "
+                  f"(head_before={head_before[:12]} head_after={head_after[:12]} "
+                  f"status_changed={status_after != status_before}) — a spawned agent "
+                  f"wrote into the REAL engineering repo, not the disposable scaffold "
+                  f"copy. STOP, investigate, do not trust this run's result "
+                  f"(exit_code would have been {exit_code}; overriding to 3).",
+                  file=sys.stderr)
+            return 3   # a `finally` return OVERRIDES the try block's — deliberate: a
+                       # containment breach must never be masked by an otherwise-clean
+                       # acceptance verdict's own exit code.
+        print(f"live: containment self-proof OK — real worktree byte-identical "
+              f"before/after (head={head_after[:12]})")
 
 
 if __name__ == "__main__":
