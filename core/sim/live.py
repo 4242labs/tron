@@ -239,6 +239,41 @@ def _owned_orphans(rs, root):
     return survivors
 
 
+def _leftover_unlanded_branches(root, abandoned_blocks=()):
+    """T19 (block 01-38, CLU row-19 directive): at a real clean session-end,
+    confirm ZERO leftover/unlanded branches remain in the scaffold-copy's own
+    git repo — converting paper-test-ledger row 19's (GAP-F, "session-end
+    residue sweep") structural-prevention argument (T20's DONE-gate + T22's
+    single land primitive + `core.session.check`'s pending-block gate) from a
+    code-reading INFERENCE into an EMPIRICAL demonstration at each real live
+    run's actual session-end — never-E2E-groundtruth: a composition argument
+    is not the final word until a real run confirms it.
+
+    Every local branch other than `MAIN` whose tip is NOT an ancestor of
+    `MAIN` is "leftover" UNLESS it belongs to an explicitly abandoned block
+    (`abandoned_blocks` — a deliberate, operator-visible drop is not the
+    silent residue row 19 named). Returns the leftover branch names — empty
+    means clean, exactly what a genuinely settled session should show."""
+    out = subprocess.run(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+                         cwd=root, capture_output=True, text=True)
+    leftover = []
+    for branch in out.stdout.splitlines():
+        branch = branch.strip()
+        if not branch or branch == MAIN:
+            continue
+        try:
+            sha = gitobs.tip_sha(root, branch, False)
+            merged = bool(sha) and gitobs.is_ancestor(root, sha, MAIN, False)
+        except Exception:   # noqa: BLE001 — unresolvable is never silently "merged"
+            merged = False
+        if merged:
+            continue
+        if any(blk and blk in branch for blk in abandoned_blocks):
+            continue   # a deliberate, operator-visible abandon — not silent residue
+        leftover.append(branch)
+    return leftover
+
+
 def _pulse(eng, root, manifest, loop_i, started_at):
     """One PROACTIVE, OS-level PULSE line — printed and home-logged. Never
     trusts a self-reported field for liveness: `jobs.is_alive` is a pid
@@ -498,6 +533,11 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
             final_tip = gitobs.tip_sha(root, MAIN, False)[:12]
         except Exception:   # noqa: BLE001
             final_tip = "<err>"
+        try:
+            leftover_branches = _leftover_unlanded_branches(
+                root, final_manifest.get("abandoned_blocks") or [])
+        except Exception:   # noqa: BLE001 — a driver-side check must never mask the real result
+            leftover_branches = ["<err: leftover-branch scan failed>"]
 
     result = {
         "root": root, "inst": inst, "outcome": outcome, "reason": reason,
@@ -514,6 +554,7 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         "proxy_settled": proxy_settled,   # ADR-0007: operator cases the LLM proxy settled
         "abandoned_blocks": final_manifest.get("abandoned_blocks") or [],   # ADR-0007 §7: must be []
         "verdict_sealed_snapshot": verdict_sealed_snapshot,   # T16/AC-10: set iff outcome=="verdict_sealed_lost"
+        "leftover_branches": leftover_branches,   # T19/row-19: must be [] at a clean session_end
         # R4/AC-5a (block 01-38 T9): the whole run's event stream, the sole
         # source `core/counters.py::evaluate` reads (never manifest state) —
         # `eng.events` is the in-memory `_Events` sink `Engine(ctx)` defaults
@@ -541,6 +582,12 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     print(f"live: cases={list(result['cases'].keys())} "
           f"pages={list(result['operator_pages'].keys())} "
           f"escalations={len(result['escalations'])}")
+    if result.get("leftover_branches"):
+        print(f"live: ⚠ leftover/unlanded branch(es) at session-end (row 19/GAP-F "
+              f"empirical check): {result['leftover_branches']} — the acceptance "
+              f"gate will REJECT on this")
+    else:
+        print("live: leftover-branch sweep clean (row 19/GAP-F empirical check: 0)")
     # R4/AC-5a: every declared counter — both classes — printed EVERY run,
     # not only on a breach (`core/counters.py::evaluate`'s own `lines`).
     _counters_ok, _counters_lines, _counters_reasons = counters.evaluate(result["events"])
@@ -705,6 +752,15 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
         may-fire counter is within its declared per-run ceiling (`core/counters.py::
         evaluate`, read off the run's own event stream — `result["events"]`, absent-safe
         for a caller that hasn't threaded it, e.g. an older/synthetic fixture result).
+      • T19 (paper-test-ledger row 19/GAP-F, CLU directive): ZERO leftover/unlanded
+        branches in the scaffold-copy's own git repo at real session-end
+        (`result["leftover_branches"]`, `_leftover_unlanded_branches` — absent-safe
+        for an older/synthetic result). Row 19 was closed by a STRUCTURAL-PREVENTION
+        argument (T20's DONE-gate + T22's single land primitive + `core.session.
+        check`'s pending-block gate compose to make a non-abandoned block's branch
+        unable to go leftover) — this is that argument's EMPIRICAL demonstration at
+        each live run's real session-end, never-E2E-groundtruth: an inference is not
+        the final word until a real run confirms it.
     Returns (ok, reasons[])."""
     reasons = []
     _counters_ok, _, _counters_reasons = counters.evaluate(result.get("events") or [])
@@ -714,6 +770,12 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
         reasons.append(f"outcome={result.get('outcome')!r} (not a clean session_end)")
     if result.get("orphans"):
         reasons.append(f"orphan processes at exit: {result.get('orphans')}")
+    leftover_branches = result.get("leftover_branches")
+    if leftover_branches:
+        reasons.append(f"leftover/unlanded branch(es) at session-end: {leftover_branches} "
+                       f"— row 19/GAP-F's structural-prevention argument did NOT hold "
+                       f"empirically on this run (never-E2E-groundtruth: this is a real "
+                       f"defect, not a doc-drift)")
     abandoned = result.get("abandoned_blocks") or []
     if abandoned:
         reasons.append(f"abandoned block(s): {abandoned} — the app was NOT built to the "
