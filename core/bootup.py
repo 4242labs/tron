@@ -40,23 +40,23 @@ boot). `judge.call_aide`'s own chokepoint already writes the
 `aide_invocation` forensic event on every real call (T7's registry entry,
 `core/emit.py`) — this module does not duplicate that emission.
 
+Session-store persistence of the answers (block 01-38 T25,
+`test:<journey_persist_session_store_only>`) lives in `core.engine.Engine.
+start` — NOT in this module — because it must cover BOTH the interactive
+journey here AND a headless `eng.start(...)` caller (the harness's own
+path). This module threads its two durable answers (`self.worker_models`,
+`self.ask_before_merging`) straight into `Engine.start(models=...,
+ask_before_merging=...)`, which persists them to the TRON-owned session
+store (the manifest under meta/agents/tron/) — never roles.yaml — and
+`Engine._model_for_role` layers that session store over roles.yaml so a
+LATER wake-tick's fresh `Engine` (empty in-memory override) still resolves
+the operator's bootup model choice.
+
 NOT in this module (deliberately, by task split):
   - The REPL / fleet-view / attach / run-control commands — not named by
     any T23-25 acceptance criterion; only the BOOTUP JOURNEY is in scope
     here. Restoring the full interactive shell is not requested by this
     block and would be scope creep past what T23-25's ACs test.
-  - Persisting the ask-before-merging / worker-model answers into the
-    session-store manifest so a LATER tick (a fresh `Engine(ctx)`
-    instance) still sees them — block 01-38 T25's own job
-    (`test:<journey_persist_session_store_only>`). This module stashes
-    both on itself (`self.ask_before_merging`, `self.worker_models`) so
-    T25 has something to persist without re-deriving the answers; the
-    worker-model answers ARE already effective for THIS boot's own spawns
-    (the persistent architect + the first dispatch pass), since they are
-    threaded straight into the SAME `Engine.start(models=...)` in-memory
-    override `core/engine.py` already implements — only a SECOND, later
-    `Engine` instance (e.g. a fresh wake-tick process) needs T25's durable
-    layer.
 
 FAIL-CLOSED MODEL RESOLUTION (AC-19): enforced at the root, inside
 `core.engine.Engine.start()` itself (see that module's own T23 comment) —
@@ -398,9 +398,16 @@ class Bootup:
         self.ask_before_merging = self._ask_before_merging_q()
         self.worker_models = self._ask_role_models(eng, staged=staged_model)
 
-        spawned = eng.start(scope=scope, worker_count=worker_count, models=self.worker_models)
+        # Block 01-38 T25: the per-role model answers AND the ask-before-
+        # merging answer are threaded into `Engine.start`, which persists
+        # BOTH to the TRON-owned session store (the manifest under
+        # meta/agents/tron/) — never roles.yaml — so a later wake-tick still
+        # sees them. `models=` is also the in-memory session override for
+        # THIS boot's own spawns (session answer wins, `_model_for_role`).
+        spawned = eng.start(scope=scope, worker_count=worker_count,
+                            models=self.worker_models,
+                            ask_before_merging=self.ask_before_merging)
         self.engine = eng
         print()
-        print(f"{DIM}  TRON is live. (session-store persistence of ask-before-merging / "
-              f"per-role model answers past this boot is block 01-38 T25.){RST}\n")
+        print(f"{DIM}  TRON is live.{RST}\n")
         return eng, spawned

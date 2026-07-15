@@ -681,6 +681,120 @@ def scenario_aide_runtime_escalation_nodes():
            f"{aide_events2}")
 
 
+# ── T25 (block 01-38, AC-21): journey answers persist ONLY to the TRON-owned
+#     session store (never roles.yaml); a LATER fresh Engine resolves the
+#     session model choice, layered over roles.yaml ──
+def scenario_journey_persist_session_store():
+    ctx = build_instance("persist")
+    calls, real_spawn = stub_spawn()
+    real_input = builtins.input
+    roles_path = os.path.join(ctx.dir if hasattr(ctx, "dir") else "", "")
+    # roles.yaml lives at the instance's own repo_paths — resolve via Engine.
+    probe = Engine(ctx)
+    roles_yaml_path = probe.paths["roles_path"]
+    roles_bytes_before = open(roles_yaml_path, "rb").read()
+    try:
+        prompts = []
+        # AIDE model, scope=all, worker_count=1, ask-before-merging=y,
+        # architect="" (recommended), engineer=SESSION override (DIFFERS from
+        # the roles.yaml declared model — proves session wins), reviewer-code
+        # explicit.
+        answers = ["", "1", "1", "y", "", "session-eng-override", "session-rev-override"]
+        builtins.input = seeded_input(answers, prompts)
+        with aide_stub({"aide": [{"advice": "persist-scenario"}]}):
+            b = Bootup(ctx)
+            eng, spawned = b.bootup()
+
+        manifest = state.load(ctx)
+        sm = manifest.get("session_models") or {}
+        ok("PS1 (test:<journey_persist_session_store_only>): the per-role model "
+           "answers persisted to the SESSION STORE (manifest['session_models'], "
+           "under meta/agents/tron/) — architect=recommended, engineer=the "
+           "session override, reviewer-code=the explicit override",
+           sm.get("architect") == ROLE_MODEL_RECOMMENDED["architect"]
+           and sm.get("engineer") == "session-eng-override"
+           and sm.get("reviewer-code") == "session-rev-override",
+           f"session_models={sm}")
+        ok("PS2: the ask-before-merging answer persisted to the SAME session "
+           "store (manifest['live_config']['ask_before_merging']=True)",
+           (manifest.get("live_config") or {}).get("ask_before_merging") is True,
+           f"live_config={manifest.get('live_config')}")
+        roles_bytes_after = open(roles_yaml_path, "rb").read()
+        ok("PS3 (THE WRITE-BOUNDARY KILLER — must be GREEN): the project-authored "
+           "roles.yaml is BYTE-FOR-BYTE UNCHANGED — the journey answers went "
+           "ONLY to the TRON-owned session store, NEVER the project config "
+           "(BL-1 write boundary)",
+           roles_bytes_after == roles_bytes_before,
+           f"roles.yaml changed: {roles_bytes_before!r} -> {roles_bytes_after!r}")
+
+        # THE CROSS-PROCESS KILLER: a FRESH Engine(ctx) — a new process's wake
+        # tick — with an EMPTY in-memory _models override still resolves the
+        # operator's session model choice off the persisted session store.
+        fresh = Engine(ctx)
+        ok("PS4: a fresh Engine's in-memory session override is empty (the "
+           "durability gap the session store closes)",
+           fresh._models == {}, f"_models={fresh._models}")
+        fresh._manifest = state.load(ctx)   # what core.tick.tick sets each pass before spawn
+        ok("PS5 (CROSS-PROCESS KILLER — must be GREEN): the fresh Engine "
+           "resolves engineer to the SESSION override 'session-eng-override' — "
+           "the session store WINS over roles.yaml's own declared "
+           f"'{ENGINEER_DECLARED_MODEL}' (session answer survives the process "
+           "boundary, layered by _model_for_role)",
+           fresh._model_for_role("engineer") == "session-eng-override",
+           f"got={fresh._model_for_role('engineer')!r}")
+        ok("PS6: the fresh Engine resolves architect off the session store too "
+           "(roles.yaml declares no architect model — session store is the "
+           "ONLY source, and it has the recommended default the operator "
+           "confirmed)",
+           fresh._model_for_role("architect") == ROLE_MODEL_RECOMMENDED["architect"],
+           f"got={fresh._model_for_role('architect')!r}")
+    finally:
+        builtins.input = real_input
+        restore_spawn(real_spawn)
+
+
+def scenario_model_resolution_layering():
+    """Directly exercise `_model_for_role`'s three-source layering with
+    hand-built manifests — the precise 'session wins, else roles.yaml, else
+    None' contract, isolated from the whole bootup."""
+    ctx = build_instance("layering")
+    # (a) in-memory override (start(models=...)) wins over everything.
+    eng = Engine(ctx)
+    eng._models = {"engineer": "in-mem-override"}
+    eng._manifest = {"session_models": {"engineer": "session-store-val"}}
+    ok("ML1: the in-memory session override (this process's own start(models=)) "
+       "wins over BOTH the session store and roles.yaml",
+       eng._model_for_role("engineer") == "in-mem-override",
+       f"got={eng._model_for_role('engineer')!r}")
+
+    # (b) session store wins over roles.yaml when in-memory is empty.
+    eng2 = Engine(ctx)
+    eng2._manifest = {"session_models": {"engineer": "session-store-val"}}
+    ok("ML2: with an empty in-memory override, the SESSION STORE wins over "
+       "roles.yaml's declared engineer model",
+       eng2._model_for_role("engineer") == "session-store-val",
+       f"got={eng2._model_for_role('engineer')!r}")
+
+    # (c) roles.yaml is the fallback when neither session source resolves.
+    eng3 = Engine(ctx)
+    eng3._manifest = {"session_models": {}}   # a persisted store that names NO engineer
+    ok("ML3: with neither in-memory nor session-store an answer for it, the "
+       "role falls back to roles.yaml's own declared model (the project "
+       "default) — the session layer is additive, never destructive",
+       eng3._model_for_role("engineer") == ENGINEER_DECLARED_MODEL,
+       f"got={eng3._model_for_role('engineer')!r}")
+
+    # (d) None when no source resolves at all (roles.yaml declares no model
+    #     for architect either) — the fail-closed input validate_models guards.
+    eng4 = Engine(ctx)
+    eng4._manifest = {"session_models": {}}
+    ok("ML4: a role with NO model in any of the three sources resolves to None "
+       "(architect declares none in roles.yaml, none in either session layer) "
+       "— exactly what validate_models fail-closes on at start",
+       eng4._model_for_role("architect") is None,
+       f"got={eng4._model_for_role('architect')!r}")
+
+
 def main():
     scenario_sequence_frozen()
     scenario_model_recommendation()
@@ -690,6 +804,8 @@ def main():
     scenario_aide_bootup_advises()
     scenario_aide_fail_open_unaided()
     scenario_aide_runtime_escalation_nodes()
+    scenario_journey_persist_session_store()
+    scenario_model_resolution_layering()
 
     fails = [n for n, c, _ in _results if not c]
     for name, cond, detail in _results:

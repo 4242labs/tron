@@ -575,14 +575,32 @@ class Engine:
         return self._roles
 
     def _model_for_role(self, role):
-        """The session override (`start(models=...)`) wins for the session;
-        else roles.yaml's own `model:` (mirrors `engine/fsm.py::
-        _model_for_role`'s identical layering, minus the MANIFEST-persisted
-        half — this brick's `models` is a plain constructor-time arg, never
-        written back to the manifest itself)."""
+        """The dispatcher's model resolution (ADR-0003 D-D/BL-1, block 01-38
+        T25): the session override wins for the session, else roles.yaml's
+        own `model:`. The session override is layered from TWO sources, in
+        this order — both TRON-owned, never roles.yaml:
+
+          1. the in-memory `self._models` (`start(models=...)`) — THIS
+             process's own session answer, present for the bootup/first
+             pass;
+          2. the SESSION STORE `manifest["session_models"]` (T25) —
+             persisted at bootup under meta/agents/tron/, what a LATER
+             wake-tick's FRESH `Engine` (whose in-memory `_models` is empty,
+             the R-A/durability gap) reads back so the operator's bootup
+             model choice survives across the process boundary, exactly
+             like `engine/fsm.py::_model_for_role`'s own MANIFEST-persisted
+             half this brick used to lack.
+
+        roles.yaml is consulted ONLY when neither session source resolves —
+        the project config is never written, only read (hard-rule #1 /
+        BL-1's write boundary)."""
         m = self._models.get(role)
         if isinstance(m, str) and m.strip():
             return m.strip()
+        if self._manifest is not None:
+            sm = (self._manifest.get("session_models") or {}).get(role)
+            if isinstance(sm, str) and sm.strip():
+                return sm.strip()
         return self._roles_config().model_for(role)
 
     # ── block 01-38 T24 (ADR-0003 D-J): AIDE's own model — engine-builtin,
@@ -703,7 +721,7 @@ class Engine:
         return requested
 
     # ── bootup ──
-    def start(self, scope="all", worker_count=1, models=None):
+    def start(self, scope="all", worker_count=1, models=None, ask_before_merging=None):
         """Headless bootup (rebuild-spec.md A1-A9 — see module docstring for
         the full mapping): resolve scope, write the manifest, spawn the
         persistent pool-excluded architect, perform the first dispatch
@@ -711,9 +729,13 @@ class Engine:
         are the frozen operator-journey's ALREADY-ANSWERED values (exactly
         `tron-meta/sims/autopilot/bootstrap.py`'s `LAUNCHER_TEMPLATE` shape)
         — never a prompt, never a re-derivation of a question this brick
-        doesn't own. Returns the list of freshly spawned agent-ids (the
-        SAME non-durable convenience `core.switchboard.fill` itself
-        returns)."""
+        doesn't own.
+
+        `ask_before_merging` (block 01-38 T25) is the bootup ask-before-
+        merging answer — persisted to the session store below when supplied
+        (default `None` = a caller that didn't ask it, e.g. a rig; nothing
+        persisted). Returns the list of freshly spawned agent-ids (the SAME
+        non-durable convenience `core.switchboard.fill` itself returns)."""
         manifest = state.load(self.ctx)
         if (manifest.get("session") or {}).get("started_at"):
             raise BootupError(
@@ -770,6 +792,24 @@ class Engine:
         missing_cadence = {typ: 0 for typ in cadence_cfg if typ not in cadence}
         emit.patch(self, manifest, "engine_cadence_seeded", ("cadence",), missing_cadence,
                    types=sorted(missing_cadence))
+
+        # Block 01-38 T25 (ADR-0003 D-D/BL-1): persist the bootup journey
+        # answers to the TRON-OWNED SESSION STORE (this manifest, under
+        # meta/agents/tron/) — NEVER roles.yaml (project-authored, sealed).
+        # This is what lets a LATER wake-tick's FRESH `Engine` (empty
+        # in-memory `_models`) still resolve the operator's session model
+        # choice via `_model_for_role`'s manifest-layer. Only the RESOLVED
+        # (non-blank) answers are stored — an unresolved role is left to
+        # roles.yaml (and was already fail-closed above by `validate_models`).
+        resolved_models = {r: v for r, v in self._models.items()
+                           if isinstance(v, str) and v.strip()}
+        if resolved_models:
+            emit.put(self, manifest, "engine_session_models_persisted", (),
+                     "session_models", resolved_models, roles=sorted(resolved_models))
+        if ask_before_merging is not None:
+            emit.patch(self, manifest, "engine_ask_before_merging_persisted",
+                       ("live_config",), {"ask_before_merging": bool(ask_before_merging)},
+                       ask_before_merging=bool(ask_before_merging))
 
         # A8 (first half): spawn the persistent, pool-excluded architect —
         # unconditionally, at boot, never left to core/architect.py::advance's

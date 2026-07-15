@@ -242,6 +242,21 @@ EFFECTS = dict([
     _reg("engine_architect_spawned", "state"),
     # A6/A7: bootup wrote the live-session marker (`manifest["session"]`).
     _reg("engine_session_started", "state"),
+    # Block 01-38 T25 (ADR-0003 D-D/BL-1): the bootup per-role model answers
+    # persisted to the TRON-OWNED SESSION STORE (`manifest["session_models"]`,
+    # under meta/agents/tron/) — NEVER roles.yaml (project-authored, outside
+    # TRON's sealed folder). What lets a LATER wake-tick's fresh `Engine`
+    # (whose in-memory `_models` override is empty) still resolve the
+    # operator's session model choice, layered over roles.yaml by
+    # `_model_for_role`.
+    _reg("engine_session_models_persisted", "state"),
+    # Block 01-38 T25: the bootup ask-before-merging answer persisted to the
+    # same session store (`manifest["live_config"]["ask_before_merging"]`,
+    # the SAME field name the legacy `engine/console.py` wrote to) — a bootup
+    # answer, so "answers persist only to the session store, never the
+    # project config" covers it too, even though no `core/*` consumer reads
+    # it yet.
+    _reg("engine_ask_before_merging_persisted", "state"),
     # Block 01-38 T23 (`core/bootup.py`): the operator's phase/range scope
     # answer resolved to NO trunk block ids (an unresolvable range endpoint,
     # or a phase substring matching nothing) and the journey silently-widened
