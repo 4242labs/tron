@@ -75,6 +75,7 @@ import jobs                       # noqa: E402 — engine/jobs.py, the OS-level 
 from ctx import Ctx                # noqa: E402 — engine/ctx.py
 from engine import Engine, BootupError   # noqa: E402 — core/engine.py, THE MODULE this drives
 import state                       # noqa: E402 — core/state.py
+import counters                     # noqa: E402 — core/counters.py, block 01-38 T9's R4 counter partition
 import gitobs                       # noqa: E402 — core/gitobs.py, the ONE git-observation seam
 import real_tier                    # noqa: E402 — core/sim/real_tier.py, the real host-cli spawn wiring
 import architect                    # noqa: E402 — core/architect.py, ARCHITECT_WID (courier the architect too)
@@ -469,6 +470,12 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
         "scope": final_manifest.get("scope") or {},
         "proxy_settled": proxy_settled,   # ADR-0007: operator cases the LLM proxy settled
         "abandoned_blocks": final_manifest.get("abandoned_blocks") or [],   # ADR-0007 §7: must be []
+        # R4/AC-5a (block 01-38 T9): the whole run's event stream, the sole
+        # source `core/counters.py::evaluate` reads (never manifest state) —
+        # `eng.events` is the in-memory `_Events` sink `Engine(ctx)` defaults
+        # to (no `events=` override here), so it holds every emit-routed
+        # event this run produced, across every module, in order.
+        "events": list(eng.events.log),
     }
     print("=" * 72)
     print(f"live: OUTCOME={outcome} reason={reason}")
@@ -485,6 +492,15 @@ def run_live(scaffold_src=None, worker_count=1, budget_min=60.0,
     print(f"live: cases={list(result['cases'].keys())} "
           f"pages={list(result['operator_pages'].keys())} "
           f"escalations={len(result['escalations'])}")
+    # R4/AC-5a: every declared counter — both classes — printed EVERY run,
+    # not only on a breach (`core/counters.py::evaluate`'s own `lines`).
+    _counters_ok, _counters_lines, _counters_reasons = counters.evaluate(result["events"])
+    for line in _counters_lines:
+        print(f"live: counter {line}")
+    if not _counters_ok:
+        for reason in _counters_reasons:
+            print(f"live: ⚠ R4 counter partition breach — {reason} — "
+                  f"the acceptance gate will REJECT on this")
     if operator_proxy:
         print(f"live: operator-proxy settled {proxy_settled} operator case(s) "
               f"(moderate-tier LLM stand-in)")
@@ -559,8 +575,15 @@ def _acceptance_verdict(result, expect_pages=0, expect_signature=None):
         `abandon` drops a block from must-reach-done, so a valid `abandon` could otherwise
         reach a clean `session_end` without the block ever being built. A SIM passes only
         when EVERY block reaches done — `manifest["abandoned_blocks"]` must be empty.
+      • R4/AC-5a (block 01-38 T9): the must-be-zero counter set is at ZERO and every
+        may-fire counter is within its declared per-run ceiling (`core/counters.py::
+        evaluate`, read off the run's own event stream — `result["events"]`, absent-safe
+        for a caller that hasn't threaded it, e.g. an older/synthetic fixture result).
     Returns (ok, reasons[])."""
     reasons = []
+    _counters_ok, _, _counters_reasons = counters.evaluate(result.get("events") or [])
+    if not _counters_ok:
+        reasons.extend(f"R4 counter partition: {r}" for r in _counters_reasons)
     if result.get("outcome") != "session_end":
         reasons.append(f"outcome={result.get('outcome')!r} (not a clean session_end)")
     if result.get("orphans"):

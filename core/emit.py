@@ -74,10 +74,22 @@ Nothing else — no git, no subprocess, no LLM, no file IO in this module.
 # (final sub-commit) reads.
 
 
+# R4 (block 01-38 T9, `core/counters.py`): the closed set a registered
+# effect's `counter_class` may be. `None` (a non-counter effect) is always
+# legal and not a member of this set. Declared here (not just informally in
+# prose) so a typo'd class name fails loud at registration time, never a
+# silently-mis-classified counter `core/counters.py` can't find.
+COUNTER_CLASSES = frozenset({"must_be_zero", "may_fire"})
+
+
 class _Effect:
     __slots__ = ("name", "kind", "counter_class")
 
     def __init__(self, name, kind, counter_class=None):
+        if counter_class is not None and counter_class not in COUNTER_CLASSES:
+            raise ValueError(
+                f"emit: {name!r} declared counter_class={counter_class!r}, not a "
+                f"member of the closed set {sorted(COUNTER_CLASSES)} (or None)")
         self.name = name
         self.kind = kind
         self.counter_class = counter_class
