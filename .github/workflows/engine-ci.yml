@@ -1,8 +1,9 @@
 name: engine-ci
 
-# Block 01-31 (ADR-0002 D5, AC-6): the no-default content-field lint — and the full
-# engine test suite it ships alongside — must run in CI. None of this existed as a
-# workflow before this block; this is the first engine CI gate.
+# The deterministic engine ships its own selftests — each module is runnable as
+# `python3 <module>.py [--selftest]` and gates on real behaviour (truth-gate runs
+# use throwaway git repos; doc modules assert generated docs are in sync). This
+# workflow runs the whole suite on every push/PR.
 
 on:
   push:
@@ -15,113 +16,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test-and-lint:
+  test-and-lint:            # name matches the required status check on main
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # replay_lock_test.py's A/B differential reads a historical commit
-          # (block 01-26's parent, engine/fsm.py) out of this repo's own history — a
-          # shallow clone (actions/checkout's default) doesn't carry that object.
-          fetch-depth: 0
-          # Block 01-40 T1 (ADR-0012 §3 P1): every core/*_rig.py + core/sim/*.py
-          # that copies the REAL trivial-tip-converter scaffold (never a
-          # synthetic stand-in — see core/scaffold_src.py) needs it present on
-          # disk. It is VENDORED into this repo at core/sim/fixtures/trivial-
-          # tip-converter/ (not checked out from its upstream tron-meta repo —
-          # that repo's own .gitignore excludes sims/* wholesale, so no
-          # checkout of it, with any token, could ever provide this path; see
-          # core/scaffold_src.py's docstring). A normal single-repo checkout
-          # is therefore the ONLY CI-side wiring this needs — nothing else to
-          # set up, no cross-repo credential.
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Configure git identity (fixtures shell out to real git)
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Configure git identity (gate selftests shell out to real git)
         run: |
           git config --global user.email "ci@tron.local"
           git config --global user.name "tron-ci"
 
-      - name: Install dependencies
-        # No requirements.txt exists in this repo (never needed one — every prior dev
-        # environment had it installed globally). PyYAML is the engine's one third-party
-        # import (util.py); everything else it imports is stdlib or a local module.
-        run: pip install pyyaml
-
-      - name: Stub the `claude` runtime (judge.py's TRON_RUNTIME, no CLI on this runner)
-        # judge.py's judgment-tool tests (eventlog_complete_test.py's t_model_call) stub
-        # the CLASSIFIER OUTPUT via TRON_JUDGE_STUB, but every dev machine this suite was
-        # ever written against had the real `claude` CLI on PATH as a fallback if a stub
-        # path is ever missed — a bare CI runner doesn't, and a genuinely-missed stub then
-        # raises FileNotFoundError instead of degrading to an ordinary invalid-output
-        # retry/exhaustion (the shape the suite already handles). A no-op stand-in closes
-        # that gap without touching test logic.
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/claude" <<'SCRIPT'
-          #!/usr/bin/env bash
-          exit 1
-          SCRIPT
-          chmod +x "$HOME/.local/bin/claude"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Run the full engine test suite
+      - name: Run the engine selftest suite
         run: |
           set -euo pipefail
-          cd engine
           fail=0
-          for f in block_*_test.py e2e_test.py eventlog_test.py eventlog_complete_test.py \
-                   git_test.py m_06_test.py mg_01_test.py prompts_test.py \
-                   replay_lock_test.py runtime_rewire_test.py sentry_test.py \
-                   tron07_test.py tron13_test.py wake_test.py; do
-            echo "::group::$f"
-            if ! python3 "$f"; then
-              echo "FAILED: $f"
-              fail=1
-            fi
-            echo "::endgroup::"
-          done
+          run() { echo "::group::$*"; if ! python3 $*; then echo "FAILED: $*"; fail=1; fi; echo "::endgroup::"; }
+          run tron.py --selftest
+          run gate.py
+          run tg.py
+          run events.py
+          run workflow.py
+          run bpmn.py
+          run glossary.py
+          run evaluation/harness.py --selftest
           exit $fail
-
-      - name: Blueprint + content-integrity lint (includes L26, ADR-0002 D5)
-        run: ./lint.sh
-
-      - name: Content-field lint — RED on fixture / GREEN on tree (AC-6 proof)
-        run: python3 .github/scripts/content_field_lint_check.py
-
-      - name: vocab.py — emit-id lint + schema regen/diff gate (block 01-37 T2/T5, AC-2/AC-6)
-        # `./lint.sh` above already runs `engine/lint.py`'s L27 (emit-id-literal)/L28
-        # (vocab<->messages sync)/L29 (schema drift) rules over the real tree; this
-        # step is the dedicated RED/GREEN proof (mirrors the content-field lint step
-        # immediately above) that L27/L29 genuinely discriminate, not just pass
-        # vacuously — a seeded literal emit-id / a seeded schema drift MUST be caught.
-        run: python3 .github/scripts/vocab_lint_check.py
-
-      - name: L1 — the mutation-proof rig runner (block 01-40 T1, ADR-0012 §3 P1)
-        # ONE command, glob-discovers ALL core/*_rig.py + core/sim/*_rig.py — no
-        # hand-maintained list. ~1 min today (30 rigs); ~2 min budget per the ADR.
-        run: ./scripts/l1.sh
-
-      - name: L1 discovery is real, not vacuous (AC-1 proof)
-        run: python3 .github/scripts/l1_discovery_check.py
-
-      - name: R3 honesty lint — RED on direct-write fixture / GREEN on tree (AC-2 proof)
-        # A rig may not fabricate a sender kind report.sh could never produce, nor
-        # write manifest[...] state directly. core/sim/operator_proxy.py is a
-        # known, tracked exception (KNOWN_RED in core/r3_lint.py) — rebuilt honestly
-        # in block 01-38 T4; this step fails if that entry ever goes stale (silently
-        # fixed without updating the list) or a new offender appears unlisted.
-        run: python3 .github/scripts/r3_honesty_lint_check.py
-
-      - name: R3 runtime write-guard — protected-path proof (block 01-40 T1, Opus-pivot item 1/2)
-        # core/r3_guard.py's sys.addaudithook (wired into every L1 rig by scripts/l1.sh,
-        # already exercised in the L1 step above) is the runtime backstop the static R3
-        # lint structurally cannot be: this spawns real python3 children and proves a
-        # protected ingress path is physically unwritable through every enumerated write
-        # mechanism, that legal reads/unprotected writes still work, that `del
-        # sys.addaudithook` does not bypass it, and asserts the one KNOWN, documented hole
-        # (an unguarded subprocess child) explicitly, rather than leaving it assumed.
-        run: python3 .github/scripts/r3_guard_runtime_check.py

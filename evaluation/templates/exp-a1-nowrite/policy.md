@@ -1,0 +1,3 @@
+# Acceptance policy
+
+findings: none

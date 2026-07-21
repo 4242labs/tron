@@ -1,0 +1,86 @@
+# tron-reborn — the dev process, as data. THE single source of the flow.
+#
+# This file COMPOSES the process; the engine EXECUTES it (tron.py walks
+# this table). Every name used here — gates, prompts, personas, words —
+# must already exist in engine code or prompts/: the lint refuses unknown
+# names, unsound wiring, and any flow that drops an invariant (truth
+# gate, recorded review, single landing window). Re-model the process by
+# editing this file; you cannot edit away an invariant.
+#
+# The diagram WORKFLOW.md is GENERATED from this file
+# (`python3 workflow.py --write`); selftests fail when it is stale. The
+# engine copies the active file next to every run transcript.
+
+version = 1
+name = "build-review-merge"       # the process REBORN proved v0.1–v0.8
+
+[limits]                          # per-block caps; the operator's bounds
+phase_turns = 40                  # agent turns per phase, then operator
+review_cycles = 2                 # rejections, then operator
+gate_fails = 2                    # bounced claims per gate, then operator
+max_parallel = 2                  # independent blocks in flight at once
+
+# Each [[phase]] is one seat of work: an actor (vocabulary role, decides
+# words + model) under a persona (prompts/persona_<name>.md, defaults to
+# the actor), opened by an assign prompt, closed by ONE word.
+#   kind = "work"    — the actor delivers; the closing word is verified
+#                      by an engine gate (facts the engine derives
+#                      itself), bounced via the bounce prompt.
+#   kind = "verdict" — the actor judges; pass_word advances, reject_word
+#                      routes back via the fix prompt. EVERY verdict is
+#                      recorded durably in the project's reviews.md.
+#
+# An optional `note = "..."` on a phase is PARSED annotation prose (a real
+# field, unlike a `#` comment, which tomllib discards): the engine ignores
+# it, the lint tolerates it, and bpmn.py surfaces it in the diagram's
+# annotations panel. Keep it one clear sentence — the click-through detail.
+
+[[phase]]
+id = "build"
+kind = "work"
+actor = "worker"
+assign = "worker_assign"
+word = "DONE"
+gate = "verify_done"      # commits exist + trunk intact + engine-run tests
+challenge = true          # then >>CONFIRMED per-AC evidence, or no DONE
+bounce = "gate_fail"
+next = "review"
+note = "The worker delivers the block, then must answer >>CONFIRMED with per-AC evidence — the truth gate checks that commits exist, the trunk is untouched, and the engine's own test run is green before DONE stands."
+
+[[phase]]
+id = "review"
+kind = "verdict"
+actor = "reviewer"
+assign = "review_assign"
+pass_word = "APPROVED"
+reject_word = "REJECTED"
+fix = "fix"               # findings -> the worker, branch unchanged
+on_reject = "build"
+next = "merge"
+note = "A reviewer judges the delivery in its own detached checkout pinned to the engine-attested sha; APPROVED advances, REJECTED routes the findings back to the worker with the branch unchanged. Every verdict is recorded durably in reviews.md."
+
+[[phase]]
+id = "merge"
+kind = "work"
+actor = "worker"          # the SAME worker session — it owns the branch
+assign = "merge_assign"
+word = "MERGED"
+gate = "verify_merged"    # branch contains trunk + engine-run tests on merged state
+bounce = "merge_fail"
+window = true             # ONE merge window at a time (engine MERGE lock)
+land = true               # engine ref-advance, then suite re-run ON the trunk
+next = "wrap"
+note = "The same worker owns the merge inside the single engine-wide window; the engine performs the mechanical land — fast-forward the ref, then re-run the full suite ON the trunk."
+
+[[phase]]
+id = "wrap"               # post-merge, still inside the window: the arena
+kind = "work"             # retires only after the wrap lands (operator
+actor = "worker"          # ruling 260716 — done = landed+validated+wrapped)
+assign = "wrap_assign"
+word = "WRAPPED"
+gate = "verify_wrapped"   # session log committed + docs + working tree clean
+bounce = "wrap_fail"
+window = true
+land = true               # wrap commits ff-land the same mechanical way
+next = "landed"
+note = "Still inside the window: the worker wraps — session log, docs, clean working tree. Only then does the arena retire. Done = landed + trunk-green + wrapped."

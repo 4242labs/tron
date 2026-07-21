@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="610" viewBox="0 0 1060 610" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#433E3A"/></marker><marker id="ar-c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#CC5D0A"/></marker><marker id="ar-m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#8A817B"/></marker><marker id="ar-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#2563EB"/></marker></defs>
+<rect x="0" y="0" width="1060" height="610" fill="#FDFAF5"/>
+<rect x="0.5" y="0.5" width="1059" height="609" rx="16" fill="none" stroke="#E7E5E4"/>
+<text x="34" y="42" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="16" font-weight="700" fill="#433E3A">Figure 2 — The gate: a linear challenge</text>
+<text x="34" y="62" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11.5" font-weight="500" fill="#8A817B">trunk is evidence read into each stage, never the terminal</text>
+<path d="M320,147.0 V159.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M320,217.0 V229.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M320,287.0 V299.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M320,357.0 V369.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M320,427.0 V439.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M320,497.0 V504" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.0,188 H66 V118 H194.0" fill="none" stroke="#CC5D0A" stroke-width="1.4" stroke-dasharray="6 5" marker-end="url(#ar-c)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.0,258 H66 V118 H194.0" fill="none" stroke="#CC5D0A" stroke-width="1.4" stroke-dasharray="6 5" marker-end="url(#ar-c)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.0,328 H66 V118 H194.0" fill="none" stroke="#CC5D0A" stroke-width="1.4" stroke-dasharray="6 5" marker-end="url(#ar-c)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M194.0,468 H66 V118 H194.0" fill="none" stroke="#CC5D0A" stroke-width="1.4" stroke-dasharray="6 5" marker-end="url(#ar-c)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M688,328 H492.0 V188 H446.0" fill="none" stroke="#8A817B" stroke-width="1.3" stroke-dasharray="4 5" marker-end="url(#ar-m)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M688,328 H492.0 V398 H446.0" fill="none" stroke="#8A817B" stroke-width="1.3" stroke-dasharray="4 5" marker-end="url(#ar-m)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M688,328 H492.0 V468 H446.0" fill="none" stroke="#8A817B" stroke-width="1.3" stroke-dasharray="4 5" marker-end="url(#ar-m)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M370,538 H665" fill="none" stroke="#433E3A" stroke-width="2.2" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="194.0" y="89.0" width="252" height="58" rx="13" fill="#FDECD8" stroke="#E2711D" stroke-width="1.6"/>
+<text x="320.0" y="109.9" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#CC5D0A">worker: DONE</text>
+<text x="320.0" y="126.1" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#CC5D0A">opens a candidate</text>
+<rect x="194.0" y="159.0" width="252" height="58" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="320.0" y="179.9" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">1 · structural check</text>
+<text x="320.0" y="196.1" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">branch + commits</text>
+<rect x="194.0" y="229.0" width="252" height="58" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="320.0" y="249.9" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">2 · engine runs the tests</text>
+<text x="320.0" y="266.1" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">in the worker's arena</text>
+<rect x="194.0" y="299.0" width="252" height="58" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="320.0" y="319.9" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">3 · AC challenge</text>
+<text x="320.0" y="336.1" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#433E3A">CONFIRMED + evidence</text>
+<rect x="194.0" y="369.0" width="252" height="58" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="320.0" y="390.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">4 · landing</text>
+<text x="320.0" y="405.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">contains-trunk · ref-advance</text>
+<rect x="194.0" y="439.0" width="252" height="58" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="320.0" y="460.6" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12" font-weight="600" fill="#433E3A">5 · re-validate on trunk</text>
+<text x="320.0" y="475.4" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12" font-weight="600" fill="#433E3A">trunk-only test · clean teardown</text>
+<circle cx="320" cy="538" r="34" fill="#16A34A" stroke="#166534" stroke-width="2.4"/>
+<circle cx="320" cy="538" r="29.5" fill="none" stroke="#166534" stroke-width="1"/>
+<text x="320.0" y="530.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="700" fill="#ffffff">closed</text>
+<text x="320.0" y="545.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="700" fill="#ffffff">= done</text>
+<path d="M696.0,298.0 A64.0,7 0 0 1 824.0,298.0 L824.0,358.0 A64.0,7 0 0 1 696.0,358.0 Z" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<path d="M696.0,298.0 A64.0,7 0 0 0 824.0,298.0" fill="none" stroke="#433E3A" stroke-width="1.6"/>
+<text x="760.0" y="323.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">trunk</text>
+<text x="760.0" y="338.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">read-only</text>
+<rect x="665.0" y="512.0" width="150" height="52" rx="13" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.6"/>
+<text x="740.0" y="538.0" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13" font-weight="600" fill="#2563EB">production</text>
+<rect x="1.5" y="179.2" width="129.0" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="66" y="188.0" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="500" fill="#CC5D0A">fail → back to work</text>
+<rect x="559.4" y="259.2" width="61.3" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="590.0" y="268" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="500" fill="#8A817B">evidence</text>
+<rect x="429.2" y="514.6" width="176.6" height="16.3" rx="7.9" fill="#FDFAF5" opacity="0.95"/><text x="517.5" y="523" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="10.5" font-weight="500" fill="#433E3A">operator-gated, outside TRON</text>
+</svg>

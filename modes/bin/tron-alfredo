@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Open Claude Code already booted as TRON-ALFREDO (generalist mode).
-exec claude "/tron-alfredo $*"

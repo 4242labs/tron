@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1470" height="500" viewBox="0 0 1470 500" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#433E3A"/></marker><marker id="ar-c" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#CC5D0A"/></marker><marker id="ar-m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#8A817B"/></marker><marker id="ar-b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#2563EB"/></marker></defs>
+<rect x="0" y="0" width="1470" height="500" fill="#FDFAF5"/>
+<rect x="0.5" y="0.5" width="1469" height="499" rx="16" fill="none" stroke="#E7E5E4"/>
+<text x="34" y="42" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="16" font-weight="700" fill="#433E3A">Figure 1 — The deterministic core: a block through the flow</text>
+<text x="34" y="62" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11.5" font-weight="500" fill="#8A817B">the closed-vocabulary interpret is the only decision point; the architect sits off the steering path</text>
+<path d="M185,250 H303" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M441,250 H507" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M647,250 H755" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M893,250 H973" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M1111,250 H1169" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M1287,250 H1339" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M577,298 V370.0" fill="none" stroke="#433E3A" stroke-width="1.7" marker-end="url(#ar)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M487,400 H372 V280.0" fill="none" stroke="#CC5D0A" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#ar-c)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M667,390 H749" fill="none" stroke="#8A817B" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#ar-m)" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M749,410 H667" fill="none" stroke="#2563EB" stroke-width="1.7" stroke-dasharray="6 5" marker-end="url(#ar-b)" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="47.0" y="220.0" width="138" height="60" rx="13" fill="#ffffff" stroke="#433E3A" stroke-width="1.6"/>
+<text x="116.0" y="242.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">dispatch loop</text>
+<text x="116.0" y="257.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">reads git pipeline</text>
+<rect x="303.0" y="220.0" width="138" height="60" rx="13" fill="#FDECD8" stroke="#E2711D" stroke-width="1.6"/>
+<text x="372.0" y="241.6" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13.5" font-weight="600" fill="#CC5D0A">build</text>
+<text x="372.0" y="258.4" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13.5" font-weight="600" fill="#CC5D0A">worker</text>
+<polygon points="577,202.0 647.0,250 577,298.0 507.0,250" fill="#FEF3E2" stroke="#433E3A" stroke-width="1.6"/>
+<text x="577.0" y="242.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">closed-vocab</text>
+<text x="577.0" y="257.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#433E3A">interpret</text>
+<rect x="755.0" y="220.0" width="138" height="60" rx="13" fill="#FDECD8" stroke="#E2711D" stroke-width="1.6"/>
+<text x="824.0" y="242.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#CC5D0A">review</text>
+<text x="824.0" y="257.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#CC5D0A">judge · isolated</text>
+<rect x="973.0" y="220.0" width="138" height="60" rx="13" fill="#FDECD8" stroke="#E2711D" stroke-width="1.6"/>
+<text x="1042.0" y="242.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#CC5D0A">merge</text>
+<text x="1042.0" y="257.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#CC5D0A">worker owns it</text>
+<rect x="1169.0" y="220.0" width="118" height="60" rx="13" fill="#FDECD8" stroke="#E2711D" stroke-width="1.6"/>
+<text x="1228.0" y="250.0" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="13.5" font-weight="600" fill="#CC5D0A">wrap</text>
+<circle cx="1373" cy="250" r="34" fill="#ffffff" stroke="#433E3A" stroke-width="2.4"/>
+<circle cx="1373" cy="250" r="29.5" fill="none" stroke="#433E3A" stroke-width="1"/>
+<text x="1373.0" y="250.0" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="700" fill="#433E3A">landed</text>
+<rect x="487.0" y="370.0" width="180" height="60" rx="13" fill="#16A34A" stroke="#166534" stroke-width="1.6"/>
+<text x="577.0" y="393.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="600" fill="#ffffff">architect</text>
+<text x="577.0" y="406.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="600" fill="#ffffff">rule · answer · escalate</text>
+<rect x="749.0" y="370.0" width="150" height="60" rx="13" fill="#EFF6FF" stroke="#2563EB" stroke-width="1.6"/>
+<text x="824.0" y="392.2" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#2563EB">operator</text>
+<text x="824.0" y="407.8" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#2563EB">last resort</text>
+<rect x="191.8" y="226.2" width="104.4" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="244.0" y="235" text-anchor="middle" dominant-baseline="middle" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11" font-weight="500" fill="#8A817B">block, deps met</text>
+<rect x="660.6" y="226.2" width="79.8" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="700.5" y="235" text-anchor="middle" dominant-baseline="middle" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11" font-weight="500" fill="#8A817B">DONE + gate</text>
+<rect x="905.4" y="226.2" width="55.1" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="933.0" y="235" text-anchor="middle" dominant-baseline="middle" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11" font-weight="500" fill="#8A817B">verdict</text>
+<rect x="519.2" y="316.2" width="147.5" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="593" y="325.0" text-anchor="start" dominant-baseline="middle" font-family="'Geist Mono',ui-monospace,'SFMono-Regular',monospace" font-size="11" font-weight="500" fill="#8A817B">unparseable / QUESTION</text>
+<rect x="668.1" y="367.2" width="79.8" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="708.0" y="376" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="500" fill="#8A817B">last resort</text>
+<rect x="643.5" y="425.2" width="129.0" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="708.0" y="434" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="500" fill="#2563EB">answer travels back</text>
+<rect x="324.9" y="307.2" width="98.2" height="17.1" rx="8.2" fill="#FDFAF5" opacity="0.95"/><text x="374" y="316" text-anchor="middle" dominant-baseline="middle" font-family="'Space Grotesk','IBM Plex Sans',system-ui,sans-serif" font-size="11" font-weight="500" fill="#CC5D0A">ruling relayed</text>
+</svg>

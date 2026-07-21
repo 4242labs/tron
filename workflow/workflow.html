@@ -1,1182 +1,551 @@
 <!DOCTYPE html>
+<!-- GENERATED from workflow.toml by bpmn.py - do not edit;
+     regenerate: python3 bpmn.py -(-)write. NOT published until 0.4.2.
+     Skin: the live 42labs tron-app workflow diagram (same vendored bpmn-js
+     viewer + design tokens + logomark), baked in so --write is stable. -->
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<!-- U-TRN-5: CSP via <meta> — GitHub Pages can't set response headers. Ignores
-     frame-ancestors/report-uri/sandbox (browsers drop those 3 outside a real
-     header — frame-ancestors needs the operator's Cloudflare/edge config, see
-     the PR description). Looser than the homepage's: this page's diagram
-     renderer is one large inline <script> plus a handful of onclick=""
-     handlers (both need 'unsafe-inline' for script-src — there is no nonce/
-     hash story that survives this file's automated re-sync from 4242labs/tron
-     without breaking on every sync) and an inline <style> block (same
-     reasoning, 'unsafe-inline' for style-src). script-src/style-src stay
-     'self'-scoped otherwise — no third-party script origin remains after
-     U-TRN-4 vendored bpmn-js locally.
-       script-src  'self' 'unsafe-inline'   — vendor/bpmn-viewer.production.min.js
-         (self) + this page's inline diagram script and onclick handlers.
-       style-src   'self' 'unsafe-inline' + fonts.googleapis.com — the inline
-         <style> block + the Google Fonts CSS.
-       font-src    fonts.gstatic.com        — the woff2 files it resolves to.
-       img-src     'self'                   — nyan-cat.gif, favicons, all local.
-       connect-src 'self'                   — same-origin VERSION/BUILD_DATE
-         fetches only; no external API calls.
-       frame-src   'self'                   — the same-origin annotations
-         iframe (flow-description.html).
-     object-src 'none', base-uri 'self', form-action 'self' — hardening
-     defaults; no <object>/<embed>/<form> on this page. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>TRON | 42labs</title>
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
-<link rel="icon" type="image/png" sizes="192x192" href="favicon-192x192.png" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<!-- Self-hosted, production build (U-TRN-4): was an unpinned, no-SRI, dev-build
-     load from unpkg.com. Vendored 1:1 from the bpmn-js@17.11.1 npm package
-     (sha256 verified against the registry tarball) — see vendor/bpmn-js.LICENSE.txt.
-     Re-vendor on any bpmn-js version bump; do not hand-edit. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRON | Workflow</title>
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMyAyNyI+PHBhdGggZmlsbD0iI0UyNzExRCIgZD0iTTIzLjUzODkgMjUuNTk0NUMyMy41Mzg5IDI2LjI1MzQgMjMuMDA0IDI2Ljc4NzYgMjIuMzQ0MiAyNi43ODc2SDIwLjc3NjJDMjAuNzE2IDI2Ljc4NzYgMjAuNjU2NyAyNi43ODMxIDIwLjU5ODkgMjYuNzc0NUMyMC41NDEgMjYuNzgzMSAyMC40ODE4IDI2Ljc4NzYgMjAuNDIxNSAyNi43ODc2SDEuMTk0NjhDMC41MzQ4NzYgMjYuNzg3NiAwIDI2LjI1MzQgMCAyNS41OTQ1VjI0LjA2NTlDMCAyMy40MDcgMC41MzQ4NzYgMjIuODcyOCAxLjE5NDY4IDIyLjg3MjhIOC44Mjk0MlYxNi4yNDgxQzguODI5NDIgMTUuNDc5MSA5LjQ1Mjg0IDE0Ljg1NTcgMTAuMjIxOSAxNC44NTU3SDExLjM5NDRDMTIuMTYzNCAxNC44NTU3IDEyLjc4NjggMTUuNDc5MSAxMi43ODY4IDE2LjI0ODJWMjIuODcyOEgxOS41ODE1VjE2LjI0ODFDMTkuNTgxNSAxNS40NzkxIDIwLjIwNDkgMTQuODU1NyAyMC45NzQgMTQuODU1N0gyMi4xNDY1QzIyLjkxNTUgMTQuODU1NyAyMy41Mzg5IDE1LjQ3OTEgMjMuNTM4OSAxNi4yNDgyVjI1LjU5NDVaIi8+PHBhdGggZmlsbD0iI0UyNzExRCIgZD0iTTExLjU5MjEgMC4yNzkwNTNDMTEuNjUyNCAwLjI3OTA1MyAxMS43MTE2IDAuMjgzMjc0IDExLjc2OTUgMC4yOTE4NjlDMTEuODI3MyAwLjI4MzI3NCAxMS44ODY1IDAuMjc5MDUzIDExLjk0NjggMC4yNzkwNTNIMzEuMTczNkMzMS44MzM0IDAuMjc5MDUzIDMyLjM2ODMgMC44MTMyMDkgMzIuMzY4MyAxLjQ3MjEyVjMuMDAwNzVDMzIuMzY4MyAzLjY1OTY2IDMxLjgzMzQgNC4xOTM4MiAzMS4xNzM2IDQuMTkzODJIMjMuNTM4OVYxMC41NTc1QzIzLjUzODkgMTEuMzI2NSAyMi45MTU1IDExLjk1IDIyLjE0NjUgMTEuOTVIMjAuOTc0QzIwLjIwNDkgMTEuOTUgMTkuNTgxNSAxMS4zMjY1IDE5LjU4MTUgMTAuNTU3NVY0LjE5MzgySDEyLjc4NjhWMTAuNTU3NUMxMi43ODY4IDExLjMyNjUgMTIuMTYzNCAxMS45NSAxMS4zOTQ0IDExLjk1SDEwLjIyMTlDOS40NTI4NCAxMS45NSA4LjgyOTQyIDExLjMyNjUgOC44Mjk0MiAxMC41NTc1VjEuNDcyMTJDOC44Mjk0MiAwLjgxMzIwOSA5LjM2NDMgMC4yNzkwNTMgMTAuMDI0MSAwLjI3OTA1M0gxMS41OTIxWiIvPjwvc3ZnPg==">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="vendor/bpmn-viewer.production.min.js"></script>
 <style>
   :root{
     --canvas-warm:#FDFAF5; --cream:#FEF3E2; --border-cool:#E7E5E4;
     --mid-stone:#B8AFA8; --stone:#756D68; --graphite:#433E3A; --charcoal:#1C1917;
-    --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8; --copper-border:#F5C9A1;
-    --copper-deep:#AA4D08;   /* U-TRN-7: darker than --copper-dark specifically for #annot-btn text/hover-fill — --copper-dark only cleared 3.53:1/3.18:1 against --copper-soft/white, both under the 4.5:1 text bar */
+    --copper:#E2711D; --copper-dark:#CC5D0A; --copper-soft:#FDECD8;
+    --copper-border:#F5C9A1; --copper-deep:#AA4D08;
     --blue-dark:#2563EB; --sky:#EFF6FF;
-    --emerald:#16A34A; --emerald-dark:#166534; --emerald-soft:#F0FDF4;   /* LLM / AIDE nodes */
-    --amber:#EAB308; --amber-dark:#854D0E; --amber-soft:#FEFCE8;          /* sub-process drill-downs */
-    --accent:var(--copper); --logo:var(--copper-dark);   /* 42labs DS semantic tokens (light) — logo wordmark = copper-dark */
+    --emerald:#16A34A; --emerald-dark:#166534;
+    --accent:var(--copper); --logo:var(--copper-dark);
     --font-heading:'Space Grotesk',system-ui,sans-serif;
     --font-body:'IBM Plex Sans',system-ui,sans-serif;
     --font-mono:'Geist Mono',ui-monospace,monospace;
-    --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px; --r-4:10px; --r-full:999px;
-    --head-h:62px;   /* fixed page header — matches the website nav (26px logo + 18px block padding) */
+    --r-4:10px; --r-full:999px; --head-h:62px;
   }
   *{box-sizing:border-box}
   html,body{height:100%;}
-  body{margin:0; background:var(--canvas-warm); color:var(--charcoal); font-family:var(--font-body); height:100vh; overflow:hidden;}
-  .wrap{max-width:none; margin:0; padding:0; height:100vh; display:flex; flex-direction:column;}
-  /* fixed page header: full-bleed white bar; content constrained to the website's 1280px container */
-  .topbar{flex:0 0 var(--head-h); height:var(--head-h); background:var(--canvas-warm); border-bottom:1px solid var(--border-cool);
-    display:flex; align-items:center; z-index:20;}
-  .topbar__inner{width:100%; max-width:1280px; margin-inline:auto; padding-inline:clamp(20px,5vw,48px);
+  body{margin:0; background:var(--cream); color:var(--charcoal);
+    font-family:var(--font-body); display:flex; flex-direction:column; overflow:hidden;}
+  .topbar{flex:0 0 var(--head-h); height:var(--head-h); background:var(--canvas-warm);
+    border-bottom:1px solid var(--border-cool); display:flex; align-items:center; z-index:20;}
+  .topbar__inner{width:100%; margin-inline:auto; padding-inline:clamp(16px,4vw,40px);
     display:flex; align-items:center; justify-content:space-between; gap:24px;}
-  .topctl{display:flex; align-items:center; gap:8px;}
+  .flowhead{display:flex; align-items:center; gap:10px;}
+  .flowhead .nname{font-family:var(--font-heading); font-weight:600; font-size:15px;
+    color:var(--charcoal); text-transform:uppercase; letter-spacing:.02em;}
   .logolink{display:inline-flex; align-items:center;}
-  #core{flex:1; min-height:0; background:var(--cream); overflow:hidden;}
-  /* every element name uppercased uniformly (single source — never hardcode mixed case in data) */
-  #core text, #ovcanvas text{ text-transform:uppercase; }
-  /* Do NOT style .bjs-powered-by — not even opacity. The bpmn-js licence is
-     explicit: the watermark "MUST NOT be removed or changed" and "must stay
-     fully visible and not visually overlapped by other elements". It is left
-     entirely alone, exactly as the library renders it. */
-  .bjs-drilldown{display:none !important;}
+  .logo__svg{height:26px; width:auto; display:block;}
+  .logo__mark{fill:var(--accent);} .logo__type{fill:var(--logo);}
+  .hsep{width:1px; height:18px; background:var(--border-cool);}
+  .topctl{display:flex; align-items:center; gap:8px;}
   .zoomctl{display:flex; gap:6px;}
-  .zoomctl button{width:32px; height:32px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:18px; line-height:1; color:var(--graphite); cursor:pointer; font-family:var(--font-body); box-shadow:0 1px 3px rgba(28,25,23,.08);}
+  .zoomctl button{width:32px; height:32px; border:1px solid var(--border-cool);
+    background:#fff; border-radius:8px; font-size:18px; line-height:1; color:var(--graphite);
+    cursor:pointer; font-family:var(--font-body); box-shadow:0 1px 3px rgba(28,25,23,.08);}
   .zoomctl button:hover{background:var(--cream); border-color:var(--copper-border);}
-  /* annotations toggle — same control style as the zoom buttons, but accent (copper) */
-  /* U-TRN-7: text/hover-fill use --copper-deep, not --copper-dark/--copper — resting was
-     3.53:1 and hover was 3.18:1 against normal-text's 4.5:1 bar. --copper-deep on --copper-soft
-     is 4.81:1; #fff on --copper-deep is 5.56:1. */
-  .annotbtn{height:32px; padding:0 14px;
-    border:1px solid var(--copper-border); background:var(--copper-soft); color:var(--copper-deep);
-    border-radius:8px; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;
+  .annotbtn{height:32px; padding:0 14px; border:1px solid var(--copper-border);
+    background:var(--copper-soft); color:var(--copper-deep); border-radius:8px;
+    font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;
     text-transform:uppercase; letter-spacing:.03em; box-shadow:0 1px 3px rgba(28,25,23,.08);}
   .annotbtn:hover{background:var(--copper-deep); color:#fff; border-color:var(--copper-deep);}
-  /* annotations — sliding right panel (hosts the flow notes); hidden off-canvas until toggled. Covers the header too. */
-  .notes-panel{position:fixed; top:0; right:0; width:460px; max-width:92vw; height:100vh; z-index:60;
+  #canvas{flex:1; min-height:0; background:var(--cream); cursor:grab;}
+  #canvas:active{cursor:grabbing;}
+  /* node/gateway/event text renders as authored (sentence case); a terminal
+     command like ">tron start" must stay lowercase. Lane owner names are
+     uppercased in the data, not here. */
+  /* Do NOT style .bjs-powered-by — the bpmn-js licence requires the
+     watermark stay fully visible and unaltered. Left exactly as rendered. */
+  /* chart area (pool + every lane) = warm canvas against the cream page */
+  .djs-element[data-element-id="pool"] .djs-visual > rect,
+  .djs-element[data-element-id^="lane_"] .djs-visual > rect{ fill:var(--canvas-warm) !important; }
+  /* semantic node fills (marker classes added after import) */
+  .djs-element.n-seat .djs-visual > rect{ fill:var(--copper-soft) !important; stroke:var(--copper) !important; }
+  .djs-element.n-engine .djs-visual > rect{ fill:#fff !important; stroke:var(--graphite) !important; }
+  .djs-element.n-architect .djs-visual > rect{ fill:var(--emerald) !important; stroke:var(--emerald-dark) !important; }
+  .djs-element.n-architect .djs-visual > text{ fill:#fff !important; }
+  .djs-element.n-operator .djs-visual > rect{ fill:var(--sky) !important; stroke:var(--blue-dark) !important; }
+  .djs-element.n-operator .djs-visual > text{ fill:var(--blue-dark) !important; }
+  .djs-element.has-note{ cursor:pointer; }
+  /* annotations — sliding right panel, self-contained (notes baked in) */
+  .notes-panel{position:fixed; top:0; right:0; width:440px; max-width:92vw; height:100vh; z-index:60;
     background:#fff; border-left:1px solid var(--border-cool); box-shadow:-8px 0 24px rgba(28,25,23,.10);
     transform:translateX(100%); transition:transform .28s ease; display:flex; flex-direction:column;}
   .notes-panel.open{transform:translateX(0);}
-  .notes-panel iframe{flex:1; width:100%; border:0;}
-  .notes-close{position:absolute; top:12px; right:12px; width:30px; height:30px; border:1px solid var(--border-cool); background:#fff; border-radius:8px; font-size:17px; line-height:1; color:var(--stone); cursor:pointer; z-index:1;}
+  .notes-hd{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:16px 18px; border-bottom:1px solid var(--border-cool);
+    font-family:var(--font-heading); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
+  .notes-close{width:30px; height:30px; border:1px solid var(--border-cool); background:#fff;
+    border-radius:8px; font-size:17px; line-height:1; color:var(--stone); cursor:pointer;}
   .notes-close:hover{background:var(--cream); border-color:var(--copper-border);}
-  /* chart area (pool + every lane) = canvas-warm, against the cream page behind it */
-  .djs-element[data-element-id="Pool"] .djs-visual > rect,
-  .djs-element[data-element-id="PoolS"] .djs-visual > rect,
-  .djs-element[data-element-id^="L_"] .djs-visual > rect{ fill:var(--canvas-warm) !important; }
-  /* collapsed sub-process nodes are clickable */
-  .djs-element.has-sub{cursor:pointer;}
-  .djs-element.has-sub .djs-visual > rect{ fill:var(--amber-soft) !important; stroke:var(--amber) !important; stroke-width:2px !important; }
-
-  /* overlay */
-  #ov{position:fixed; inset:0; background:var(--cream); display:none; z-index:50;}
-  #ov.open{display:block;}
-  .ovbox{position:relative; background:var(--cream); height:100vh; width:100vw; display:flex; flex-direction:column; overflow:hidden;}
-  #ovcanvas{flex:1; min-height:0;}
-  .nnum{font-family:var(--font-mono); font-size:13px; font-weight:500; color:var(--copper-dark); background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-full); padding:2px 9px;}
-  .x{cursor:pointer; border:1px solid var(--border-cool); background:#fff; border-radius:8px; width:32px; height:32px; font-size:18px; line-height:1; color:var(--stone);}
-  .djs-element.aide .djs-visual > rect, .djs-element.llm .djs-visual > rect{ fill:var(--emerald) !important; stroke:var(--emerald-dark) !important; }
-  .djs-element.aide .djs-visual > text, .djs-element.llm .djs-visual > text{ fill:#fff !important; }
-  .djs-element.op .djs-visual > rect{ fill:var(--sky) !important; stroke:var(--blue-dark) !important; }
-  .djs-element.op .djs-visual > text{ fill:var(--blue-dark) !important; }
-  /* horizontal diagram header (42labs DS) — ONE component for the core map and every sub-process,
-     left side of the fixed top bar: [back?] [logo] | [id badge?] [name]. */
-  .flowhead{display:flex; align-items:center; gap:10px;}
-  .flowhead .nname{font-family:var(--font-heading); font-weight:600; font-size:16px; color:var(--charcoal); text-transform:uppercase; letter-spacing:.01em;}
-  .flowhead .logo__svg{height:26px; width:auto; display:block;}   /* DS nav logo height */
-  .flowhead .logo__mark{fill:var(--accent);}
-  .flowhead .logo__type{fill:var(--logo);}
-  .flowhead .hsep{width:1px; height:18px; background:var(--border-cool);}
-  /* version+build stamp (M-06) — reads VERSION/BUILD_DATE synced alongside this page; corner overlay, never blocks the canvas */
-  /* Bottom-LEFT, deliberately. Two reasons, in order:
-     1. The bpmn.io watermark owns the bottom-right corner, and its licence
-        requires it stay "fully visible and not visually overlapped by other
-        elements" — so nothing else may sit there.
-     2. Stacking TRON's version directly above the bpmn.io logo read as though
-        it were bpmn.io's version. The opposite corner removes the ambiguity. */
-  .verstamp{position:fixed; left:14px; bottom:10px; z-index:15; pointer-events:none;
-    font-family:var(--font-mono); font-size:11px; color:var(--mid-stone); letter-spacing:.02em;}
+  .notes-body{flex:1; min-height:0; overflow-y:auto; padding:14px 18px;}
+  .note-card{padding:12px 0; border-bottom:1px solid var(--border-cool);}
+  .note-card__hd, .note-card header{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+  .nnum{font-family:var(--font-mono); font-size:12px; font-weight:500; color:var(--copper-dark);
+    background:var(--copper-soft); border:1px solid var(--copper-border); border-radius:var(--r-full);
+    padding:2px 9px; white-space:nowrap;}
+  .ncname{font-family:var(--font-heading); font-weight:600; font-size:13px; color:var(--charcoal);
+    text-transform:uppercase; letter-spacing:.01em;}
+  .note-card p{margin:0; font-size:13.5px; line-height:1.5; color:var(--graphite);}
+  .note-card.hl{background:var(--copper-soft); margin-inline:-18px; padding-inline:18px; border-radius:var(--r-4);}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="topbar"><div class="topbar__inner">
-    <div class="flowhead" id="corehead"></div>
-    <div class="topctl" id="corectl">
-      <button class="annotbtn" id="annot-btn" onclick="toggleNotes()">annotations</button>
+<header class="topbar"><div class="topbar__inner">
+  <div class="flowhead">
+    <a class="logolink" href="https://tron.42labs.io" target="_self" aria-label="TRON — 42labs home"><svg class="logo__svg" viewBox="0 0 150 27" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TRON"><path class="logo__mark" d="M23.5389 25.5945C23.5389 26.2534 23.004 26.7876 22.3442 26.7876H20.7762C20.716 26.7876 20.6567 26.7831 20.5989 26.7745C20.541 26.7831 20.4818 26.7876 20.4215 26.7876H1.19468C0.534876 26.7876 0 26.2534 0 25.5945V24.0659C0 23.407 0.534876 22.8728 1.19468 22.8728H8.82942V16.2481C8.82942 15.4791 9.45284 14.8557 10.2219 14.8557H11.3944C12.1634 14.8557 12.7868 15.4791 12.7868 16.2482V22.8728H19.5815V16.2481C19.5815 15.4791 20.2049 14.8557 20.974 14.8557H22.1465C22.9155 14.8557 23.5389 15.4791 23.5389 16.2482V25.5945Z"/><path class="logo__mark" d="M11.5921 0.279053C11.6524 0.279053 11.7116 0.283274 11.7695 0.291869C11.8273 0.283274 11.8865 0.279053 11.9468 0.279053H31.1736C31.8334 0.279053 32.3683 0.813209 32.3683 1.47212V3.00075C32.3683 3.65966 31.8334 4.19382 31.1736 4.19382H23.5389V10.5575C23.5389 11.3265 22.9155 11.95 22.1465 11.95H20.974C20.2049 11.95 19.5815 11.3265 19.5815 10.5575V4.19382H12.7868V10.5575C12.7868 11.3265 12.1634 11.95 11.3944 11.95H10.2219C9.45284 11.95 8.82942 11.3265 8.82942 10.5575V1.47212C8.82942 0.813209 9.3643 0.279053 10.0241 0.279053H11.5921Z"/><path class="logo__type" d="M89.728 8.75482C89.728 9.78958 89.6001 10.7139 89.3443 11.5278C89.0886 12.3416 88.7398 13.0625 88.298 13.6903C87.8678 14.3065 87.3678 14.8355 86.7981 15.2773C86.2284 15.7191 85.6297 16.0854 85.0018 16.376C84.3856 16.6551 83.7578 16.8585 83.1183 16.9864C82.4905 17.1143 81.8975 17.1783 81.3395 17.1783L90.8093 25.3575H83.7985L74.3461 17.1783H72.201C71.5846 17.1783 71.0848 16.6785 71.0848 16.0621V13.7601C71.0848 13.1436 71.5846 12.6439 72.201 12.6439H81.3395C81.9092 12.5974 82.4265 12.4811 82.8916 12.2951C83.3683 12.0975 83.7752 11.8359 84.1124 11.5103C84.4612 11.1848 84.7286 10.7953 84.9146 10.3418C85.1007 9.87678 85.1937 9.34777 85.1937 8.75482V5.89469C85.1937 5.6389 85.1588 5.44706 85.089 5.31917C85.0309 5.17965 84.9495 5.08083 84.8449 5.02269C84.7519 4.95293 84.6472 4.91224 84.531 4.90061C84.4263 4.88899 84.3275 4.88317 84.2345 4.88317H69.2711V25.3575H64.7367V2.63344C64.7367 2.31952 64.7949 2.02304 64.9111 1.74401C65.0274 1.46497 65.1844 1.22081 65.382 1.01153C65.5913 0.802254 65.8354 0.639483 66.1145 0.523217C66.3935 0.406952 66.6958 0.348819 67.0214 0.348819H84.2345C85.246 0.348819 86.1005 0.534844 86.7981 0.906893C87.4957 1.26732 88.0596 1.72657 88.4898 2.28464C88.9316 2.83109 89.2455 3.42404 89.4315 4.0635C89.6292 4.70296 89.728 5.30173 89.728 5.85981V8.75482Z"/><path class="logo__type" d="M51.3778 25.5668H46.8435V15.9052C46.8435 15.2887 47.3432 14.789 47.9596 14.789H50.2617C50.8781 14.789 51.3778 15.2887 51.3778 15.9052V25.5668Z"/><path class="logo__type" d="M61.3709 3.9763C61.3709 4.59274 60.8711 5.09245 60.2547 5.09245H51.3778V10.8825C51.3778 11.4989 50.8781 11.9986 50.2617 11.9986H47.9596C47.3432 11.9986 46.8435 11.4989 46.8435 10.8825V5.09245H37.9492C37.3327 5.09245 36.833 4.59274 36.833 3.9763V1.67425C36.833 1.05781 37.3327 0.558097 37.9492 0.558097H60.2547C60.8711 0.558097 61.3709 1.05781 61.3709 1.67425V3.9763Z"/><path class="logo__type" d="M98.5875 15.2424C98.5875 16.1377 98.727 16.9515 99.006 17.684C99.2967 18.4049 99.7036 19.0269 100.227 19.5501C100.75 20.0616 101.372 20.4628 102.093 20.7534C102.825 21.0325 103.633 21.172 104.517 21.172H110.621C111.505 21.172 112.307 21.0325 113.028 20.7534C113.76 20.4628 114.388 20.0616 114.911 19.5501C115.434 19.0269 115.835 18.4049 116.114 17.684C116.405 16.9515 116.55 16.1377 116.55 15.2424C116.55 14.992 116.753 14.789 117.004 14.789H120.631C120.882 14.789 121.085 14.992 121.085 15.2424C121.085 16.7655 120.823 18.1665 120.3 19.4454C119.777 20.7244 119.05 21.8289 118.12 22.759C117.19 23.6891 116.085 24.4158 114.807 24.939C113.539 25.4506 112.156 25.7063 110.656 25.7063H104.517C103.017 25.7063 101.628 25.4506 100.349 24.939C99.07 24.4158 97.9654 23.6891 97.0353 22.759C96.1052 21.8289 95.3727 20.7244 94.8379 19.4454C94.3147 18.1665 94.0531 16.7655 94.0531 15.2424C94.0531 14.992 94.2561 14.789 94.5065 14.789H98.134C98.3844 14.789 98.5875 14.992 98.5875 15.2424Z"/><path class="logo__type" d="M110.656 2.20737e-05C112.156 2.20737e-05 113.539 0.26162 114.807 0.784815C116.085 1.30801 117.19 2.03467 118.12 2.96479C119.05 3.88329 119.777 4.98781 120.3 6.27836C120.823 7.55728 121.085 8.95247 121.085 10.4639V10.8825C121.085 11.4989 120.585 11.9986 119.969 11.9986H117.667C117.05 11.9986 116.55 11.4989 116.55 10.8825V10.4639C116.55 9.56868 116.405 8.76063 116.114 8.03978C115.835 7.30731 115.434 6.68529 114.911 6.17372C114.4 5.65053 113.778 5.24941 113.045 4.97037C112.324 4.67971 111.528 4.53438 110.656 4.53438H104.517C103.633 4.53438 102.825 4.67971 102.093 4.97037C101.372 5.24941 100.75 5.65053 100.227 6.17372C99.7036 6.68529 99.2967 7.30731 99.006 8.03978C98.727 8.76063 98.5875 9.56868 98.5875 10.4639V10.8825C98.5875 11.4989 98.0877 11.9986 97.4713 11.9986H95.1693C94.5528 11.9986 94.0531 11.4989 94.0531 10.8825V10.4639C94.0531 8.95247 94.3147 7.55728 94.8379 6.27836C95.3727 4.98781 96.1052 3.88329 97.0353 2.96479C97.9654 2.03467 99.07 1.30801 100.349 0.784815C101.628 0.26162 103.017 2.20737e-05 104.517 2.20737e-05H110.656Z"/><path class="logo__type" d="M126.404 0.170605C126.834 -0.00378947 127.276 -0.044484 127.729 0.0485266C128.183 0.129911 128.572 0.339198 128.898 0.676361L142.157 14.5075L142.142 14.5225L143.822 16.245L145.466 17.9592V17.929L150 22.5756V23.4179C150 23.7434 149.936 24.0457 149.808 24.3248C149.692 24.6038 149.529 24.848 149.32 25.0572C149.122 25.2549 148.884 25.4119 148.605 25.5281C148.326 25.6444 148.029 25.7025 147.715 25.7025C147.436 25.7025 147.152 25.6502 146.861 25.5456C146.582 25.4409 146.332 25.2723 146.111 25.0398L129.543 7.73949V25.3537H125.009V2.28083C125.009 1.81577 125.137 1.3972 125.392 1.02516C125.66 0.641489 125.997 0.356628 126.404 0.170605Z"/><path class="logo__type" d="M148.884 0.345004C149.5 0.345004 150 0.844721 150 1.46115V15.8381C150 16.8391 148.784 17.3338 148.085 16.6175L145.783 14.2584C145.58 14.05 145.466 13.7703 145.466 13.4791V1.46115C145.466 0.844721 145.965 0.345004 146.582 0.345004H148.884Z"/></svg></a>
+  </div>
+  <div class="topctl">
+    <div class="zoomctl">
+      <button id="zin" aria-label="zoom in">+</button>
+      <button id="zout" aria-label="zoom out">&minus;</button>
+      <button id="zfit" aria-label="fit">&#x2922;</button>
     </div>
-  </div></header>
-  <div id="core"></div>
-  <div class="verstamp" id="verstamp"></div>
-</div>
-
+    <button class="annotbtn" onclick="toggleNotes()">annotations</button>
+  </div>
+</div></header>
+<div id="canvas"></div>
 <aside class="notes-panel" id="notes" aria-label="annotations">
-  <button class="notes-close" onclick="toggleNotes(false)" aria-label="close annotations">×</button>
-  <iframe id="notes-frame" title="flow annotations" loading="lazy"></iframe>
+  <header class="notes-hd"><span>Annotations</span>
+    <button class="notes-close" onclick="toggleNotes(false)" aria-label="close annotations">&times;</button></header>
+  <div class="notes-body">
+    <article class="note-card" id="note--task_build">
+      <header><span class="ncname">Build</span></header>
+      <p>The worker delivers the block, then must answer &gt;&gt;CONFIRMED with per-AC evidence — the truth gate checks that commits exist, the trunk is untouched, and the engine's own test run is green before DONE stands.</p>
+    </article>
+    <article class="note-card" id="note--gw_build">
+      <header><span class="ncname">Done?</span></header>
+      <p>The seat closes on &gt;&gt;DONE; the engine gate verifies verify_done + AC challenge — a bounce (capped at 2, then the operator) sends it back, never forward.</p>
+    </article>
+    <article class="note-card" id="note--task_review">
+      <header><span class="ncname">Review</span></header>
+      <p>A reviewer judges the delivery in its own detached checkout pinned to the engine-attested sha; APPROVED advances, REJECTED routes the findings back to the worker with the branch unchanged. Every verdict is recorded durably in reviews.md.</p>
+    </article>
+    <article class="note-card" id="note--gw_review">
+      <header><span class="ncname">Approved?</span></header>
+      <p>&gt;&gt;APPROVED advances; &gt;&gt;REJECTED routes the findings back via the fix prompt (capped at 2). Every verdict is recorded in reviews.md.</p>
+    </article>
+    <article class="note-card" id="note--task_merge">
+      <header><span class="ncname">Merge</span></header>
+      <p>The same worker owns the merge inside the single engine-wide window; the engine performs the mechanical land — fast-forward the ref, then re-run the full suite ON the trunk.</p>
+    </article>
+    <article class="note-card" id="note--gw_merge">
+      <header><span class="ncname">Merged?</span></header>
+      <p>The seat closes on &gt;&gt;MERGED; the engine gate verifies verify_merged — a bounce (capped at 2, then the operator) sends it back, never forward.</p>
+    </article>
+    <article class="note-card" id="note--land_merge">
+      <header><span class="ncname">Land on · the trunk</span></header>
+      <p>Engine mechanical land: fast-forward the ref, then re-run the full suite ON the trunk — the claim is never trusted, the engine re-derives green itself.</p>
+    </article>
+    <article class="note-card" id="note--task_wrap">
+      <header><span class="ncname">Wrap</span></header>
+      <p>Still inside the window: the worker wraps — session log, docs, clean working tree. Only then does the arena retire. Done = landed + trunk-green + wrapped.</p>
+    </article>
+    <article class="note-card" id="note--gw_wrap">
+      <header><span class="ncname">Wrapped?</span></header>
+      <p>The seat closes on &gt;&gt;WRAPPED; the engine gate verifies verify_wrapped — a bounce (capped at 2, then the operator) sends it back, never forward.</p>
+    </article>
+    <article class="note-card" id="note--land_wrap">
+      <header><span class="ncname">Land on · the trunk</span></header>
+      <p>Engine mechanical land: fast-forward the ref, then re-run the full suite ON the trunk — the claim is never trusted, the engine re-derives green itself.</p>
+    </article>
+    <article class="note-card" id="note--end">
+      <header><span class="ncname">Done</span></header>
+      <p>The register is stamped done — landed, trunk-green, and wrapped. Caps per phase: 2 gate bounces, 2 review rejects, 40 turns — each ends at the operator.</p>
+    </article>
+    <article class="note-card" id="note--esc_start">
+      <header><span class="ncname">Seat stuck</span></header>
+      <p>A stuck seat raises the exception spine — a QUESTION, an engine wall, or an unparsable close.</p>
+    </article>
+    <article class="note-card" id="note--esc_arch">
+      <header><span class="ncname">Judge</span></header>
+      <p>Architect-first — the architect (an LLM) reads every stuck signal before anyone is paged: architect reads the block, rules or escalates; architect translates, rules, or escalates; architect rules first; a recurrence goes straight up; architect answers from the artifacts, or escalates.</p>
+    </article>
+    <article class="note-card" id="note--esc_gw">
+      <header><span class="ncname">Rule or escalate?</span></header>
+      <p>A ruling returns to the seat; an ESCALATE, a recurrence of an already-ruled wall, or the ablated architect_first arm sends the signal up to the operator.</p>
+    </article>
+    <article class="note-card" id="note--esc_ruling">
+      <header><span class="ncname">Resolved</span></header>
+      <p>The ruling is relayed back to the stuck seat, which resumes.</p>
+    </article>
+    <article class="note-card" id="note--esc_op">
+      <header><span class="ncname">Answer</span></header>
+      <p>The operator is the last resort and answers from anywhere via Telegram; the answer syncs back down through the architect.</p>
+    </article>
+  </div>
 </aside>
-
-<div id="ov"><div class="ovbox">
-  <header class="topbar"><div class="topbar__inner">
-    <div class="flowhead" id="ovhead"></div>
-    <div class="topctl" id="ovctl">
-      <button class="annotbtn" onclick="toggleNotes()">annotations</button>
-    </div>
-  </div></header>
-  <div id="ovcanvas"></div>
-</div></div>
-
-<script>
-/* ════════════ HEADER — one component for the core map and every sub-process ════════════ */
-const LOGO_SVG = `<svg class="logo__svg" viewBox="0 0 150 27" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TRON"><path class="logo__mark" d="M23.5389 25.5945C23.5389 26.2534 23.004 26.7876 22.3442 26.7876H20.7762C20.716 26.7876 20.6567 26.7831 20.5989 26.7745C20.541 26.7831 20.4818 26.7876 20.4215 26.7876H1.19468C0.534876 26.7876 0 26.2534 0 25.5945V24.0659C0 23.407 0.534876 22.8728 1.19468 22.8728H8.82942V16.2481C8.82942 15.4791 9.45284 14.8557 10.2219 14.8557H11.3944C12.1634 14.8557 12.7868 15.4791 12.7868 16.2482V22.8728H19.5815V16.2481C19.5815 15.4791 20.2049 14.8557 20.974 14.8557H22.1465C22.9155 14.8557 23.5389 15.4791 23.5389 16.2482V25.5945Z"/><path class="logo__mark" d="M11.5921 0.279053C11.6524 0.279053 11.7116 0.283274 11.7695 0.291869C11.8273 0.283274 11.8865 0.279053 11.9468 0.279053H31.1736C31.8334 0.279053 32.3683 0.813209 32.3683 1.47212V3.00075C32.3683 3.65966 31.8334 4.19382 31.1736 4.19382H23.5389V10.5575C23.5389 11.3265 22.9155 11.95 22.1465 11.95H20.974C20.2049 11.95 19.5815 11.3265 19.5815 10.5575V4.19382H12.7868V10.5575C12.7868 11.3265 12.1634 11.95 11.3944 11.95H10.2219C9.45284 11.95 8.82942 11.3265 8.82942 10.5575V1.47212C8.82942 0.813209 9.3643 0.279053 10.0241 0.279053H11.5921Z"/><path class="logo__type" d="M89.728 8.75482C89.728 9.78958 89.6001 10.7139 89.3443 11.5278C89.0886 12.3416 88.7398 13.0625 88.298 13.6903C87.8678 14.3065 87.3678 14.8355 86.7981 15.2773C86.2284 15.7191 85.6297 16.0854 85.0018 16.376C84.3856 16.6551 83.7578 16.8585 83.1183 16.9864C82.4905 17.1143 81.8975 17.1783 81.3395 17.1783L90.8093 25.3575H83.7985L74.3461 17.1783H72.201C71.5846 17.1783 71.0848 16.6785 71.0848 16.0621V13.7601C71.0848 13.1436 71.5846 12.6439 72.201 12.6439H81.3395C81.9092 12.5974 82.4265 12.4811 82.8916 12.2951C83.3683 12.0975 83.7752 11.8359 84.1124 11.5103C84.4612 11.1848 84.7286 10.7953 84.9146 10.3418C85.1007 9.87678 85.1937 9.34777 85.1937 8.75482V5.89469C85.1937 5.6389 85.1588 5.44706 85.089 5.31917C85.0309 5.17965 84.9495 5.08083 84.8449 5.02269C84.7519 4.95293 84.6472 4.91224 84.531 4.90061C84.4263 4.88899 84.3275 4.88317 84.2345 4.88317H69.2711V25.3575H64.7367V2.63344C64.7367 2.31952 64.7949 2.02304 64.9111 1.74401C65.0274 1.46497 65.1844 1.22081 65.382 1.01153C65.5913 0.802254 65.8354 0.639483 66.1145 0.523217C66.3935 0.406952 66.6958 0.348819 67.0214 0.348819H84.2345C85.246 0.348819 86.1005 0.534844 86.7981 0.906893C87.4957 1.26732 88.0596 1.72657 88.4898 2.28464C88.9316 2.83109 89.2455 3.42404 89.4315 4.0635C89.6292 4.70296 89.728 5.30173 89.728 5.85981V8.75482Z"/><path class="logo__type" d="M51.3778 25.5668H46.8435V15.9052C46.8435 15.2887 47.3432 14.789 47.9596 14.789H50.2617C50.8781 14.789 51.3778 15.2887 51.3778 15.9052V25.5668Z"/><path class="logo__type" d="M61.3709 3.9763C61.3709 4.59274 60.8711 5.09245 60.2547 5.09245H51.3778V10.8825C51.3778 11.4989 50.8781 11.9986 50.2617 11.9986H47.9596C47.3432 11.9986 46.8435 11.4989 46.8435 10.8825V5.09245H37.9492C37.3327 5.09245 36.833 4.59274 36.833 3.9763V1.67425C36.833 1.05781 37.3327 0.558097 37.9492 0.558097H60.2547C60.8711 0.558097 61.3709 1.05781 61.3709 1.67425V3.9763Z"/><path class="logo__type" d="M98.5875 15.2424C98.5875 16.1377 98.727 16.9515 99.006 17.684C99.2967 18.4049 99.7036 19.0269 100.227 19.5501C100.75 20.0616 101.372 20.4628 102.093 20.7534C102.825 21.0325 103.633 21.172 104.517 21.172H110.621C111.505 21.172 112.307 21.0325 113.028 20.7534C113.76 20.4628 114.388 20.0616 114.911 19.5501C115.434 19.0269 115.835 18.4049 116.114 17.684C116.405 16.9515 116.55 16.1377 116.55 15.2424C116.55 14.992 116.753 14.789 117.004 14.789H120.631C120.882 14.789 121.085 14.992 121.085 15.2424C121.085 16.7655 120.823 18.1665 120.3 19.4454C119.777 20.7244 119.05 21.8289 118.12 22.759C117.19 23.6891 116.085 24.4158 114.807 24.939C113.539 25.4506 112.156 25.7063 110.656 25.7063H104.517C103.017 25.7063 101.628 25.4506 100.349 24.939C99.07 24.4158 97.9654 23.6891 97.0353 22.759C96.1052 21.8289 95.3727 20.7244 94.8379 19.4454C94.3147 18.1665 94.0531 16.7655 94.0531 15.2424C94.0531 14.992 94.2561 14.789 94.5065 14.789H98.134C98.3844 14.789 98.5875 14.992 98.5875 15.2424Z"/><path class="logo__type" d="M110.656 2.20737e-05C112.156 2.20737e-05 113.539 0.26162 114.807 0.784815C116.085 1.30801 117.19 2.03467 118.12 2.96479C119.05 3.88329 119.777 4.98781 120.3 6.27836C120.823 7.55728 121.085 8.95247 121.085 10.4639V10.8825C121.085 11.4989 120.585 11.9986 119.969 11.9986H117.667C117.05 11.9986 116.55 11.4989 116.55 10.8825V10.4639C116.55 9.56868 116.405 8.76063 116.114 8.03978C115.835 7.30731 115.434 6.68529 114.911 6.17372C114.4 5.65053 113.778 5.24941 113.045 4.97037C112.324 4.67971 111.528 4.53438 110.656 4.53438H104.517C103.633 4.53438 102.825 4.67971 102.093 4.97037C101.372 5.24941 100.75 5.65053 100.227 6.17372C99.7036 6.68529 99.2967 7.30731 99.006 8.03978C98.727 8.76063 98.5875 9.56868 98.5875 10.4639V10.8825C98.5875 11.4989 98.0877 11.9986 97.4713 11.9986H95.1693C94.5528 11.9986 94.0531 11.4989 94.0531 10.8825V10.4639C94.0531 8.95247 94.3147 7.55728 94.8379 6.27836C95.3727 4.98781 96.1052 3.88329 97.0353 2.96479C97.9654 2.03467 99.07 1.30801 100.349 0.784815C101.628 0.26162 103.017 2.20737e-05 104.517 2.20737e-05H110.656Z"/><path class="logo__type" d="M126.404 0.170605C126.834 -0.00378947 127.276 -0.044484 127.729 0.0485266C128.183 0.129911 128.572 0.339198 128.898 0.676361L142.157 14.5075L142.142 14.5225L143.822 16.245L145.466 17.9592V17.929L150 22.5756V23.4179C150 23.7434 149.936 24.0457 149.808 24.3248C149.692 24.6038 149.529 24.848 149.32 25.0572C149.122 25.2549 148.884 25.4119 148.605 25.5281C148.326 25.6444 148.029 25.7025 147.715 25.7025C147.436 25.7025 147.152 25.6502 146.861 25.5456C146.582 25.4409 146.332 25.2723 146.111 25.0398L129.543 7.73949V25.3537H125.009V2.28083C125.009 1.81577 125.137 1.3972 125.392 1.02516C125.66 0.641489 125.997 0.356628 126.404 0.170605Z"/><path class="logo__type" d="M148.884 0.345004C149.5 0.345004 150 0.844721 150 1.46115V15.8381C150 16.8391 148.784 17.3338 148.085 16.6175L145.783 14.2584C145.58 14.05 145.466 13.7703 145.466 13.4791V1.46115C145.466 0.844721 145.965 0.345004 146.582 0.345004H148.884Z"/></svg>`;
-// header inner HTML: [back?] [logo] | [id badge?] [name] — same structure everywhere
-function headBar({num, name, back}){
-  return (back ? `<button class="x" onclick="ovBack()" aria-label="back">‹</button>` : '')
-    + `<a class="logolink" href="https://tron.42labs.io" target="_self" aria-label="TRON — 42labs home">${LOGO_SVG}</a>`
-    + `<span class="hsep"></span>`
-    + (num ? `<span class="nnum">${num}</span>` : '')
-    + `<span class="nname">${esc(name)}</span>`;
-}
-/* ════════════ DATA MODEL ════════════ */
-// lanes tile the pool top→bottom; TRON owns grid-rows 0–2, AGENT row 3.
-// y/h are computed by layoutCore() from the track grid (sized to content, symmetric padding).
-const LANES = [
-  {id:'L_TRON',name:'TRON',  rows:[0,2], y:0, h:0},
-  {id:'L_ARCH',name:'AGENT', rows:[3,3], y:0, h:0},
-];
-const SHOW_EDGE_LABELS = false;         // edge labels are implicit (docs only) — kept OFF the canvas for a clean diagram
-const POOL = {x:160,y:80,w:0,h:0};      // w/h/y computed by layoutCore()
-let LANE_X = 190, LANE_W = 1310;        // computed by layoutCore()
-
-// CORE NODES — placed on a track grid by (col,row). Same col → shared centre X (vertical alignment);
-// same row → shared centre Y. Geometry (x/y) is derived in layoutCore(); only col/row/size live here.
-const NODES = [
-  // ── TRON lane · rows 0–2 ──
-  // row 0 (new top) — WAKE sits above the convergence gateway
-  {id:'ND-08', kind:'sub',   name:'WAKE',           lane:'L_TRON', col:2, row:0, w:96, h:68, sub:'WAKE'},   // moved up; re-entry feeds the converge gateway below
-  // row 1 — spine: Start → BOOTUP → ◇converge → PULSE → SWITCHBOARD; ANCHOR (right) + TICK END (up) off SWITCHBOARD
-  {id:'Start', kind:'start', name:'TRON:START',     lane:'L_TRON', col:0, row:1, w:36, h:36, lblOnly:true},
-  {id:'ND-01', kind:'sub',   name:'BOOTUP',         lane:'L_TRON', col:1, row:1, w:96, h:68, sub:'BOOTUP'},
-  {id:'CONV',  kind:'xor',   name:'',               lane:'L_TRON', col:2, row:1, w:48, h:48},   // convergence: BOOTUP first-entry OR WAKE re-entry → PULSE
-  {id:'ND-02', kind:'sub',   name:'PULSE',          lane:'L_TRON', col:3, row:1, w:96, h:68, sub:'PULSE'},   // moved to WAKE's old column
-  {id:'ND-03', kind:'xor',   name:'SWITCHBOARD',    lane:'L_TRON', col:4, row:1, w:48, h:48, lblPos:'t'},   // work selector hub; left in (PULSE), up → TICK END, right → ANCHOR, down → AGENT
-  {id:'End',   kind:'end',   name:'ANCHOR',         lane:'L_TRON', col:5, row:1, w:36, h:36, lblOnly:true, lblAbove:true},   // run-end terminal — right of SWITCHBOARD
-  {id:'End2',  kind:'end',   name:'TICK END',       lane:'L_TRON', col:4, row:0, w:36, h:36, lblOnly:true, lblAbove:true},   // new end event — idle tick ends here (above SWITCHBOARD)
-  // row 2 — fleet intake/hopper + operator channel (intake → PARLEY)
-  {id:'MSG',   kind:'mcatch',  name:'FLEET INTAKE', lane:'L_TRON', col:1, row:2, w:36, h:36, lblOnly:true},   // moved under BOOTUP; writes FLEET HOPPER
-  {id:'HOPPER',kind:'datastore',name:'FLEET HOPPER',lane:'L_TRON', col:2, row:2, w:50, h:56, lblOnly:true},   // moved to Project Docs' column; feeds WAKE (message arm) AND drained by PULSE (02-12)
-  {id:'OPI',   kind:'mcatch',name:'OPERATOR INTAKE',lane:'L_TRON', col:5, row:2, w:36, h:36, lblOnly:true},   // operator intake — own channel → PARLEY handler (ND-09)
-  {id:'ND-09', kind:'sub',   name:'PARLEY',         lane:'L_TRON', col:6, row:2, w:96, h:68, sub:'PARLEY'},   // operator-message handler — own channel, off PULSE
-
-  // ── AGENT lane · row 3 — the single LLM agent (consolidates every role); PROJECT DOCS in PULSE's column, read by both ──
-  {id:'PD2',   kind:'datastore',name:'Project Docs',lane:'L_ARCH', col:3, row:3, w:50, h:56, lblOnly:true, lblAbove:true},   // PULSE's column; read by PULSE (straight up) and the agent (right)
-  {id:'LLM',   kind:'task',  name:'AGENT',          lane:'L_ARCH', col:4, row:3, w:120,h:100, llm:true, sub:'AGENT'},   // the one LLM agent cat (below SWITCHBOARD); clickable → opens the AGENT sub (FLOW['LLM'])
-];
-
-const FLOWS = [
-  ['Start','ND-01'],
-  ['ND-01','CONV','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // BOOTUP first-entry → converge
-  ['ND-08','CONV','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],            // WAKE re-entry → converge (straight down the col)
-  ['CONV','ND-02','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // converge → PULSE
-  ['ND-02','ND-03'],                                                    // PULSE → SWITCHBOARD
-  ['ND-02','ND-08','',{from:{s:'t',d:0.5}, to:{s:'r',d:0.5}}],          // tick complete → re-arm WAKE (up-left)
-  ['OPI','ND-09','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],            // operator intake → PARLEY (right, straight)
-  ['ND-03','End'],                                                      // run end → ANCHOR (right)
-  ['ND-03','End2','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}}],           // idle tick → TICK END (up)
-  ['ND-03','LLM','',{from:{s:'b',d:0.5}, to:{s:'t',d:0.5}}],            // dispatch → AGENT (straight down the col)
-];
-
-// COMMS — non-enforcing connections (BPMN associations): communication / data read that does NOT advance a token.
-// [source, target, {from,to}] — same fractional-dock anchors as FLOWS.
-const COMMS = [
-  ['MSG','HOPPER','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}}],      // INBOX FLEET writes the hopper (directed: messages flow in) — straight, same row
-  ['HOPPER','ND-08','',{from:{s:'l',d:0.25}, to:{s:'l',d:0.5}, viaX:438}],         // FLEET HOPPER → WAKE (message arm) — out HOPPER left-¼, up the ND-01↔WAKE gap (viaX), into WAKE's outer left edge
-  ['HOPPER','ND-02','',{from:{s:'r',d:0.5}, to:{s:'b',d:0.25}, undirected:true}],  // PULSE drains FLEET HOPPER (02-12) — undirected; into PULSE bottom-¼
-  ['PD2','ND-02','',{from:{s:'t',d:0.5}, to:{s:'b',d:0.5}, undirected:true}],   // Project Docs → PULSE (read; straight up col c3 into PULSE center-bottom)
-  ['PD2','LLM','',{from:{s:'r',d:0.5}, to:{s:'l',d:0.5}, undirected:true}],   // Project Docs → AGENT (read; same row, straight right into the cat's left side)
-];
-
-const TAG = {start:'startEvent', end:'endEvent', task:'task', sub:'subProcess', xor:'exclusiveGateway', inc:'inclusiveGateway', throw:'intermediateThrowEvent', catch:'intermediateCatchEvent', timer:'intermediateCatchEvent', mcatch:'intermediateCatchEvent', mthrow:'intermediateThrowEvent', datastore:'dataStoreReference'};
-
-/* ════════════ CORE XML ════════════ */
-const byId = Object.fromEntries(NODES.map(n=>[n.id,n]));
-const center = n => ({x:n.x+n.w/2, y:n.y+n.h/2});
-
-// ── CORE TRACK GRID — same rules as the sub-process grid, lifted to the swimlane core ──
-// Column width = widest node in that column; row height = tallest node in that row; columns/rows are
-// laid edge-to-edge with one grid gap (TOK.colGap/rowGap) and never below colMin/rowMin. Outer padding
-// is a single symmetric PAD on every side, so no lane has a large empty pocket and margins match.
-function layoutCore(){
-  const G=TOK.colGap, GR=TOK.rowGap, PAD=TOK.pad, BAND=TOK.laneBand;   // one symmetric padding; lane owner strip
-  const maxCol=Math.max(...NODES.map(n=>n.col)), maxRow=Math.max(...NODES.map(n=>n.row));
-  const placed=NODES.filter(n=>!n.special);               // `special` nodes (none currently) would dock onto a host instead of sizing tracks
-  const trackW=[], trackH=[];
-  for(let c=0;c<=maxCol;c++){ const ws=placed.filter(n=>n.col===c).map(n=>n.w); trackW[c]=Math.max(TOK.colMin, ws.length?Math.max(...ws):TOK.colMin); }
-  for(let r=0;r<=maxRow;r++){ const hs=NODES.filter(n=>n.row===r).map(n=>n.h); trackH[r]=Math.max(TOK.rowMin, hs.length?Math.max(...hs):TOK.rowMin); }
-  // every row's lane → the vertical gap above a row is the small grid gap WITHIN a lane, but a full 2·PAD
-  // BETWEEN lanes, so each lane's content clears its band top & bottom by exactly PAD (== the pool padding).
-  const laneOfRow={}; LANES.forEach(l=>{ for(let r=l.rows[0];r<=l.rows[1];r++) laneOfRow[r]=l.id; });
-  const colC=[], rowC=[];
-  colC[0]=POOL.x+BAND+PAD+trackW[0]/2;
-  for(let c=1;c<=maxCol;c++) colC[c]=colC[c-1]+trackW[c-1]/2+G+trackW[c]/2;
-  rowC[0]=POOL.y+PAD+trackH[0]/2;
-  for(let r=1;r<=maxRow;r++){ const gap = laneOfRow[r]===laneOfRow[r-1] ? GR : 2*PAD; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
-  placed.forEach(n=>{ n.x=Math.round(colC[n.col]-n.w/2); n.y=Math.round(rowC[n.row]-n.h/2); });
-  // lane bands tile the pool; every boundary sits PAD below the upper lane's last content row (== PAD above
-  // the lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
-  const rowBot=r=>rowC[r]+trackH[r]/2;
-  let top=POOL.y;
-  LANES.forEach((l,k)=>{ const bottom=Math.round(rowBot(l.rows[1])+PAD); l.y=top; l.h=bottom-top; top=bottom; });
-  POOL.h = top - POOL.y;
-  POOL.w = Math.round(colC[maxCol]+trackW[maxCol]/2 + PAD - POOL.x);
-  LANE_X = POOL.x; LANE_W = POOL.w;   // lanes sit FLUSH with the pool — the owner-name band is inside each lane; no dead strip
-}
-
-function route(s,t){
-  const sc=center(s), tc=center(t);
-  if(Math.abs(sc.y-tc.y)<=22){
-    return tc.x>sc.x ? [{x:s.x+s.w,y:sc.y},{x:t.x,y:tc.y}] : [{x:s.x,y:sc.y},{x:t.x+t.w,y:tc.y}];
-  }
-  if(Math.abs(sc.x-tc.x)<=6){  // same column → clean two-point vertical, no backtrack
-    return [{x:sc.x, y: tc.y>sc.y ? s.y+s.h : s.y}, {x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h}];
-  }
-  const exitY = tc.y>sc.y ? s.y+s.h : s.y;
-  let entry;
-  if(tc.x>sc.x+4) entry={x:t.x,y:tc.y};
-  else if(tc.x<sc.x-4) entry={x:t.x+t.w,y:tc.y};
-  else entry={x:tc.x, y: tc.y>sc.y ? t.y : t.y+t.h};
-  return [{x:sc.x,y:exitY},{x:sc.x,y:tc.y},entry];
-}
-const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-// waypoints for a FLOWS/COMMS entry [source,target,label,opts] — shared by sequence flows and associations
-function edgePts(f){
-  const o=f[3];
-  if(o && o.toTop!==undefined){ const s=byId[f[0]], t=byId[f[1]], sx=s.x+s.w/2, tx=t.x+t.w*o.toTop;
-    return Math.abs(sx-tx)<2 ? [{x:sx,y:s.y+s.h},{x:tx,y:t.y}] : [{x:sx,y:s.y+s.h},{x:sx,y:t.y-12},{x:tx,y:t.y-12},{x:tx,y:t.y}]; }
-  if(o && o.from){                                                   // fractional dock anchors: {from:{s,d}, to:{s,d}} — s∈t/b/l/r, d=fraction along that side
-    const s=byId[f[0]], t=byId[f[1]];
-    const dp=(n,a)=> a.s==='t'?{x:n.x+n.w*a.d,y:n.y} : a.s==='b'?{x:n.x+n.w*a.d,y:n.y+n.h} : a.s==='l'?{x:n.x,y:n.y+n.h*a.d} : {x:n.x+n.w,y:n.y+n.h*a.d};
-    const sp=dp(s,o.from), tp=dp(t,o.to);
-    const sv=o.from.s==='t'||o.from.s==='b', tv=o.to.s==='t'||o.to.s==='b';   // vertical exit / entry?
-    if(Math.abs(sp.x-tp.x)<2 || Math.abs(sp.y-tp.y)<2) return [sp,tp];
-    if(sv && !tv) return [sp,{x:sp.x,y:tp.y},tp];        // exit vertical, enter horizontal → L
-    if(!sv && tv) return [sp,{x:tp.x,y:sp.y},tp];        // exit horizontal, enter vertical → L
-    if(sv && tv){ const my=(sp.y+tp.y)/2; return [sp,{x:sp.x,y:my},{x:tp.x,y:my},tp]; }   // both vertical → Z
-    const mx=(o.viaX!=null)?o.viaX:(sp.x+tp.x)/2; return [sp,{x:mx,y:sp.y},{x:mx,y:tp.y},tp]; }   // both horizontal → Z (viaX pins the vertical channel)
-  return route(byId[f[0]], byId[f[1]]);
-}
-
-function coreXML(){
-  const linkNodes = new Set(['TH1','TH2','CA1']);
-  // process elements
-  const flowEls = NODES.map(n=>{
-    const tag = TAG[n.kind];
-    const inc = FLOWS.filter(f=>f[1]===n.id).map((f,i)=>`<bpmn:incoming>${f[0]}__${f[1]}</bpmn:incoming>`).join('');
-    const out = FLOWS.filter(f=>f[0]===n.id).map(f=>`<bpmn:outgoing>${f[0]}__${f[1]}</bpmn:outgoing>`).join('');
-    const def = (n.kind==='throw'||n.kind==='catch') ? `<bpmn:linkEventDefinition id="${n.id}_led" name="pulse"/>`
-              : n.kind==='timer' ? `<bpmn:timerEventDefinition id="${n.id}_ted"/>`
-              : (n.kind==='mcatch'||n.kind==='mthrow') ? `<bpmn:messageEventDefinition id="${n.id}_med"/>` : '';
-    const label = n.lblOnly ? n.name : (n.name ? `${n.id}\n${n.name}` : n.id);
-    return `<bpmn:${tag} id="${n.id}" name="${esc(label)}">${inc}${out}${def}</bpmn:${tag}>`;
-  }).join('\n    ');
-
-  const seqEls = FLOWS.map(f=>`<bpmn:sequenceFlow id="${f[0]}__${f[1]}" sourceRef="${f[0]}" targetRef="${f[1]}"${(SHOW_EDGE_LABELS && f[2])?` name="${esc(f[2])}"`:''}/>`).join('\n    ');
-
-  const laneEls = LANES.map(l=>{
-    const refs = NODES.filter(n=>n.lane===l.id && n.kind!=='datastore').map(n=>`<bpmn:flowNodeRef>${n.id}</bpmn:flowNodeRef>`).join('');   // data stores are not flow nodes
-    return `<bpmn:lane id="${l.id}" name="${l.name}">${refs}</bpmn:lane>`;
-  }).join('\n      ');
-
-  // DI
-  const poolShape = `<bpmndi:BPMNShape id="Pool_di" bpmnElement="Pool" isHorizontal="true"><dc:Bounds x="${POOL.x}" y="${POOL.y}" width="${POOL.w}" height="${POOL.h}"/></bpmndi:BPMNShape>`;
-  const laneShapes = LANES.map(l=>`<bpmndi:BPMNShape id="${l.id}_di" bpmnElement="${l.id}" isHorizontal="true"><dc:Bounds x="${LANE_X}" y="${l.y}" width="${LANE_W}" height="${l.h}"/></bpmndi:BPMNShape>`).join('\n      ');
-  const nodeShapes = NODES.map(n=>{
-    const exp = n.kind==='sub' ? ' isExpanded="false"' : '';
-    const marker = n.kind==='xor' ? ' isMarkerVisible="true"' : '';
-    const cx=n.x+n.w/2, cy=n.y+n.h/2;
-    let lbl='';
-    if(n.kind==='start'||n.kind==='end'||n.kind==='throw'||n.kind==='catch'||n.kind==='timer'||n.kind==='mcatch'||n.kind==='mthrow'||n.kind==='datastore')
-      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${cx-38}" y="${n.lblAbove?n.y-34:n.y+n.h+3}" width="76" height="28"/></bpmndi:BPMNLabel>`;   // id+name on two lines, clear of the circle
-    else if((n.kind==='xor'||n.kind==='inc') && n.lblPos){   // explicit gateway-label side, kept off the diamond's lines
-      const W=96, p={ l:[n.x-W-6, cy-14], r:[n.x+n.w+6, cy-14], t:[cx-W/2, n.y-30], b:[cx-W/2, n.y+n.h+4],
-                      bl:[n.x-W+4, n.y+n.h+4], br:[n.x+n.w-4, n.y+n.h+4] }[n.lblPos];
-      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(p[0])}" y="${Math.round(p[1])}" width="${W}" height="28"/></bpmndi:BPMNLabel>`; }
-    return `<bpmndi:BPMNShape id="${n.id}_di" bpmnElement="${n.id}"${exp}${marker}><dc:Bounds x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}"/>${lbl}</bpmndi:BPMNShape>`;
-  }).join('\n      ');
-  const edgeShapes = FLOWS.map(f=>{
-    const pts = edgePts(f);
-    const wp = pts.map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
-    // edge label — offset OFF the line: above a horizontal run, to the right of a vertical run
-    let lbl='';
-    if(SHOW_EDGE_LABELS && f[2]){ const i0=Math.floor((pts.length-1)/2), a=pts[i0], b=pts[i0+1], horiz=Math.abs(b.x-a.x)>=Math.abs(b.y-a.y);
-      const mx=(a.x+b.x)/2, my=(a.y+b.y)/2, lx=horiz?mx-30:mx+TOK.labelGap, ly=horiz?my-19:my-8;
-      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="60" height="14"/></bpmndi:BPMNLabel>`; }
-    return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_di" bpmnElement="${f[0]}__${f[1]}">${wp}${lbl}</bpmndi:BPMNEdge>`;
-  }).join('\n      ');
-
-  // associations — non-enforcing communication / data-read connectors (dotted), e.g. PULSE pulling the HOPPER
-  const assocEls = COMMS.map(f=>`<bpmn:association id="${f[0]}__${f[1]}_a" associationDirection="${f[3]&&f[3].undirected?'None':'One'}" sourceRef="${f[0]}" targetRef="${f[1]}"/>`).join('\n    ');
-  const assocShapes = COMMS.map(f=>{
-    const wp = edgePts(f).map(p=>`<di:waypoint x="${Math.round(p.x)}" y="${Math.round(p.y)}"/>`).join('');
-    return `<bpmndi:BPMNEdge id="${f[0]}__${f[1]}_a_di" bpmnElement="${f[0]}__${f[1]}_a">${wp}</bpmndi:BPMNEdge>`;
-  }).join('\n      ');
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Defs" targetNamespace="http://tron/flow">
-  <bpmn:collaboration id="Collab">
-    <bpmn:participant id="Pool" name="" processRef="Proc"/>
+<script type="text/xml" id="bpmn-xml">
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GENERATED from workflow.toml by bpmn.py - do not edit; regenerate: python3 bpmn.py -(-)write -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="defs" targetNamespace="https://tron.42labs.io/workflow">
+  <bpmn:collaboration id="collab">
+    <bpmn:participant id="pool" name="workflow.toml" processRef="proc"/>
   </bpmn:collaboration>
-  <bpmn:process id="Proc" isExecutable="false">
-    <bpmn:laneSet id="LS">
-      ${laneEls}
+  <bpmn:process id="proc" isExecutable="false">
+    <bpmn:laneSet id="lanes">
+      <bpmn:lane id="lane_engine" name="ENGINE">
+        <bpmn:flowNodeRef>start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_build</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>land_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_wrap</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>land_wrap</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>end</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_worker" name="WORKER">
+        <bpmn:flowNodeRef>task_build</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>task_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>task_wrap</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_reviewer" name="REVIEWER">
+        <bpmn:flowNodeRef>task_review</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_architect" name="ARCHITECT">
+        <bpmn:flowNodeRef>esc_start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_arch</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_gw</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_ruling</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_operator" name="OPERATOR">
+        <bpmn:flowNodeRef>esc_op</bpmn:flowNodeRef>
+      </bpmn:lane>
     </bpmn:laneSet>
-    ${flowEls}
-    ${seqEls}
-    ${assocEls}
+    <bpmn:startEvent id="start" name="&gt;tron start">
+      <bpmn:outgoing>flow_0</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="task_build" name="Build">
+      <bpmn:incoming>flow_0</bpmn:incoming>
+      <bpmn:incoming>flow_2</bpmn:incoming>
+      <bpmn:incoming>flow_5</bpmn:incoming>
+      <bpmn:outgoing>flow_1</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_build" name="Done?">
+      <bpmn:incoming>flow_1</bpmn:incoming>
+      <bpmn:outgoing>flow_2</bpmn:outgoing>
+      <bpmn:outgoing>flow_3</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="task_review" name="Review">
+      <bpmn:incoming>flow_3</bpmn:incoming>
+      <bpmn:outgoing>flow_4</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_review" name="Approved?">
+      <bpmn:incoming>flow_4</bpmn:incoming>
+      <bpmn:outgoing>flow_5</bpmn:outgoing>
+      <bpmn:outgoing>flow_6</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="task_merge" name="Merge">
+      <bpmn:incoming>flow_6</bpmn:incoming>
+      <bpmn:incoming>flow_8</bpmn:incoming>
+      <bpmn:outgoing>flow_7</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_merge" name="Merged?">
+      <bpmn:incoming>flow_7</bpmn:incoming>
+      <bpmn:outgoing>flow_8</bpmn:outgoing>
+      <bpmn:outgoing>flow_9</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="land_merge" name="Land on&#10;the trunk">
+      <bpmn:incoming>flow_9</bpmn:incoming>
+      <bpmn:outgoing>flow_10</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="task_wrap" name="Wrap">
+      <bpmn:incoming>flow_10</bpmn:incoming>
+      <bpmn:incoming>flow_12</bpmn:incoming>
+      <bpmn:outgoing>flow_11</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_wrap" name="Wrapped?">
+      <bpmn:incoming>flow_11</bpmn:incoming>
+      <bpmn:outgoing>flow_12</bpmn:outgoing>
+      <bpmn:outgoing>flow_13</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="land_wrap" name="Land on&#10;the trunk">
+      <bpmn:incoming>flow_13</bpmn:incoming>
+      <bpmn:outgoing>flow_14</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="end" name="Done">
+      <bpmn:incoming>flow_14</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:startEvent id="esc_start" name="Seat stuck">
+      <bpmn:outgoing>flow_15</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="esc_arch" name="Judge">
+      <bpmn:incoming>flow_15</bpmn:incoming>
+      <bpmn:incoming>flow_19</bpmn:incoming>
+      <bpmn:outgoing>flow_16</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="esc_gw" name="Rule or escalate?">
+      <bpmn:incoming>flow_16</bpmn:incoming>
+      <bpmn:outgoing>flow_17</bpmn:outgoing>
+      <bpmn:outgoing>flow_18</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="esc_ruling" name="Resolved">
+      <bpmn:incoming>flow_17</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:task id="esc_op" name="Answer">
+      <bpmn:incoming>flow_18</bpmn:incoming>
+      <bpmn:outgoing>flow_19</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="flow_0" sourceRef="start" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_1" sourceRef="task_build" targetRef="gw_build"/>
+    <bpmn:sequenceFlow id="flow_2" sourceRef="gw_build" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_3" sourceRef="gw_build" targetRef="task_review"/>
+    <bpmn:sequenceFlow id="flow_4" sourceRef="task_review" targetRef="gw_review"/>
+    <bpmn:sequenceFlow id="flow_5" sourceRef="gw_review" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_6" sourceRef="gw_review" targetRef="task_merge"/>
+    <bpmn:sequenceFlow id="flow_7" sourceRef="task_merge" targetRef="gw_merge"/>
+    <bpmn:sequenceFlow id="flow_8" sourceRef="gw_merge" targetRef="task_merge"/>
+    <bpmn:sequenceFlow id="flow_9" sourceRef="gw_merge" targetRef="land_merge"/>
+    <bpmn:sequenceFlow id="flow_10" sourceRef="land_merge" targetRef="task_wrap"/>
+    <bpmn:sequenceFlow id="flow_11" sourceRef="task_wrap" targetRef="gw_wrap"/>
+    <bpmn:sequenceFlow id="flow_12" sourceRef="gw_wrap" targetRef="task_wrap"/>
+    <bpmn:sequenceFlow id="flow_13" sourceRef="gw_wrap" targetRef="land_wrap"/>
+    <bpmn:sequenceFlow id="flow_14" sourceRef="land_wrap" targetRef="end"/>
+    <bpmn:sequenceFlow id="flow_15" sourceRef="esc_start" targetRef="esc_arch"/>
+    <bpmn:sequenceFlow id="flow_16" sourceRef="esc_arch" targetRef="esc_gw"/>
+    <bpmn:sequenceFlow id="flow_17" sourceRef="esc_gw" targetRef="esc_ruling"/>
+    <bpmn:sequenceFlow id="flow_18" sourceRef="esc_gw" targetRef="esc_op"/>
+    <bpmn:sequenceFlow id="flow_19" sourceRef="esc_op" targetRef="esc_arch"/>
   </bpmn:process>
-  <bpmndi:BPMNDiagram id="Dg"><bpmndi:BPMNPlane id="Pl" bpmnElement="Collab">
-      ${poolShape}
-      ${laneShapes}
-      ${nodeShapes}
-      ${edgeShapes}
-      ${assocShapes}
-  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
-</bpmn:definitions>`;
-}
-
-/* ════════════ FLOW REGISTRY (overlay) — node sub-processes + sentry sub-processes ════════════ */
-const FLOW = {
-  'ND-01': { num:'ND-01', name:'BOOTUP', start:'', end:'PULSE', grid:true, endPos:[0,5],
-    steps:[
-    // common spine — row0 L→R, snakes down to the fork
-    {n:'Spawn TRON-AIDE', id:'01', pos:[0,0]},
-    {n:'Refresh trunk',   id:'02', pos:[1,0]},
-    {n:'Refresh PRs',     id:'03', pos:[2,0]},
-    {n:'Trunk fresh?', id:'04', kind:'gateway', pos:[3,0], lblPos:'top'},                   // validate the fetch advanced BEFORE building (never bootup off stale trunk)
-    {n:'Build snapshot',  id:'05', pos:[4,0], data:{name:'SNAPSHOT', dir:'out', at:'right'}},
-    {n:'Read MANIFEST',   id:'06', pos:[4,2], data:{name:'MANIFEST', dir:'in',  at:'right'}}, // probe
-    {n:'Resume?', id:'07', kind:'gateway', pos:[2,2]},                             // fork on presence
-    // fresh branch — straight down col2
-    {n:'Set scope',  id:'08', kind:'sub', opens:'ND-01-08', pos:[2,3]},
-    {n:'Set counts', id:'09', kind:'sub', opens:'ND-01-09', pos:[2,4]},
-    {n:'Write MANIFEST', id:'10', pos:[2,5], data:{name:'MANIFEST', dir:'out', at:'right'}},  // born
-    // resume branch — down col1, LEFT of the fresh column (load+pipeline+fleet are one node)
-    {n:'Reconcile',   id:'11', pos:[1,2], data:{name:'MANIFEST', dir:'out', at:'left'}}, // aligned with Resume?; resume enters its right, MANIFEST docks left-¾
-    {n:'Consistent?', id:'12', kind:'gateway', pos:[1,3]},
-    // merge → tail (col2)
-    {n:'Cap pool', id:'13', pos:[1,5]},                                            // → PULSE
-    {n:'Resolve', id:'14', kind:'sub', opens:'ND-01-14', pos:[0,3]},   // escalation; may message live workers (sent direct / to their hopper)
-    // link catches — where 01-14's throws land (repair re-reconciles, restart re-scopes)
-    {n:'repair',  id:'15', kind:'catch', pos:[1,1]},                               // ← 01-14-06 throw; re-enters Reconcile
-    {n:'restart', id:'16', kind:'catch', pos:[3,3]},                               // ← 01-14-07 throw; re-enters Set scope
-    {n:'Halt — trunk unreachable', id:'17', kind:'terminate', pos:[3,1], lblPos:'bottom'},  // persist: dead trunk → cannot bootup; emit terminal.halt_bootup SYNCHRONOUSLY then terminate
-  ],
-    edges:[
-      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},{f:'T2',t:'T3'},
-      {f:'T3',t:'T4',label:'fresh'},                                  // fetch advanced → build
-      {f:'T3',t:'T1',label:'retry', from:{s:'t'}, to:{s:'t'}},        // transient fail → re-fetch (death-cap bounds the loop)
-      {f:'T3',t:'T16',label:'persist', vlabel:true},                  // dead trunk → terminate
-      {f:'T4',t:'T5'},                                                // build → read manifest (down)
-      {f:'T5',t:'T6', from:{s:'l'}, to:{s:'r'}},                      // read → resume? (straight across row; terminate now sits a row up)
-      {f:'T6',t:'T7',label:'fresh'},
-      {f:'T6',t:'T10',label:'resume'},   // same row → straight into Reconcile's right side
-      {f:'T7',t:'T8'},{f:'T8',t:'T9'},
-      {f:'T9',t:'T12'},
-      {f:'T10',t:'T11'},
-      {f:'T11',t:'T12',label:'ok'},
-      {f:'T11',t:'T13',label:'conflict'},
-      {f:'T12',t:'E'},
-      {f:'T14',t:'T10', from:{s:'b'}, to:{s:'t'}},   // → 01-11 catch (above Reconcile) → straight down (repair); MANIFEST docks left
-      {f:'T15',t:'T7'},   // → 01-08 catch → Set scope (restart)
-    ]},
-  'ND-02': { num:'ND-02', name:'PULSE', start:'', end:'Tick complete', grid:true, startPos:[-2,1], endPos:[2,3], steps:[
-    // re-invoked each tick by the BASE loop (timer cadence OR pulse event); start here is just the entry
-    // 02-01 fork: first entry from BOOTUP arrives with a fresh snapshot (trunk+PRs+build ran in ND-01 before the fork),
-    // so the refresh trio is skipped once; every recurring tick rebuilds from trunk (no drift across crash / off-session).
-    {n:'First tick?', id:'01', kind:'gateway', pos:[0,1], lblPos:'bottom'},              // entry on row 1 (start event follows its row)
-    {n:'Refresh trunk',     id:'02', pos:[1,0]},                                         // ┐ refresh trio
-    {n:'Refresh PRs',       id:'03', pos:[2,0]},                                         // ┘  (recurring only)
-    {n:'Snapshot fresh?', id:'04', kind:'gateway', pos:[3,0], lblPos:'top'},             // validate the fetch advanced BEFORE rebuilding (never build off stale trunk)
-    {n:'Rebuild snapshot',  id:'05', pos:[4,0], data:{name:'SNAPSHOT', dir:'out', at:'right'}},
-    {n:'Flag candidates',   id:'06', pos:[4,1]},                                         // ← merge: rebuild path + skip-rebuild gate (21). Flags blocks that MIGHT be done — candidates, not confirmed (DONE is settled by the prompted gate challenge, never trunk presence)
-    // worker lifecycle — detect (Assess) then dispose (Settle); ambiguous cases escalate
-    {n:'Assess workers',    id:'07', pos:[4,2]},                                         // liveness + TTL + PR → done/dead/hung/orphan
-    {n:'Settle workers',    id:'08', pos:[3,2]},                                         // release safe (resume-session / fresh); flag ambiguous; APPLY any resolved escalation whose reply landed
-    {n:'Escalate?', id:'09', kind:'gateway', pos:[1,2], lblPos:'top'},
-    {n:'Resolve', id:'10', kind:'sub', opens:'ND-02-10', pos:[0,3]},                     // raise-and-defer escalation (brief operator → send → mark pending → await)
-    {n:'Tick cadence',      id:'11', pos:[0,2]},                                         // merge: clean + resolved
-    {n:'Claim inboxes',     id:'12', pos:[-1,2]},
-    {n:'Messages?', id:'13', kind:'gateway', pos:[-1,4], lblPos:'left'},                 // empty inbox → skip ONLY classify+route (sends still happen)
-    {n:'Classify messages', id:'14', pos:[-1,5], actor:'aide', llmId:'LLM-02-14'},       // the one LLM touch per tick; directly below 02-13 (straight drop)
-    {n:'Route messages',    id:'15', pos:[0,5]},                                         // tag → recipient (worker / architect / operator); same column as 02-10
-    {n:'Drive gates',       id:'16', pos:[2,5]},                                         // merge: routed + skipped; may produce sends (unblock/review/reject)
-    {n:'Match decision',    id:'17', pos:[3,5]},                                         // thread operator.decision back in: match the reply to its parked case by correlation id → Settle applies
-    {n:'<AGENT-ID> INBOX', id:'18', kind:'mthrow', pos:[4,5]},                           // deliver: single message-throw — every message is ID-addressed → that agent's inbox
-    {n:'Save state',        id:'19', pos:[4,3], data:{name:'MANIFEST', dir:'out', at:'right'}},
-    {n:'Drop sidecars',     id:'20', pos:[3,3]},                                         // (effects persisted before sidecars dropped)
-    {n:'', id:'21', kind:'gateway', pos:[3,1], lblPos:'bottom'},                         // skip-rebuild merge (exclusive): first-tick XOR death-cap persist → straight into Flag candidates
-    {n:'Msg wake?', id:'22', kind:'gateway', pos:[-1,1], lblPos:'bottom'},               // wake-source router: message-triggered tick vs ceiling/first
-    {n:'msg-wake',  id:'23', kind:'throw', pos:[-1,0], lblPos:'top'},                     // message wake → skip the refresh trio (no git fetch); pairs with the catch
-    {n:'msg-wake',  id:'24', kind:'catch', pos:[4,-1], lblPos:'top'},                     // rejoin at Rebuild (directly above 02-05): rebuild from on-disk (no fetch), then 02-06…02-12 run as cheap no-ops
-    {n:'Escalate?', id:'25', kind:'gateway', pos:[1,5], lblPos:'bottom'},                 // split (A, right of Route): a case needing the operator → escalate (merge B → Resolve); else → drive gates. Same question as 02-09
-    {n:'', id:'26', kind:'gateway', pos:[1,3]},                                           // merge (B, below 02-09): liveness escalation (02-09) + message-wall (A) → 02-10 Resolve
-  ],
-    edges:[
-      {f:'S',t:'T21'},                                        // start → wake-source router
-      {f:'T21',t:'T0',label:'tick'},                          // ceiling/first wake → First tick? (full refresh path)
-      {f:'T21',t:'T22',label:'message', from:{s:'t'}, to:{s:'b'}},  // message wake → throw (skip refresh)
-      {f:'T23',t:'T4', from:{s:'b'}, to:{s:'t'}},             // catch (row above) → Rebuild top, straight down
-      {f:'T0',t:'T1',label:'recurring', from:{s:'t'}, to:{s:'l'}},  // leave 02-01 top → 02-02 left; full rebuild from trunk
-      {f:'T0',t:'T20',label:'first'},                          // fresh snapshot already in hand → skip the trio into the merge gate
-      {f:'T1',t:'T2'},{f:'T2',t:'T3'},                         // refresh trio → fresh? gate
-      {f:'T3',t:'T4',label:'fresh'},                           // fetch advanced → rebuild
-      {f:'T3',t:'T1',label:'retry', from:{s:'t'}, to:{s:'t'}}, // transient fail → re-fetch (death-cap bounds the loop)
-      {f:'T3',t:'T20',label:'persist'},                        // death-cap → raise alarm + skip Rebuild (no fresh snapshot) → merge gate
-      {f:'T20',t:'T5'},                                        // merge gate → detect done
-      {f:'T4',t:'T5'},                                         // rebuild → detect done
-      {f:'T5',t:'T6'},{f:'T6',t:'T7'},{f:'T7',t:'T8'},          // detect → assess → settle → escalate?
-      {f:'T8',t:'T10',label:'ok'},                             // clean → continue the tick
-      {f:'T8',t:'T25',label:'escalate', from:{s:'b'}, to:{s:'t'}},  // 02-09 bottom → merge B (top)
-      {f:'T25',t:'T9', from:{s:'l'}, to:{s:'r'}},                   // merge B → 02-10 Resolve (right)
-      {f:'T9',t:'T10'},                                        // resolved → rejoin (straight up into cadence)
-      {f:'T10',t:'T11'},                                       // cadence → claim inboxes
-      {f:'T11',t:'T12'},                                       // claim → messages? gateway (down)
-      {f:'T12',t:'T13',label:'yes', from:{s:'b'}, to:{s:'t'}},                 // messages → classify (straight drop, same column)
-      {f:'T12',t:'T15',label:'no', from:{s:'r'}, to:{s:'t'}},    // 02-13 right → straight to 02-16 column → turn down into its top-centre
-      {f:'T13',t:'T14', from:{s:'r'}, to:{s:'b',d:0.5}},       // classify right → route bottom-center
-      {f:'T14',t:'T24', from:{s:'r'}, to:{s:'l'}},             // route → split A
-      {f:'T24',t:'T15',label:'no'},                            // A → drive gates (not a wall)
-      {f:'T24',t:'T25',label:'escalate', from:{s:'t'}, to:{s:'b'}}, // A → merge B (operator-needed case → Resolve)
-      {f:'T15',t:'T16'},                                       // gates → triggers
-      {f:'T16',t:'T17'},                                       // triggers → deliver (single flush, after all producers)
-      {f:'T17',t:'T18'},                                       // deliver → save
-      {f:'T18',t:'T19'},                                       // save → drop (persist before drop)
-      {f:'T19',t:'E'},
-    ]},
-  // AGENT (LLM) — ONE drill-down for every role (engineer / architect / reviewer): identical process,
-  // only the variables (name, work, prompts) differ. The throw is non-terminating; the agent never ends
-  // its own process (TRON releases the session).
-  'LLM': { num:'LLM', name:'AGENT', owner:'✦  AGENT', grid:true, noEnd:true,
-    start:'', startData:{name:'<PMT-*>', dir:'in', at:'above'},
-    startPos:[-1,0],
-    steps:[
-      {n:'AGENT INBOX', id:'01', kind:'mcatch', pos:[0,-1], lblPos:'top'},
-      {n:'<work>', id:'02', kind:'task', pos:[1,0], data:{name:'<PMT-*>', dir:'in', at:'above'}},
-      {n:'FLEET INTAKE', id:'03', kind:'mthrow', pos:[2,0]},
-      {n:'', id:'04', kind:'gateway', pos:[0,0], lblPos:'bottom'},      // merge: spawn OR inbox message → work
-    ],
-    edges:[
-      {f:'S',t:'T3', from:{s:'r'}, to:{s:'l'}},
-      {f:'T0',t:'T3', from:{s:'b'}, to:{s:'t'}},
-      {f:'T3',t:'T1', from:{s:'r'}, to:{s:'l',d:0.5}},
-      {f:'T1',t:'T2'},
-    ]},
-  'ND-01-08': { num:'ND-01-08', name:'SET SCOPE', start:'', end:'Scope locked', grid:true, endPos:[3,0],
-    steps:[
-      {n:'Assign TRON-AIDE', id:'01', pos:[0,0]},             // det
-      {n:'Ask scope', id:'02', actor:'aide', pos:[0,1], llmId:'LLM-01-08-02', data:{name:'Project Docs', dir:'in', at:'left', store:true}},  // aide — reads project core files to ground the scope dialogue
-      {n:'Answer scope', id:'03', actor:'op', pos:[1,2]},     // op
-      {n:'Resolved?', id:'04', kind:'gateway', actor:'aide', pos:[1,1]}, // aide — above Answer
-      {n:'Validate scope', id:'05', pos:[1,0]},               // det — above the gateway
-      {n:'Lock scope', id:'06', pos:[2,0]},                   // det
-    ],
-    edges:[
-      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
-      {f:'T3',t:'T1',label:'clarify', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
-      {f:'T3',t:'T4',label:'resolved'},
-      {f:'T4',t:'T1',label:'invalid', from:{s:'l'}, to:{s:'r',d:0.25}},   // DET validation fails (dangling dep / empty id-set) → re-ask the operator (drops in the inter-column gap into Ask's upper-right, clear of clarify). FIRST-RUN (empty archive-history): empty scope is legitimate (architect hasn't authored) → not invalid; closes B13/GAP-5. Truly-unscaffolded pipeline = upstream concern (TRON never scaffolds).
-      {f:'T4',t:'T5',label:'ok'},
-      {f:'T5',t:'E'},
-    ]},
-  'ND-01-09': { num:'ND-01-09', name:'SET COUNTS', start:'', end:'Counts locked', grid:true, endPos:[3,0],
-    steps:[
-      {n:'Assign TRON-AIDE', id:'01', pos:[0,0]},            // det
-      {n:'Ask counts', id:'02', actor:'aide', pos:[0,1], llmId:'LLM-01-09-02', data:{name:'Project Docs', dir:'in', at:'left', store:true}}, // aide — reads project core files
-      {n:'Answer counts', id:'03', actor:'op', pos:[1,2]},   // op
-      {n:'Confirmed?', id:'04', kind:'gateway', actor:'aide', pos:[1,1]}, // aide — above Answer
-      {n:'Validate counts', id:'05', pos:[1,0]},             // det — above the gateway
-      {n:'Lock counts', id:'06', pos:[2,0]},                 // det
-    ],
-    edges:[
-      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2', from:{s:'b'}, to:{s:'l'}},{f:'T2',t:'T3'},   // Ask bottom → Answer left
-      {f:'T3',t:'T1',label:'revise', from:{s:'l'}, to:{s:'r'}},   // gateway left → Ask right
-      {f:'T3',t:'T4',label:'confirmed'},
-      {f:'T4',t:'T1',label:'invalid', from:{s:'l'}, to:{s:'r',d:0.25}},   // DET validation fails (below floor / non-integer) → re-ask the operator (inter-column gap into Ask's upper-right, clear of revise)
-      {f:'T4',t:'T5',label:'ok'},
-      {f:'T5',t:'E'},
-    ]},
-  // escalation conversation (reached only from 01-12 conflict); resolves internally — no parent exit.
-  // repair → re-reconcile (01-11) · restart → fresh scope (01-08) · halt → terminate.
-  'ND-01-14': { num:'ND-01-14', name:'RESOLVE', start:'', noEnd:true, grid:true, endPos:[0,0],
-    steps:[
-      {n:'Assign TRON-AIDE', id:'01', pos:[0,0]},              // det
-      {n:'Brief + offer options', id:'02', actor:'aide', pos:[0,1], llmId:'LLM-01-14-02', data:{name:'Project Docs', dir:'in', at:'left', store:true}},    // reads project core files to brief
-      {n:'Decide', id:'03', actor:'op', pos:[0,2]},            // (under Brief)
-      {n:'Choice?', id:'04', kind:'gateway', actor:'aide', pos:[1,1], lblPos:'top'},  // clarify vs proceed (label up, clear of the hub)
-      {n:'', id:'05', kind:'gateway', actor:'aide', pos:[2,1]}, // split repair/restart/halt (4-way hub); id-label to the right
-      {n:'repair',  id:'06', kind:'throw', pos:[2,0], lblPos:'top'},     // → catch 01-15 (re-reconcile); DET, straight ↑
-      {n:'restart', id:'07', kind:'throw', actor:'aide', pos:[4,1]},    // → catch 01-16 (re-scope); straight →
-      {n:'Archive MANIFEST', id:'08', actor:'op', pos:[2,2], data:{name:'MANIFEST', dir:'in', at:'below'}}, // archive the live MANIFEST before terminate
-      {n:'Halt', id:'09', kind:'terminate', actor:'op', pos:[4,2]},     // halt (straight → after archive)
-    ],
-    edges:[
-      {f:'S',t:'T0'},{f:'T0',t:'T1'},{f:'T1',t:'T2'},
-      {f:'T2',t:'T3', from:{s:'r'}, to:{s:'b'}},   // Decide right → up the inter-column gap → into Choice? bottom (clear of Brief / clarify)
-      {f:'T3',t:'T1',label:'clarify'},
-      {f:'T3',t:'T4',label:'proceed'},
-      {f:'T4',t:'T5'},                            // → repair throw (name carries the branch)
-      {f:'T4',t:'T6'},                            // → restart throw (name carries the branch)
-      {f:'T4',t:'T7',label:'halt',vlabel:true},   // hub → Archive MANIFEST (straight ↓); target isn't a named throw, so keep the label
-      {f:'T7',t:'T8'},                             // Archive → Halt (straight →)
-    ]},
-  // raise-and-defer escalation (reached from 02-09). Briefs the operator, sends the ask, marks the
-  // case escalation-pending, then ENDS (await). The operator's reply lands as an event on a later tick; Settle
-  // (02-08) applies the chosen action then. No inline decision — keeps the tick bounded (Temporal-signal style).
-  'ND-02-10': { num:'ND-02-10', name:'RESOLVE', start:'', end:'Awaiting operator', grid:true, endPos:[2,0],
-    steps:[
-      {n:'Assign TRON-AIDE', id:'01', pos:[0,0]},                                              // det
-      {n:'Brief + offer options', id:'02', actor:'aide', pos:[0,1], llmId:'LLM-02-10-02', data:{name:'Project Docs', dir:'in', at:'left', store:true}},                       // AIDE reads project core files to compose the operator brief
-      {n:'OPERATOR INBOX', id:'03', kind:'mthrow', actor:'aide', pos:[1,1], data:{name:'Operator Inbox', dir:'out', store:true, lane:'op'}},   // throw writes the operator's inbox store; TRON → operator; pairs with AGENT INBOX
-      {n:'Mark pending', id:'04', pos:[1,0]},                                                  // stamp escalation-pending (durable; guards re-escalation)
-    ]},
-
-  // ── ND-09 PARLEY — operator-message handler (own channel, off PULSE; fed by OPERATOR INTAKE) ──
-  // Triggered when an operator message lands. Two outcomes branch off Intent?:
-  //   ACT  — command (halt/pause/resume/rescope) → run-state · decision (reply to a parked case) → PULSE Settle. No reply.
-  //   ANSWER — query (status/inspect) or ask (free-form) → AIDE composes from artifacts → reply to operator;
-  //            an ask AIDE can't answer from artifacts is sent to the architect (the AGENT; lands in its inbox), answered later.
-  // Operator-initiated, so the conversation is synchronous (human present) — nothing here is parked across PULSE ticks.
-  // GRID layout (grid:true) to match the core + ND-01/ND-02: DET = row 0, AIDE auto-drops to row 1; every arm a straight run.
-  'ND-09': { num:'ND-09', name:'PARLEY', start:'', noEnd:true, grid:true, endPos:[5,1],
-    steps:[
-      {n:'Intent?', id:'01', kind:'gateway', pos:[0,0], lblPos:'top'},                              // det
-      {n:'Apply command / decision', id:'02', pos:[1,0]},                                           // det — ACT: command→run-state · decision→Settle
-      {n:'Acted', id:'03', kind:'end', pos:[2,0]},                                                  // det end
-      {n:'Compose answer', id:'04', actor:'aide', pos:[0,1], llmId:'LLM-09-04', data:{name:'Project Docs', dir:'in', at:'left', store:true}},                          // aide — reads project core files to compose the answer
-      {n:'Answerable?', id:'05', kind:'gateway', actor:'aide', pos:[3,1], lblPos:'top'},            // aide
-      {n:'OPERATOR INBOX', id:'06', kind:'mthrow', actor:'aide', pos:[4,1], data:{name:'Operator Inbox', dir:'out', store:true, lane:'op'}},   // throw writes the operator's inbox store; TRON → operator
-      {n:'Replied', id:'07', kind:'end', actor:'aide', pos:[5,1]},                                  // aide end
-      {n:'AGENT INBOX', id:'08', kind:'mthrow', pos:[3,0], lblPos:'top'},                           // message-throw to the architect (the AGENT) — pairs with the AGENT INBOX catch (LLM-01); lands in the agent's inbox
-      {n:'Deferred', id:'09', kind:'end', pos:[4,0]},                                               // det end — adjacent to AGENT INBOX
-    ],
-    edges:[
-      {f:'S',t:'T0'},
-      {f:'T0',t:'T1', label:'act'},                 // command / decision
-      {f:'T0',t:'T3', label:'answer'},              // query / ask
-      {f:'T1',t:'T2'},
-      {f:'T3',t:'T4'},
-      {f:'T4',t:'T5', label:'yes'},
-      {f:'T4',t:'T7', label:'no'},
-      {f:'T5',t:'T6'},
-      {f:'T7',t:'T8'},
-    ]},
-
-  // ── PULSE WAKE — how a tick is triggered: debounced message-wake + timer ceiling ──
-  // Bounded on BOTH ends: a mandatory COOLDOWN (min gap) after each tick, then the tick waits for the
-  // FIRST of { a message arriving, the max-latency ceiling }. So a message wakes PULSE early — but never
-  // more than once per COOLDOWN (a burst coalesces into one tick), and the ceiling guarantees liveness even
-  // with zero traffic. Not a back-door: messages only pull latency DOWN to the floor, never unbounded.
-  'ND-08': { num:'ND-08', name:'WAKE', start:'tick complete', end:'PULSE', grid:true, startPos:[-1,0], endPos:[3,0],
-    steps:[
-      {n:'COOLDOWN', id:'01', kind:'tcatch', pos:[0,0]},                  // mandatory min-gap floor: messages during this window just pile in the hopper, no wake
-      {n:'First to fire?', id:'02', kind:'event', pos:[1,0], lblPos:'top'}, // event-based gateway: whichever of the two events comes first wins
-      {n:'MESSAGE', id:'03', kind:'mcatch', pos:[2,-1]},                  // a message landed in the FLEET HOPPER → wake early
-      {n:'CEILING', id:'04', kind:'tcatch', pos:[2,1]},                   // no message before the max-latency ceiling → wake anyway (liveness)
-    ],
-    edges:[
-      {f:'S',t:'T0'},
-      {f:'T0',t:'T1'},
-      {f:'T1',t:'T2', from:{s:'t'}, to:{s:'l'}},                          // gateway → message arm (up)
-      {f:'T1',t:'T3', from:{s:'b'}, to:{s:'l'}},                          // gateway → ceiling arm (down)
-      {f:'T2',t:'E', from:{s:'r'}, to:{s:'t'}},                           // message → re-enter PULSE
-      {f:'T3',t:'E', from:{s:'r'}, to:{s:'b'}},                           // ceiling → re-enter PULSE
-    ]},
-};
-// ── ID LINT — step ids are authored, not positional. Every flow node carries an explicit `id`; data
-// stores carry none. Assert per-sub that the flow-node ids are unique and contiguous 01..N, so a drifted
-// or duplicate id surfaces immediately in the console instead of silently mis-numbering the canvas.
-function lintFlowIds(){
-  for(const key in FLOW){ const def=FLOW[key];
-    const ids = def.steps.filter(s=>s.kind!=='store').map(s=>s.id);   // every flow node holds a sequence id (incl. LLM nodes, which still render their LLM<X> label)
-    const missing = ids.some(x=>x==null);
-    const nums = ids.map(Number).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
-    const dup = new Set(nums).size !== nums.length;
-    const gap = nums.some((n,i)=>n!==i+1);
-    if(missing||dup||gap) console.error(`[id-lint] ${key}: ids not unique+contiguous 01..N`, {missing,dup,gap,ids});
+  <bpmndi:BPMNDiagram id="dia">
+    <bpmndi:BPMNPlane id="plane" bpmnElement="collab">
+      <bpmndi:BPMNShape id="pool_di" bpmnElement="pool" isHorizontal="true">
+        <dc:Bounds x="40" y="40" width="1526" height="460"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_engine_di" bpmnElement="lane_engine" isHorizontal="true">
+        <dc:Bounds x="70" y="40" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_worker_di" bpmnElement="lane_worker" isHorizontal="true">
+        <dc:Bounds x="70" y="132" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_reviewer_di" bpmnElement="lane_reviewer" isHorizontal="true">
+        <dc:Bounds x="70" y="224" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_architect_di" bpmnElement="lane_architect" isHorizontal="true">
+        <dc:Bounds x="70" y="316" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_operator_di" bpmnElement="lane_operator" isHorizontal="true">
+        <dc:Bounds x="70" y="408" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="152" y="71" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="124" y="104" width="87" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_build_di" bpmnElement="task_build">
+        <dc:Bounds x="289" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_build_di" bpmnElement="gw_build" isMarkerVisible="true">
+        <dc:Bounds x="332" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="331" y="44" width="45" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_review_di" bpmnElement="task_review">
+        <dc:Bounds x="475" y="241" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_review_di" bpmnElement="gw_review" isMarkerVisible="true">
+        <dc:Bounds x="518" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="503" y="44" width="73" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_merge_di" bpmnElement="task_merge">
+        <dc:Bounds x="661" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_merge_di" bpmnElement="gw_merge" isMarkerVisible="true">
+        <dc:Bounds x="704" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="696" y="44" width="59" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="land_merge_di" bpmnElement="land_merge">
+        <dc:Bounds x="847" y="57" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_wrap_di" bpmnElement="task_wrap">
+        <dc:Bounds x="1033" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_wrap_di" bpmnElement="gw_wrap" isMarkerVisible="true">
+        <dc:Bounds x="1076" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1064" y="44" width="66" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="land_wrap_di" bpmnElement="land_wrap">
+        <dc:Bounds x="1219" y="57" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+        <dc:Bounds x="1454" y="71" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1450" y="104" width="38" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_start_di" bpmnElement="esc_start">
+        <dc:Bounds x="338" y="347" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="313" y="380" width="80" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_arch_di" bpmnElement="esc_arch">
+        <dc:Bounds x="475" y="333" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_gw_di" bpmnElement="esc_gw" isMarkerVisible="true">
+        <dc:Bounds x="704" y="341" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="661" y="320" width="129" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_ruling_di" bpmnElement="esc_ruling">
+        <dc:Bounds x="896" y="347" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="878" y="380" width="66" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_op_di" bpmnElement="esc_op">
+        <dc:Bounds x="661" y="425" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flow_0_di" bpmnElement="flow_0">
+        <di:waypoint x="167" y="101"/>
+        <di:waypoint x="167" y="178"/>
+        <di:waypoint x="289" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_1_di" bpmnElement="flow_1">
+        <di:waypoint x="338" y="149"/>
+        <di:waypoint x="338" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_2_di" bpmnElement="flow_2">
+        <di:waypoint x="368" y="107"/>
+        <di:waypoint x="368" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_3_di" bpmnElement="flow_3">
+        <di:waypoint x="374" y="86"/>
+        <di:waypoint x="446" y="86"/>
+        <di:waypoint x="446" y="270"/>
+        <di:waypoint x="475" y="270"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_4_di" bpmnElement="flow_4">
+        <di:waypoint x="539" y="241"/>
+        <di:waypoint x="539" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_5_di" bpmnElement="flow_5">
+        <di:waypoint x="539" y="107"/>
+        <di:waypoint x="539" y="178"/>
+        <di:waypoint x="417" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_6_di" bpmnElement="flow_6">
+        <di:waypoint x="539" y="107"/>
+        <di:waypoint x="539" y="178"/>
+        <di:waypoint x="661" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_7_di" bpmnElement="flow_7">
+        <di:waypoint x="710" y="149"/>
+        <di:waypoint x="710" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_8_di" bpmnElement="flow_8">
+        <di:waypoint x="740" y="107"/>
+        <di:waypoint x="740" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_9_di" bpmnElement="flow_9">
+        <di:waypoint x="746" y="86"/>
+        <di:waypoint x="847" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_10_di" bpmnElement="flow_10">
+        <di:waypoint x="911" y="115"/>
+        <di:waypoint x="911" y="178"/>
+        <di:waypoint x="1033" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_11_di" bpmnElement="flow_11">
+        <di:waypoint x="1082" y="149"/>
+        <di:waypoint x="1082" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_12_di" bpmnElement="flow_12">
+        <di:waypoint x="1112" y="107"/>
+        <di:waypoint x="1112" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_13_di" bpmnElement="flow_13">
+        <di:waypoint x="1118" y="86"/>
+        <di:waypoint x="1219" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_14_di" bpmnElement="flow_14">
+        <di:waypoint x="1347" y="86"/>
+        <di:waypoint x="1454" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_15_di" bpmnElement="flow_15">
+        <di:waypoint x="368" y="362"/>
+        <di:waypoint x="475" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_16_di" bpmnElement="flow_16">
+        <di:waypoint x="603" y="362"/>
+        <di:waypoint x="704" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_17_di" bpmnElement="flow_17">
+        <di:waypoint x="746" y="362"/>
+        <di:waypoint x="896" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_18_di" bpmnElement="flow_18">
+        <di:waypoint x="725" y="383"/>
+        <di:waypoint x="725" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_19_di" bpmnElement="flow_19">
+        <di:waypoint x="661" y="454"/>
+        <di:waypoint x="539" y="454"/>
+        <di:waypoint x="539" y="391"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
+</script>
+<script>
+  const NODE_CLASS = {"start": "event", "task_build": "seat", "gw_build": "gate", "task_review": "seat", "gw_review": "gate", "task_merge": "seat", "gw_merge": "gate", "land_merge": "engine", "task_wrap": "seat", "gw_wrap": "gate", "land_wrap": "engine", "end": "event", "esc_start": "event", "esc_arch": "architect", "esc_gw": "gate", "esc_ruling": "event", "esc_op": "operator"};
+  const NOTE_IDS = new Set(Object.keys(NODE_CLASS).filter(
+    id => document.getElementById("note--" + id)));
+  const MIN_Z = 0.2, MAX_Z = 4;
+  const viewer = new BpmnJS({ container: "#canvas" });
+  const canvas = () => viewer.get("canvas");
+  const clamp = z => Math.max(MIN_Z, Math.min(MAX_Z, z));
+  // fit the whole flow, centred, with breathing room so the pool never
+  // touches the header or the page edges (mirrors the live page's fitNow)
+  function fit() {
+    const c = canvas();
+    c.zoom("fit-viewport", "auto");
+    c.zoom(clamp(c.zoom() * 0.9));
   }
-}
-lintFlowIds();
-/* ── LAYOUT TOKENS — single source of spacing for every diagram ── */
-const TOK = {
-  nodeW:170, nodeH:68, gw:44, ev:36, dataW:36, dataH:50, storeW:50, storeH:56,   // element sizes (storeW/H = data-store cylinder, matches core stores)
-  // TRACK GRID — column width = widest element in that column, row height = tallest in that row;
-  // tracks are separated by a fixed grid-unit gap and never fall below a min size. A task-only column
-  // is nodeW+colGap = 210 wide (== the old uniform pitch); a gateway/event-only column shrinks to colMin.
-  colGap:40, rowGap:44, colMin:44, rowMin:36, gridX0:440,   // grid mode (track grid)
-  pad:48, laneBand:30,                          // core: one symmetric outer/inter-lane padding; lane owner-name strip
-  lanePitchX:200, laneX0:300, laneH:180,       // lane mode
-  poolX:130, poolY:120, lanePad:0, topBand:120,  // pool / lane frame (lanePad:0 → no pool title band, lane bars only)
-  poolMargin:60, poolMarginData:140, poolTrimY:30, // pool right/bottom padding (…Data: extra room for a right-placed data object)
-  dataGap:26, dataGapSide:30, dataLabelH:17, dataMargin:24,  // node→data gap; data label height; clearance from pool border
-  labelGap:8, channelStep:24, loopInset:22, laneTopMargin:24, // routing clearances
-  dock:[0.25,0.5,0.75], dockStub:18,             // connector anchor points per side (¼ · center · ¾) + leave/enter stub
-};
-/* horizontal swimlane: TRON-RELAY / TRON-AIDE / OPERATOR lanes (only those used) */
-const STW=TOK.nodeW, STH=TOK.nodeH, SPITCHX=TOK.lanePitchX, SX0=TOK.laneX0, LANE_H=TOK.laneH;
-const ACTORS = [
-  {key:'det',  id:'L_DET',  name:'⚙  TRON-RELAY',  tag:'task'},
-  {key:'aide', id:'L_AIDE', name:'✦  TRON-AIDE', tag:'task'},
-  {key:'op',   id:'L_OP',   name:'☻  OPERATOR',  tag:'task'},
-];
-function subXML(def){
-  const n=def.steps.length;
-  const actorOf = s => s.actor || 'det';
-  const grid = def.grid || def.steps.some(s=>s.pos);
-  const poolY=TOK.poolY, poolX=TOK.poolX, laneX=poolX+TOK.lanePad;
-  const geom = {};
-  let lanesUsed, bandTop={}, poolW, poolH, laneW, laneH={};
-  let gridColC=null, gridTrackW=null, gridMinCol=0, gridMaxCol=0, gridRowC=null, gridRowH=null, gridOpRow=null;   // hoisted so side-docked data can snap to grid columns/rows + drop a lane-bound store into the OPERATOR band
-
-  if(grid){
-    // UNIFORM GRID in the TRON-RELAY lane; any AIDE step drops into its own lane below DET (compact, balanced).
-    // One cell size for the whole diagram (widest element wide × tallest element high), laid edge-to-edge
-    // with a fixed grid gap. Every column/row line is evenly pitched and element centres snap to them; a
-    // gateway/event just sits centred in its full-size cell (no per-column tightening).
-    const PAD=TOK.pad, BAND=TOK.laneBand;
-    const dimOf = s => { const gw=s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', st=s.kind==='store'; return {w:st?TOK.storeW:gw?TOK.gw:ev?TOK.ev:STW, h:st?TOK.storeH:gw?TOK.gw:ev?TOK.ev:STH}; };
-    const isAide = s => actorOf(s)==='aide', isOp = s => actorOf(s)==='op';
-    const hasAide = def.steps.some(isAide), hasOp = def.steps.some(isOp) || def.steps.some(s=>s.data&&s.data.lane==='op');   // an op-bound data store opens the OPERATOR lane even with no op step
-    const detRows = def.steps.filter(s=>!isAide(s)&&!isOp(s)).map(s=>s.pos[1]);
-    const maxDetRow = detRows.length?Math.max(...detRows):0;
-    const aideRow = maxDetRow + 1;                          // AIDE drops to one band below DET
-    const opRow   = (hasAide?aideRow:maxDetRow) + 1;        // OP drops one band below the lowest of DET/AIDE
-    const rowOf = s => isOp(s)?opRow : isAide(s)?aideRow : s.pos[1];
-    const laneOfRow = r => (hasOp && r===opRow) ? 'op' : (hasAide && r===aideRow) ? 'aide' : 'det';
-    const cols=def.steps.map(s=>s.pos[0]);
-    const startPos=def.startPos || [Math.min(...cols)-1, def.steps[0].pos[1]];
-    const endPos = def.endPos || [def.steps[n-1].pos[0], rowOf(def.steps[n-1])+1];
-    // every placed item (steps + start/end events) contributes its size to the track it sits in (fractional → nearest track)
-    const items=[{c:startPos[0],r:startPos[1],w:TOK.ev,h:TOK.ev}];
-    if(def.start2) items.push({c:startPos[0],r:startPos[1]+1,w:TOK.ev,h:TOK.ev});
-    def.steps.forEach(s=>{ const d=dimOf(s); items.push({c:s.pos[0],r:rowOf(s),w:d.w,h:d.h}); });
-    def.steps.forEach(s=>{ if(s.data&&s.data.lane==='op') items.push({c:s.pos[0],r:opRow,w:TOK.storeW,h:TOK.storeH}); });   // op-lane store occupies its own row so the band + column tracks exist
-    items.push({c:endPos[0],r:endPos[1],w:TOK.ev,h:TOK.ev});
-    if(def.end2) items.push({c:def.end2.pos[0],r:def.end2.pos[1],w:TOK.ev,h:TOK.ev});
-    const minCol=Math.min(...items.map(i=>Math.round(i.c))), maxCol=Math.max(...items.map(i=>Math.round(i.c)));
-    const minRow=Math.min(...items.map(i=>Math.round(i.r))), maxRow=Math.max(...items.map(i=>Math.round(i.r)));
-    // UNIFORM cell: one size for the whole diagram — width = the widest element (a task), height = the
-    // tallest (a sub-process). Every column gets that width, every row that height; smaller elements
-    // (gateways/events) centre inside the cell. Even pitch everywhere, no per-track tightening.
-    const cellW=Math.max(TOK.colMin, ...items.map(i=>i.w));
-    const cellH=Math.max(TOK.rowMin, ...items.map(i=>i.h));
-    const trackW={}, trackH={};
-    for(let c=minCol;c<=maxCol;c++) trackW[c]=cellW;
-    for(let r=minRow;r<=maxRow;r++) trackH[r]=cellH;
-    // SYMMETRIC margins — same rule as layoutCore(): leftmost track-left = poolX + BAND + PAD (BAND = lane
-    // owner-name strip); top = poolY + PAD; right/bottom = PAD. Gap WITHIN a lane = rowGap, BETWEEN lanes = 2·PAD.
-    // A data object docked ABOVE a top-row element needs room above it → reserve it so the box clears the pool top by PAD.
-    const aboveTop = def.steps.some(s=> s.data && (s.data.at==='above') && rowOf(s)===minRow);
-    const topPad = PAD + (aboveTop ? TOK.dataGap+TOK.dataH+TOK.dataLabelH : 0);
-    const colC={}, rowC={};
-    colC[minCol] = poolX + BAND + PAD + trackW[minCol]/2;
-    for(let c=minCol+1;c<=maxCol;c++) colC[c]=colC[c-1]+trackW[c-1]/2+TOK.colGap+trackW[c]/2;
-    rowC[minRow] = poolY + topPad + trackH[minRow]/2;
-    for(let r=minRow+1;r<=maxRow;r++){ const gap = laneOfRow(r)!==laneOfRow(r-1) ? 2*PAD : TOK.rowGap; rowC[r]=rowC[r-1]+trackH[r-1]/2+gap+trackH[r]/2; }
-    gridColC=colC; gridTrackW=trackW; gridMinCol=minCol; gridMaxCol=maxCol; gridRowC=rowC; gridRowH=trackH; gridOpRow=opRow;   // expose grid columns/rows + the OPERATOR row to the data-placement loop
-    const cx=c=>{ const f=Math.floor(c),g=Math.ceil(c); return f===g?colC[f]:colC[f]+(c-f)*(colC[g]-colC[f]); };
-    const cy=r=>{ const f=Math.floor(r),g=Math.ceil(r); return f===g?rowC[f]:rowC[f]+(r-f)*(rowC[g]-rowC[f]); };
-    const cell=(c,r,w,h)=>({x:cx(c)-w/2, y:cy(r)-h/2, w, h});
-    geom['S']={...cell(startPos[0],startPos[1],TOK.ev,TOK.ev), ord:-1};
-    if(def.start2) geom['S2']={...cell(startPos[0],startPos[1]+1,TOK.ev,TOK.ev), ord:-0.5};
-    def.steps.forEach((s,i)=>{ const d=dimOf(s); geom['T'+i]={...cell(s.pos[0],rowOf(s), d.w, d.h), ord:i}; });
-    def.steps.forEach((s,i)=>{ if(s.kind==='boundary'){ const h=geom[s.attachTo]; if(h) geom['T'+i]={x:h.x+h.w*0.25-TOK.ev/2, y:h.y+h.h-TOK.ev/2, w:TOK.ev, h:TOK.ev, ord:i+0.5}; } });   // dock boundary on host's bottom-left border
-    geom['E']={...cell(endPos[0],endPos[1],TOK.ev,TOK.ev), ord:1e6};
-    if(def.end2) geom['E2']={...cell(def.end2.pos[0],def.end2.pos[1],TOK.ev,TOK.ev), ord:1e6+1};
-    poolW = colC[maxCol]+trackW[maxCol]/2 + PAD - poolX;
-    poolH = rowC[maxRow]+trackH[maxRow]/2 + PAD - poolY;
-    // lane bands tile the pool; each boundary sits PAD below the upper lane's last content row (== PAD above the
-    // lower lane's first row, since the inter-lane gap is 2·PAD) → uniform internal padding everywhere.
-    lanesUsed=[ACTORS[0], ...(hasAide?[ACTORS[1]]:[]), ...(hasOp?[ACTORS[2]]:[])];
-    const detBottom = rowC[maxDetRow]+trackH[maxDetRow]/2;
-    bandTop.det = poolY;
-    if(hasAide) bandTop.aide = detBottom + PAD;
-    if(hasOp){ const prevBottom = hasAide ? (rowC[aideRow]+trackH[aideRow]/2) : detBottom; bandTop.op = prevBottom + PAD; }
-    const order=lanesUsed.map(a=>a.key);
-    order.forEach((k,idx)=>{ const nextTop = idx<order.length-1 ? bandTop[order[idx+1]] : poolY+poolH; laneH[k]=nextTop-bandTop[k]; });
-  } else {
-    // lane mode: one band per actor; column = step.col ?? index, row = actor's lane index
-    const used=new Set(['det',...def.steps.map(actorOf)]);
-    lanesUsed=ACTORS.filter(a=>used.has(a.key));
-    const cyL={}, rowOf={};
-    lanesUsed.forEach((a,k)=>{ bandTop[a.key]=poolY+k*LANE_H; cyL[a.key]=poolY+k*LANE_H+LANE_H/2; rowOf[a.key]=k; });
-    poolH=lanesUsed.length*LANE_H;
-    const colOf=(s,i)=> s.col!==undefined ? s.col : i;
-    geom['S']={x:SX0-STW/2, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:-0.5, ord:-1};
-    def.steps.forEach((s,i)=>{ const gw=s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event', ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate', w=gw?TOK.gw:ev?TOK.ev:STW, h=gw?TOK.gw:ev?TOK.ev:STH, c=colOf(s,i), base=SX0+c*SPITCHX; geom['T'+i]={x:(gw||ev)?base+STW/2-w/2:base, y:cyL[actorOf(s)]-h/2, w,h, row:rowOf[actorOf(s)], col:c, ord:i}; });
-    const maxC=Math.max(...def.steps.map((s,i)=>colOf(s,i)));
-    if(!def.noEnd){ geom['E']={x:SX0+(maxC+1)*SPITCHX, y:cyL.det-TOK.ev/2, w:TOK.ev,h:TOK.ev, row:0, col:maxC+1, ord:1e6}; }
-    poolW = (def.noEnd ? SX0+maxC*SPITCHX+STW/2 : geom['E'].x+TOK.ev) +TOK.poolMargin-poolX;  // noEnd: stop at the last node, don't reserve an end column
-  }
-  const G=id=>{const g=geom[id];return {...g,cx:g.x+g.w/2,cy:g.y+g.h/2,top:g.y,bottom:g.y+g.h,left:g.x,right:g.x+g.w};};
-  // HARD RULE: a below/above data object snaps to the adjacent grid row's centre, so it aligns with the elements
-  // in that row (mirrors how right/left snap to the adjacent column). Returns the data box's TOP-y, or null (no row → gap fallback).
-  const snapRowY = (cy, dir, H) => {
-    if(!(grid && gridRowC)) return null;
-    const rs = Object.keys(gridRowC).map(Number).filter(r => dir>0 ? gridRowC[r] > cy+2 : gridRowC[r] < cy-2)
-      .sort((a,b)=> dir>0 ? gridRowC[a]-gridRowC[b] : gridRowC[b]-gridRowC[a]);
-    return rs.length ? gridRowC[rs[0]] - H/2 : null;
-  };
-  // No adjacent row to snap to (top/bottom edge): anchor the box to the node's own ROW BAND edge, not its
-  // individual node edge — so every above/below data object in a row aligns regardless of node height.
-  const bandY = (cy, dir, H) => {
-    if(!(grid && gridRowC && gridRowH)) return null;
-    const r = Object.keys(gridRowC).map(Number).find(r=>Math.abs(gridRowC[r]-cy)<2);
-    if(r===undefined) return null;
-    return dir<0 ? gridRowC[r]-gridRowH[r]/2 - TOK.dataGap - H : gridRowC[r]+gridRowH[r]/2 + TOK.dataGap;
-  };
-
-  // data objects — placed by tokens (size, gap, label), then the POOL/LANE grows to contain them so nothing crosses a border
-  const dataBoxes = def.steps.map((s,i)=>{
-    if(!s.data) return null;
-    const d=s.data, g=G('T'+i), at=d.at||'below', isStore=!!d.store, W=isStore?TOK.storeW:TOK.dataW, H=isStore?TOK.storeH:TOK.dataH, out=d.dir!=='in';
-    if(d.lane==='op' && grid && gridColC && gridRowC){   // store sits in the OPERATOR lane, same column as the node; directed association drops straight down
-      const cxv=gridColC[s.pos[0]], ry=gridRowC[gridOpRow], dyv=ry-H/2;
-      return {i, d, at:'below', W, H, out, store:isStore, dx:cxv-W/2, dy:dyv, p1:[g.cx,g.bottom], p2:[cxv,dyv]};
-    }
-    const ax=g.cx, ay=g.cy; let dx,dy,p1,p2;   // box centres on the node's grid line — column for above/below, row for left/right (matches how nodes align)
-    if(at==='below'){ dx=ax-W/2; dy=snapRowY(g.cy,1,H) ?? bandY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[ax,g.bottom]; p2=[ax,dy]; }
-    else if(at==='above'){ dx=ax-W/2; dy=snapRowY(g.cy,-1,H) ?? bandY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[ax,g.top]; p2=[ax,dy+H]; }
-    else if(at==='right'){
-      // column-aligned: centre on the next grid column (extend past the last column at grid pitch); lane mode keeps the simple gutter offset
-      const nc = grid ? s.pos[0] : null;
-      const tcx = (grid && gridColC) ? (gridColC[nc+1]!==undefined ? gridColC[nc+1] : gridColC[gridMaxCol]+gridTrackW[gridMaxCol]/2+TOK.colGap+W/2) : (g.right+TOK.dataGapSide+W/2);
-      dx=tcx-W/2; dy=ay-H/2; p1=[g.right,ay]; p2=[dx,ay];
-    }
-    else {
-      const nc = grid ? s.pos[0] : null;
-      const tcx = (grid && gridColC) ? (gridColC[nc-1]!==undefined ? gridColC[nc-1] : gridColC[gridMinCol]-gridTrackW[gridMinCol]/2-TOK.colGap-W/2) : (g.left-TOK.dataGapSide-W/2);
-      dx=tcx-W/2; dy=ay-H/2; p1=[g.left,ay]; p2=[dx+W,ay];
-    }
-    return {i, d, at, W, H, out, store:isStore, dx, dy, p1, p2};
-  });
-  if(def.startData){   // a data object attached to the START event (e.g. the <PMT-*> the agent receives on spawn)
-    const d=def.startData, g=G('S'), at=d.at||'below', isStore=!!d.store, W=isStore?TOK.storeW:TOK.dataW, H=isStore?TOK.storeH:TOK.dataH, out=d.dir!=='in';
-    let dx,dy,p1,p2;
-    if(at==='above'){ dx=g.cx-W/2; dy=snapRowY(g.cy,-1,H) ?? bandY(g.cy,-1,H) ?? (g.top-TOK.dataGap-H); p1=[g.cx,g.top]; p2=[g.cx,dy+H]; }
-    else { dx=g.cx-W/2; dy=snapRowY(g.cy,1,H) ?? bandY(g.cy,1,H) ?? (g.bottom+TOK.dataGap); p1=[g.cx,g.bottom]; p2=[g.cx,dy]; }
-    dataBoxes.push({node:'S', d, at, W, H, out, store:isStore, dx, dy, p1, p2});
-  }
-  // grow the pool right/bottom to enclose every data box + its label, with a token margin (top/left use topBand room)
-  dataBoxes.filter(Boolean).forEach(b=>{
-    const labelBelow = b.at!=='above';
-    const boxBottom = b.dy + b.H + (labelBelow?TOK.dataLabelH:0);
-    poolW = Math.max(poolW, (b.dx + b.W) + TOK.pad - poolX);   // data clears the pool border by PAD (same as elements)
-    poolH = Math.max(poolH, boxBottom + TOK.pad - poolY);
-  });
-  // re-derive lane heights against the (possibly grown) pool — the bottom band absorbs the growth so lanes still tile the pool
-  if(grid){
-    const last = lanesUsed[lanesUsed.length-1].key;   // bottom band absorbs any data-driven growth
-    laneH[last] = poolY+poolH - bandTop[last];
-  } else {
-    lanesUsed.forEach((a,k)=> laneH[a.key] = (k===lanesUsed.length-1) ? poolH - k*LANE_H : LANE_H);
-  }
-  laneW = poolW-TOK.lanePad;
-
-  // semantic
-  const els=[]; const refs={det:['S',...(def.start2?['S2']:[]),...(def.noEnd?[]:['E']),...(def.end2?['E2']:[])],aide:[],op:[]};
-  const startDef = k => k==='timer'?'<bpmn:timerEventDefinition/>':k==='message'?'<bpmn:messageEventDefinition/>':'';
-  const edges = def.edges || [{f:'S',t:'T0'}, ...Array.from({length:n-1},(_,i)=>({f:'T'+i,t:'T'+(i+1)})), {f:'T'+(n-1),t:'E'}];
-  // incoming/outgoing flow refs per node (spec-required for connectivity; bpmn-js derives the same from sourceRef/targetRef, so the picture is unchanged)
-  const inb={}, outb={};
-  edges.forEach((e,k)=>{ if(e.assoc) return; (inb[e.t]=inb[e.t]||[]).push(k); (outb[e.f]=outb[e.f]||[]).push(k); });   // associations aren't sequence flows — no incoming/outgoing
-  const io = id => (inb[id]||[]).map(k=>`<bpmn:incoming>sf${k}</bpmn:incoming>`).join('') + (outb[id]||[]).map(k=>`<bpmn:outgoing>sf${k}</bpmn:outgoing>`).join('');
-  els.push(`<bpmn:startEvent id="S" name="${esc(def.start)}">${io('S')}${startDef(def.startKind)}</bpmn:startEvent>`);
-  if(def.start2) els.push(`<bpmn:startEvent id="S2" name="${esc(def.start2.name||'')}">${io('S2')}${startDef(def.start2.kind)}</bpmn:startEvent>`);
-  def.steps.forEach((s,i)=>{
-    const a=actorOf(s); let tag, inner=''; const isLink = s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow';
-    if(s.kind==='gateway') tag='exclusiveGateway';
-    else if(s.kind==='event') tag='eventBasedGateway';   // waits on the first of its catch events (timer / message)
-    else if(s.kind==='inclusive') tag='inclusiveGateway';
-    else if(s.kind==='sub') tag='subProcess';
-    else if(s.kind==='send') tag='sendTask';
-    else if(s.kind==='receive') tag='receiveTask';
-    else if(s.kind==='throw'){ tag='intermediateThrowEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
-    else if(s.kind==='mthrow'){ tag='intermediateThrowEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
-    else if(s.kind==='catch'){ tag='intermediateCatchEvent'; inner=`<bpmn:linkEventDefinition id="T${i}_led" name="${esc(s.n)}"/>`; }
-    else if(s.kind==='mcatch'){ tag='intermediateCatchEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }
-    else if(s.kind==='tcatch'){ tag='intermediateCatchEvent'; inner=`<bpmn:timerEventDefinition id="T${i}_ted"/>`; }   // intermediate timer-catch (cooldown floor / cadence ceiling)
-    else if(s.kind==='boundary'){ tag='boundaryEvent'; inner=`<bpmn:timerEventDefinition id="T${i}_ted"/>`; }   // timer on its host task (interrupting unless interrupting:false)
-    else if(s.kind==='mend'){ tag='endEvent'; inner=`<bpmn:messageEventDefinition id="T${i}_med"/>`; }   // message-end: send + terminate in one
-    else if(s.kind==='end'||s.kind==='terminate'){ tag='endEvent'; if(s.kind==='terminate') inner='<bpmn:terminateEventDefinition id="T'+i+'_ted"/>'; }
-    else if(s.kind==='store') tag='dataStoreReference';
-    else tag=ACTORS.find(x=>x.key===a).tag;
-    if(s.kind!=='store') refs[a].push('T'+i);   // data stores are not flow nodes (not in a lane)
-    const stepId = s.kind==='store' ? '' : (s.llmId || `${def.num}-${s.id}`);   // explicit per-step id (stores carry none — not flow nodes); LLM nodes carry an LLM<X> id
-    const attrs = s.kind==='boundary' ? ` attachedToRef="${s.attachTo}" cancelActivity="${s.interrupting===false?'false':'true'}"` : '';   // boundary docks to its host; non-interrupting keeps it running
-    const elName = s.kind==='store' ? s.n : (stepId+'\n'+s.n);   // a store shows just its name (no ND-NN id)
-    els.push(`<bpmn:${tag} id="T${i}"${attrs} name="${esc(elName)}">${s.kind==='store'?'':io('T'+i)}${inner}</bpmn:${tag}>`);  // nodes show ID + name; stores show name only, no flow refs
-  });
-  if(!def.noEnd) els.push(`<bpmn:endEvent id="E" name="${esc(def.end)}">${io('E')}${startDef(def.endKind)}</bpmn:endEvent>`);
-  if(def.end2) els.push(`<bpmn:endEvent id="E2" name="${esc(def.end2.name)}">${io('E2')}</bpmn:endEvent>`);
-  const fl = edges.map((e,k)=> e.assoc
-    ? `<bpmn:association id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}" associationDirection="${e.undirected?'None':'One'}"/>`
-    : `<bpmn:sequenceFlow id="sf${k}" sourceRef="${e.f}" targetRef="${e.t}"${(SHOW_EDGE_LABELS && e.label)?` name="${esc(e.label)}"`:''}/>`);
-  const lanes = lanesUsed.map(a=>`<bpmn:lane id="${a.id}" name="${esc(def.owner && a.key==='det' ? def.owner : a.name)}">${refs[a.key].map(r=>`<bpmn:flowNodeRef>${r}</bpmn:flowNodeRef>`).join('')}</bpmn:lane>`).join('');
-
-  // DI shapes
-  const di=[];
-  di.push(`<bpmndi:BPMNShape id="Pool_di" bpmnElement="PoolS" isHorizontal="true"><dc:Bounds x="${poolX}" y="${poolY}" width="${poolW}" height="${poolH}"/></bpmndi:BPMNShape>`);
-  lanesUsed.forEach(a=>di.push(`<bpmndi:BPMNShape id="${a.id}_di" bpmnElement="${a.id}" isHorizontal="true"><dc:Bounds x="${laneX}" y="${bandTop[a.key]}" width="${laneW}" height="${laneH[a.key]}"/></bpmndi:BPMNShape>`));
-  { const g=G('S'); di.push(`<bpmndi:BPMNShape id="S_di" bpmnElement="S"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
-  if(def.start2){ const g=G('S2'); di.push(`<bpmndi:BPMNShape id="S2_di" bpmnElement="S2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-36}" y="${g.bottom+4}" width="72" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
-  def.steps.forEach((s,i)=>{ const g=G('T'+i), exp=s.kind==='sub'?' isExpanded="false"':'', marker=s.kind==='gateway'?' isMarkerVisible="true"':'';
-    const ev=s.kind==='throw'||s.kind==='catch'||s.kind==='mthrow'||s.kind==='mcatch'||s.kind==='tcatch'||s.kind==='boundary'||s.kind==='mend'||s.kind==='end'||s.kind==='terminate';
-    const lbl = (s.kind==='gateway'||s.kind==='inclusive'||s.kind==='event')
-        ? (grid ? (s.lblPos==='top' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-30}" width="90" height="26"/></bpmndi:BPMNLabel>`
-                : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`
-                : s.lblPos==='left' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.x-96}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`
-                                     : `<bpmndi:BPMNLabel><dc:Bounds x="${g.right+6}" y="${g.cy-15}" width="90" height="28"/></bpmndi:BPMNLabel>`)
-                : s.lblPos==='bottom' ? `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.bottom+5}" width="90" height="14"/></bpmndi:BPMNLabel>`  // bottom-center (id below the diamond)
-                : `<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-45}" y="${g.top-32}" width="90" height="26"/></bpmndi:BPMNLabel>`)  // lane: above the diamond, clear of horizontal branches
-      : ev?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${s.lblPos==='top'?g.top-34:g.bottom+4}" width="100" height="${s.lblPos==='top'?28:14}"/></bpmndi:BPMNLabel>`
-      : s.kind==='store'?`<bpmndi:BPMNLabel><dc:Bounds x="${g.cx-50}" y="${g.bottom+3}" width="100" height="26"/></bpmndi:BPMNLabel>`:'';
-    di.push(`<bpmndi:BPMNShape id="T${i}_di" bpmnElement="T${i}"${exp}${marker}><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/>${lbl}</bpmndi:BPMNShape>`); });
-  if(!def.noEnd){ const g=G('E'); di.push(`<bpmndi:BPMNShape id="E_di" bpmnElement="E"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
-  if(def.end2){ const g=G('E2'); di.push(`<bpmndi:BPMNShape id="E2_di" bpmnElement="E2"><dc:Bounds x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}"/><bpmndi:BPMNLabel><dc:Bounds x="${g.cx-80}" y="${g.bottom+4}" width="160" height="14"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`); }
-
-  // edges — lane-mode router keeps every waypoint inside the pool, staggers sibling branches,
-  // and runs cross-lane hops in the target lane's top margin (never through node rows or over the pool top)
-  const laneKeyByRow = (lanesUsed||[]).map(a=>a.key);
-  const bandTopOf = r => bandTop[laneKeyByRow[r]] ?? poolY;
-  const outBy={}; edges.forEach(e=>{ (outBy[e.f]=outBy[e.f]||[]).push(e.t); });
-  // anchor a point on a node's border: side s∈{t,r,b,l} at fraction d (TOK.dock = ¼·½·¾)
-  const dockPt=(g,sd,d)=> sd==='t'?[g.left+g.w*d,g.top] : sd==='b'?[g.left+g.w*d,g.bottom] : sd==='l'?[g.left,g.top+g.h*d] : [g.right,g.top+g.h*d];
-  const stubOut=(p,sd,k)=> sd==='t'?[p[0],p[1]-k]: sd==='b'?[p[0],p[1]+k]: sd==='l'?[p[0]-k,p[1]]:[p[0]+k,p[1]];
-  function dockRoute(a,sa,b,sb){                                       // orthogonal connector between two directed dock points
-    const K=TOK.dockStub, a1=stubOut(a,sa,K), b1=stubOut(b,sb,K);
-    if(Math.abs(a1[0]-b1[0])<2 || Math.abs(a1[1]-b1[1])<2) return [a,a1,b1,b];
-    const horizFirst = sa==='l'||sa==='r';
-    const corner = horizFirst?[b1[0],a1[1]]:[a1[0],b1[1]];
-    return [a,a1,corner,b1,b];
-  }
-  edges.forEach((e,k)=>{
-    const s=G(e.f), t=G(e.t); let wp;
-    const sameRow=Math.abs(s.cy-t.cy)<6, sameCol=Math.abs(s.cx-t.cx)<6;
-    const sibs=outBy[e.f], bi=sibs.indexOf(e.t), bn=sibs.length;       // fan-out index for this branch
-    const stag = bn>1 ? (bi-(bn-1)/2)*TOK.channelStep : 0;             // stagger siblings apart
-    if(e.from && e.to){                                                // explicit dock anchors (side + fraction) → deterministic docking
-      const fs=e.from.s, ts=e.to.s;
-      if((fs==='l'||fs==='r') && (ts==='t'||ts==='b')){                // shortest L: leave horizontally, run to the target's column, one turn into its top/bottom
-        const ax=fs==='l'?s.left:s.right, sy=e.from.d!=null?s.top+s.h*e.from.d:s.cy, ty=ts==='b'?t.bottom:t.top;
-        wp=[[ax,sy],[t.cx,sy],[t.cx,ty]];
-      } else if((fs==='t'||fs==='b') && (ts==='l'||ts==='r')){         // shortest L: leave at the from-dock x, run to the target's row, one turn into its side
-        const sx=e.from.d!=null?s.left+s.w*e.from.d:s.cx, sy=fs==='b'?s.bottom:s.top, tx=ts==='r'?t.right:t.left;
-        wp=[[sx,sy],[sx,t.cy],[tx,t.cy]];
-      } else wp = dockRoute(dockPt(s,fs,e.from.d??0.5), fs, dockPt(t,ts,e.to.d??0.5), ts);
-    } else if(grid){
-      if(e.enter==='top'){ const ex=t.cx<s.cx?s.left:s.right; wp=[[ex,s.cy],[t.cx,s.cy],[t.cx,t.top]]; }
-      else if(sameRow) wp = t.cx>=s.cx ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
-      else if(sameCol) wp = t.cy>=s.cy ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
-      else if(t.cx>=s.cx){ const mx=(s.cx+t.cx)/2; wp=[[s.right,s.cy],[mx,s.cy],[mx,t.cy],[t.left,t.cy]]; }
-      else { const mx=(s.cx+t.cx)/2; wp=[[s.left,s.cy],[mx,s.cy],[mx,t.cy],[t.right,t.cy]]; }
-    } else {
-      const drow=t.row-s.row, dcol=t.col-s.col;
-      if(e.enter==='right'){                                          // back-edge → arc over the top, drop in from the target's right side
-        const yL=bandTopOf(s.row)+TOK.loopInset, xR=t.right+TOK.loopInset, sx=s.cx+stag;
-        wp=[[sx,s.top],[sx,yL],[xR,yL],[xR,t.cy],[t.right,t.cy]];
-      } else if(e.enter==='top'){                                     // up-edge → into the target lane's top margin, drop into target top-center
-        const yCh=bandTopOf(t.row)+TOK.laneTopMargin, sx=s.cx+stag;
-        wp=[[sx,s.top],[sx,yCh],[t.cx,yCh],[t.cx,t.top]];
-      } else if(sameRow && dcol<0){                                   // backward same-lane → straight (cleanest; arrives on the target's right)
-        wp=[[s.left,s.cy],[t.right,t.cy]];
-      } else if(drow===0){                                            // same lane forward → straight
-        wp = dcol>=0 ? [[s.right,s.cy],[t.left,t.cy]] : [[s.left,s.cy],[t.right,t.cy]];
-      } else if(sameCol){                                             // straight vertical between lanes
-        wp = drow>0 ? [[s.cx,s.bottom],[t.cx,t.top]] : [[s.cx,s.top],[t.cx,t.bottom]];
-      } else {                                                        // cross-lane hop → exit sideways toward target (never up through the source column), turn at the target column, enter top/bottom
-        const ey=s.cy+stag, exX=dcol>0?s.right:s.left, enterY=drow>0?t.top:t.bottom;
-        wp=[[exX,ey],[t.cx,ey],[t.cx,enterY]];
-      }
-    }
-    // label at the midpoint of the edge's middle segment, offset off the line — diverging branches never share an anchor
-    let lbl='';
-    if(SHOW_EDGE_LABELS && e.label){
-      let lx,ly;
-      if(e.vlabel){                                              // vertical label beside its line, hugging the gateway (source), letter-bottoms toward the line (rotated post-render)
-        const lineX=wp[0][0], above=t.cy<s.cy, cx2=lineX+12;
-        const cy2 = above ? s.top-26 : s.bottom+40;              // repair: just above the gateway · halt: below the bottom-centre id label
-        lx=cx2-32; ly=cy2-7;
-      } else if(e.labelAt==='start'){                            // hug the source: sit at the start of the first long run after the gateway
-        const a=wp.length>3?wp[1]:wp[0], b=wp.length>3?wp[2]:wp[1], horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
-        lx=horiz?(a[0]<b[0]?a[0]+TOK.labelGap:a[0]-26-TOK.labelGap):a[0]+TOK.labelGap; ly=horiz?a[1]-16:a[1]+TOK.labelGap;
-      } else {
-        const i0=Math.floor((wp.length-1)/2), a=wp[i0], b=wp[i0+1];
-        const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2, horiz=Math.abs(b[0]-a[0])>=Math.abs(b[1]-a[1]);
-        lx=horiz?mx-26:mx+TOK.labelGap; ly=horiz?my-16:my-7;
-      }
-      lbl=`<bpmndi:BPMNLabel><dc:Bounds x="${Math.round(lx)}" y="${Math.round(ly)}" width="64" height="14"/></bpmndi:BPMNLabel>`;
-    }
-    di.push(`<bpmndi:BPMNEdge id="sf${k}_di" bpmnElement="sf${k}">${wp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}${lbl}</bpmndi:BPMNEdge>`);
-  });
-
-  // data objects — emitted from the precomputed token boxes; label on the far side so it never crosses the association
-  const dataEls=[], assoc=[];
-  dataBoxes.filter(Boolean).forEach(b=>{
-    const {i, d, at, W, H, out, store, dx, dy, p1, p2} = b;
-    const sfx = b.node || i, nodeRef = b.node || ('T'+i);   // node='S' for start-event data; else the step
-    const ref=`DOR${sfx}`, obj=`DO${sfx}`, aId=`asc${sfx}`;
-    const dispName = esc((d.id?d.id+'\n':'')+d.name);   // ID on top (maps to the prompt file in the folder), name below
-    if(store){ dataEls.push(`<bpmn:dataStoreReference id="${ref}" name="${dispName}"/>`); }   // cylinder (shared read store)
-    else { dataEls.push(`<bpmn:dataObjectReference id="${ref}" name="${dispName}" dataObjectRef="${obj}"/>`); dataEls.push(`<bpmn:dataObject id="${obj}"/>`); }
-    const lblH = d.id?26:14, lblY = at==='above' ? dy-lblH : dy+H+3;   // far side of the icon (away from the node)
-    const undirected = store && !out;   // store READ = undirected line (the read is the node's action; store is passive) — matches core HOPPER→PULSE
-    assoc.push(`<bpmn:association id="${aId}" sourceRef="${out?nodeRef:ref}" targetRef="${out?ref:nodeRef}" associationDirection="${undirected?'None':'One'}"/>`);
-    di.push(`<bpmndi:BPMNShape id="${ref}_di" bpmnElement="${ref}"><dc:Bounds x="${Math.round(dx)}" y="${Math.round(dy)}" width="${W}" height="${H}"/><bpmndi:BPMNLabel><dc:Bounds x="${Math.round(dx+W/2-50)}" y="${Math.round(lblY)}" width="100" height="${lblH}"/></bpmndi:BPMNLabel></bpmndi:BPMNShape>`);
-    const awp = out?[p1,p2]:[p2,p1];
-    di.push(`<bpmndi:BPMNEdge id="${aId}_di" bpmnElement="${aId}">${awp.map(p=>`<di:waypoint x="${Math.round(p[0])}" y="${Math.round(p[1])}"/>`).join('')}</bpmndi:BPMNEdge>`);
-  });
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="D_sp" targetNamespace="http://tron/flow">
-  <bpmn:collaboration id="CollabS"><bpmn:participant id="PoolS" name="" processRef="SP"/></bpmn:collaboration>
-  <bpmn:process id="SP" isExecutable="false">
-    <bpmn:laneSet id="LS_S">${lanes}</bpmn:laneSet>
-    ${els.join('\n    ')}
-    ${dataEls.join('\n    ')}
-    ${fl.join('\n    ')}
-    ${assoc.join('\n    ')}
-  </bpmn:process>
-  <bpmndi:BPMNDiagram id="Dg_sp"><bpmndi:BPMNPlane id="Pl_sp" bpmnElement="CollabS">
-    ${di.join('\n    ')}
-  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
-</bpmn:definitions>`;
-}
-
-/* ════════════ RENDER ════════════ */
-// repaint node shapes after edges so sequence flows sit beneath the boxes
-// TODO(flow): edges still overlap some node boxes — appendChild reorder is partial.
-//   Real fix likely needs per-edge waypoint clipping to shape borders, or a
-//   separate connection layer. Deferred.
-function edgesBehind(viewer){
-  const er = viewer.get('elementRegistry');
-  er.forEach(el=>{
-    if(el.waypoints) return;                                   // skip connections
-    if(el.type==='bpmn:Participant' || el.type==='bpmn:Lane') return; // keep pool/lanes back
-    const g = er.getGraphics(el);
-    if(g && g.parentNode) g.parentNode.appendChild(g);         // move to front
-  });
-}
-// collapsed sub-process: bpmn-js centers the label but bottoms the [+] marker, leaving the
-// content low with empty top. Shift label + marker up as one unit so it reads centered.
-function recenterSubMarkers(viewer){
-  const er=viewer.get('elementRegistry');
-  er.filter(e=>e.type==='bpmn:SubProcess').forEach(e=>{
-    const vis=er.getGraphics(e).querySelector('.djs-visual'); if(!vis) return;
-    [...vis.children].forEach((ch,idx)=>{
-      if(idx===0) return;                                   // keep the box outline
-      const dy = idx===1 ? -12.5 : -7.5;                    // label up more, marker less → modest gap, still centered
-      ch.setAttribute('transform', `translate(0,${dy}) ${ch.getAttribute('transform')||''}`.trim());
+  function zoomBy(f) { const c = canvas(); c.zoom(clamp(c.zoom() * f)); }
+  // the vendored viewer omits zoomScroll/moveCanvas — wire pan + wheel-zoom
+  // by hand so the controls and the canvas actually move
+  function wirePanZoom() {
+    const el = document.getElementById("canvas");
+    el.addEventListener("wheel", e => {
+      e.preventDefault();
+      const c = canvas(), vb = c.viewbox(), r = el.getBoundingClientRect();
+      const p = { x: vb.x + (e.clientX - r.left) / vb.scale,
+                  y: vb.y + (e.clientY - r.top) / vb.scale };
+      c.zoom(clamp(vb.scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)), p);
+    }, { passive: false });
+    let pan = null;
+    el.addEventListener("mousedown", e => {
+      pan = { x: e.clientX, y: e.clientY, m: 0 }; });
+    window.addEventListener("mousemove", e => {
+      if (!pan) return;
+      pan.m += Math.abs(e.clientX - pan.x) + Math.abs(e.clientY - pan.y);
+      canvas().scroll({ dx: e.clientX - pan.x, dy: e.clientY - pan.y });
+      pan.x = e.clientX; pan.y = e.clientY;
+      el.style.cursor = "grabbing";
     });
-  });
-}
-// bpmn-js draws no divider between a lane's owner-name band and its content — add one,
-// inside the lane's own graphics group so it renders identically to the lane border
-function addLaneDividers(viewer){
-  const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg';
-  er.filter(e=>e.type==='bpmn:Lane').forEach(l=>{
-    const g=er.getGraphics(l); if(!g) return;
-    const ref=g.querySelector('rect'), cs=ref?getComputedStyle(ref):null;
-    const ln=document.createElementNS(NS,'line');
-    ln.setAttribute('x1',30); ln.setAttribute('y1',0);     // local coords (lane group is translated)
-    ln.setAttribute('x2',30); ln.setAttribute('y2',l.height);
-    ln.setAttribute('stroke', cs?cs.stroke:'rgb(34, 36, 42)');
-    ln.setAttribute('stroke-width', cs?parseFloat(cs.strokeWidth):1.5);
-    g.appendChild(ln);
-  });
-}
-// keep the viewport inside the diagram bounds (no infinite canvas)
-function clampVB(canvas){
-  const vb=canvas.viewbox(), inner=vb.inner; let {x,y,width,height}=vb;
-  x = width>=inner.width  ? inner.x-(width-inner.width)/2   : Math.min(Math.max(x,inner.x), inner.x+inner.width-width);
-  y = height>=inner.height? inner.y-(height-inner.height)/2 : Math.min(Math.max(y,inner.y), inner.y+inner.height-height);
-  canvas.viewbox({x,y,width,height});
-}
-function fitNow(viewer){ const c=viewer.get('canvas'); c.zoom('fit-viewport','auto'); c.zoom(c.zoom()*0.9); viewer._minScale=c.zoom(); clampVB(c); }
-function attachPanZoom(viewer, sel, ctlHostSel){
-  if(viewer._panzoom) return; viewer._panzoom=true;
-  const canvas=viewer.get('canvas'), c=document.querySelector(sel);
-  c.style.position='relative'; c.style.cursor='grab';
-  const min=()=>viewer._minScale||0.05, max=()=>(viewer._minScale||0.2)*6;
-  const setZoom=s=>{ s=Math.min(Math.max(s,min()),max()); canvas.zoom(s); clampVB(canvas); };
-  const ctl=document.createElement('div'); ctl.className='zoomctl';
-  ctl.innerHTML='<button data-z="in">+</button><button data-z="out">−</button><button data-z="fit">⤢</button>';
-  const host=document.querySelector(ctlHostSel); host.insertBefore(ctl, host.firstChild);   // zoom sits first in the header control cluster
-  ctl.addEventListener('click',e=>{ const z=e.target.dataset.z; if(!z)return;
-    if(z==='fit') fitNow(viewer); else setZoom(canvas.zoom()*(z==='in'?1.25:0.8)); });
-  c.addEventListener('wheel',e=>{ e.preventDefault(); setZoom(canvas.zoom()*(e.deltaY<0?1.12:0.89)); },{passive:false});
-  let drag=false;
-  c.addEventListener('mousedown',e=>{ if(e.target.closest('.zoomctl'))return; drag=true; c.style.cursor='grabbing'; });
-  window.addEventListener('mouseup',()=>{ if(drag){drag=false; c.style.cursor='grab';} });
-  c.addEventListener('mousemove',e=>{ if(!drag)return; canvas.scroll({dx:e.movementX,dy:e.movementY}); clampVB(canvas); });
-}
-// rotate marked edge labels (vlabel) to vertical, around their own centre — for labels that sit beside a vertical line
-function rotateVLabels(viewer, def){
-  const reg=viewer.get('elementRegistry');
-  (def.edges||[]).forEach((e,k)=>{
-    if(!e.vlabel) return;
-    const lbl=reg.get('sf'+k+'_label'); if(!lbl) return;
-    const gfx=reg.getGraphics(lbl); if(!gfx) return;
-    let bb; try{ bb=gfx.getBBox(); }catch(_){ return; }
-    const cx=bb.x+bb.width/2, cy=bb.y+bb.height/2, tr=gfx.getAttribute('transform')||'';
-    gfx.setAttribute('transform', (tr?tr+' ':'')+`rotate(90 ${cx} ${cy})`);  // letter-bottoms face the line
-  });
-}
-let ovViewer, ovStack=[], ovCurrent=null;
-function openFlow(key){ if(FLOW[key]){ ovStack.push(key); renderFlow(); } }
-function ovBack(){ ovStack.pop(); if(ovStack.length===0) closeOv(); else renderFlow(); }
-function closeOv(){ ovStack=[]; document.getElementById('ov').classList.remove('open'); syncNotesTo(null); }
-async function renderFlow(){
-  const key=ovStack[ovStack.length-1], def=FLOW[key]; ovCurrent=def;
-  document.getElementById('ovhead').innerHTML = headBar({num:def.num, name:def.name, back:true});
-  document.getElementById('ov').classList.add('open');
-  if(!ovViewer){
-    ovViewer = new BpmnJS({ container:'#ovcanvas' });
-    ovViewer.get('eventBus').on('element.click', e=>{
-      const m=/^T(\d+)$/.exec(e.element.id); if(!m) return;
-      const st=ovCurrent.steps[+m[1]]; if(st && st.opens) openFlow(st.opens);
+    window.addEventListener("mouseup", () => { pan = null; el.style.cursor = ""; });
+  }
+  viewer.importXML(document.getElementById("bpmn-xml").textContent).then(() => {
+    const c = canvas();
+    for (const [id, k] of Object.entries(NODE_CLASS)) c.addMarker(id, "n-" + k);
+    NOTE_IDS.forEach(id => c.addMarker(id, "has-note"));
+    viewer.get("eventBus").on("element.click", e => {
+      if (NOTE_IDS.has(e.element.id)) focusNote(e.element.id);
     });
+    wirePanZoom();
+    fit();
+  });
+  document.getElementById("zin").onclick = () => zoomBy(1.2);
+  document.getElementById("zout").onclick = () => zoomBy(1 / 1.2);
+  document.getElementById("zfit").onclick = fit;
+  window.addEventListener("resize", fit);
+  function toggleNotes(force){
+    const p = document.getElementById("notes");
+    const open = force === undefined ? !p.classList.contains("open") : force;
+    p.classList.toggle("open", open);
   }
-  await ovViewer.importXML(subXML(def));
-  const canvas=ovViewer.get('canvas');
-  def.steps.forEach((s,i)=>{
-    if(s.kind==='sub') canvas.addMarker('T'+i,'has-sub');
-    else { const a=s.actor||'det'; if(a!=='det') canvas.addMarker('T'+i,a); }
-  });
-  edgesBehind(ovViewer);
-  addLaneDividers(ovViewer);
-  recenterSubMarkers(ovViewer);
-  rotateVLabels(ovViewer, def);
-  fitNow(ovViewer);
-  attachPanZoom(ovViewer,'#ovcanvas','#ovctl');
-  syncNotesTo(key);                     // canvas → notes: load this node's annotation page (if the panel is open)
-}
-document.getElementById('ov').addEventListener('click', e=>{ if(e.target.id==='ov') closeOv(); });
-document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeOv(); });
-
-// annotations ⇄ canvas sync — the panel reloads a per-diagram page (flow-description.html?d=ND-xx)
-function notesSrcFor(id){ return 'flow-description.html' + (id ? ('?d=' + encodeURIComponent(id)) : ''); }
-function syncNotesTo(id){               // swap the annotation page to this node (overview when id is null); no-op until the panel is opened
-  const f=document.getElementById('notes-frame');
-  if(!f || !f.getAttribute('src')) return;
-  const want=notesSrcFor(id);
-  if(f.getAttribute('src')!==want) f.setAttribute('src', want);
-}
-window.addEventListener('message', e=>{ // notes → canvas: a node badge was clicked in the annotations
-  const d=e.data; if(!d || d.type!=='tron-flow') return;
-  if(FLOW[d.id]){ ovStack=[]; openFlow(d.id); }   // swap the canvas to that sub-diagram (non-sub ids have no diagram)
-});
-
-// annotations panel — lazy-loads the flow notes on first open, slides in from the right
-function toggleNotes(force){
-  const p=document.getElementById('notes');
-  const open = force===undefined ? !p.classList.contains('open') : force;
-  if(open){                              // open to the page matching whatever the canvas is showing
-    const f=document.getElementById('notes-frame');
-    const want=notesSrcFor(ovStack.length ? ovStack[ovStack.length-1] : null);
-    if(f.getAttribute('src')!==want) f.setAttribute('src', want);
+  function focusNote(id){
+    toggleNotes(true);
+    document.querySelectorAll(".note-card.hl").forEach(c => c.classList.remove("hl"));
+    const c = document.getElementById("note--" + id);
+    if (c){ c.classList.add("hl"); c.scrollIntoView({block:"center", behavior:"smooth"}); }
   }
-  p.classList.toggle('open', open);
-  document.body.classList.toggle('notes-open', open);
-}
-document.addEventListener('keydown', e=>{ if(e.key==='Escape') toggleNotes(false); });
-
-// EXPERIMENT — render LLM nodes as the bpmn-io nyan cat (replaces the shape's visual; drops the label, like the real renderer).
-const NYAN_CAT_URL = 'nyan-cat.gif';   // vendored locally (was raw.githubusercontent.com — remote fetch per cat was the load-time hit)
-function nyanify(viewer){
-  const er = viewer.get('elementRegistry'), NS='http://www.w3.org/2000/svg', XL='http://www.w3.org/1999/xlink';
-  NODES.filter(n=>n.llm).forEach(n=>{
-    const g = er.getGraphics(n.id); if(!g) return;
-    const vis = g.querySelector('.djs-visual'); if(!vis) return;
-    while(vis.firstChild) vis.removeChild(vis.firstChild);
-    const barH = 26, catH = n.h - barH;                        // box is sized to the cat's 1.43 aspect + a 2-line label strip (LLM id + name)
-    const img = document.createElementNS(NS,'image');
-    img.setAttribute('x',0); img.setAttribute('y',0);
-    img.setAttribute('width',n.w); img.setAttribute('height',catH);
-    img.setAttribute('href', NYAN_CAT_URL);
-    img.setAttributeNS(XL,'href', NYAN_CAT_URL);
-    img.setAttribute('preserveAspectRatio','xMidYMid meet');   // whole cat, no crop (region matches the cat aspect)
-    vis.appendChild(img);
-    const mkText=(y,size,weight,txt)=>{ const t=document.createElementNS(NS,'text');
-      t.setAttribute('x', n.w/2); t.setAttribute('y', y); t.setAttribute('text-anchor','middle');
-      t.setAttribute('font-family','Space Grotesk, sans-serif'); t.setAttribute('font-size',size);
-      t.setAttribute('font-weight',weight); t.setAttribute('fill','#1C1917'); t.textContent=txt; vis.appendChild(t); };
-    mkText(n.h-15, '9', '700', n.llmId || n.id);               // LLM id on top
-    mkText(n.h-4, '10', '600', n.name);                        // descriptive name below
-  });
-}
-
-// M-06: version + build-date stamp. VERSION/BUILD_DATE are synced alongside this page by
-// publish-diagram.yml (same directory) — no fetch means an older publish; fail silent, not blank canvas.
-(async ()=>{
-  try{
-    const [v, d] = await Promise.all(['VERSION','BUILD_DATE'].map(f=>
-      fetch(f).then(r=>r.ok ? r.text() : '').catch(()=>'')));
-    const stamp = [v.trim() && `v${v.trim()}`, d.trim()].filter(Boolean).join(' · ');
-    if(stamp) document.getElementById('verstamp').textContent = stamp;
-  }catch(e){ /* no stamp files published yet — leave the corner empty */ }
-})();
-
-(async ()=>{
-  document.getElementById('corehead').innerHTML = headBar({name:'workflow'});   // same header component as the subs
-  layoutCore();                         // derive core geometry from the track grid (TOK is defined by now)
-  const core = new BpmnJS({ container:'#core' });
-  await core.importXML(coreXML());
-  const canvas = core.get('canvas');
-  NODES.filter(n=>n.sub).forEach(n=> canvas.addMarker(n.id,'has-sub'));
-  // (LLM nodes are rendered as nyan cats below — no emerald class on the core)
-  edgesBehind(core);
-  addLaneDividers(core);
-  recenterSubMarkers(core);
-  nyanify(core);                        // EXPERIMENT: LLM nodes → nyan cat
-  fitNow(core);
-  attachPanZoom(core,'#core','#corectl');
-  core.get('eventBus').on('element.click', e=>{
-    const n = byId[e.element.id];
-    if(n && n.sub) openFlow(n.id);
-  });
-})();
+  document.addEventListener("keydown", e => { if (e.key === "Escape") toggleNotes(false); });
 </script>
 </body>
 </html>

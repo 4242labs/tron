@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GENERATED from workflow.toml by bpmn.py - do not edit; regenerate: python3 bpmn.py -(-)write -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="defs" targetNamespace="https://tron.42labs.io/workflow">
+  <bpmn:collaboration id="collab">
+    <bpmn:participant id="pool" name="workflow.toml" processRef="proc"/>
+  </bpmn:collaboration>
+  <bpmn:process id="proc" isExecutable="false">
+    <bpmn:laneSet id="lanes">
+      <bpmn:lane id="lane_engine" name="ENGINE">
+        <bpmn:flowNodeRef>start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_build</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>land_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>gw_wrap</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>land_wrap</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>end</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_worker" name="WORKER">
+        <bpmn:flowNodeRef>task_build</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>task_merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>task_wrap</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_reviewer" name="REVIEWER">
+        <bpmn:flowNodeRef>task_review</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_architect" name="ARCHITECT">
+        <bpmn:flowNodeRef>esc_start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_arch</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_gw</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>esc_ruling</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="lane_operator" name="OPERATOR">
+        <bpmn:flowNodeRef>esc_op</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="start" name="&gt;tron start">
+      <bpmn:outgoing>flow_0</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="task_build" name="Build">
+      <bpmn:incoming>flow_0</bpmn:incoming>
+      <bpmn:incoming>flow_2</bpmn:incoming>
+      <bpmn:incoming>flow_5</bpmn:incoming>
+      <bpmn:outgoing>flow_1</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_build" name="Done?">
+      <bpmn:incoming>flow_1</bpmn:incoming>
+      <bpmn:outgoing>flow_2</bpmn:outgoing>
+      <bpmn:outgoing>flow_3</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="task_review" name="Review">
+      <bpmn:incoming>flow_3</bpmn:incoming>
+      <bpmn:outgoing>flow_4</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_review" name="Approved?">
+      <bpmn:incoming>flow_4</bpmn:incoming>
+      <bpmn:outgoing>flow_5</bpmn:outgoing>
+      <bpmn:outgoing>flow_6</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="task_merge" name="Merge">
+      <bpmn:incoming>flow_6</bpmn:incoming>
+      <bpmn:incoming>flow_8</bpmn:incoming>
+      <bpmn:outgoing>flow_7</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_merge" name="Merged?">
+      <bpmn:incoming>flow_7</bpmn:incoming>
+      <bpmn:outgoing>flow_8</bpmn:outgoing>
+      <bpmn:outgoing>flow_9</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="land_merge" name="Land on&#10;the trunk">
+      <bpmn:incoming>flow_9</bpmn:incoming>
+      <bpmn:outgoing>flow_10</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="task_wrap" name="Wrap">
+      <bpmn:incoming>flow_10</bpmn:incoming>
+      <bpmn:incoming>flow_12</bpmn:incoming>
+      <bpmn:outgoing>flow_11</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="gw_wrap" name="Wrapped?">
+      <bpmn:incoming>flow_11</bpmn:incoming>
+      <bpmn:outgoing>flow_12</bpmn:outgoing>
+      <bpmn:outgoing>flow_13</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="land_wrap" name="Land on&#10;the trunk">
+      <bpmn:incoming>flow_13</bpmn:incoming>
+      <bpmn:outgoing>flow_14</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="end" name="Done">
+      <bpmn:incoming>flow_14</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:startEvent id="esc_start" name="Seat stuck">
+      <bpmn:outgoing>flow_15</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="esc_arch" name="Judge">
+      <bpmn:incoming>flow_15</bpmn:incoming>
+      <bpmn:incoming>flow_19</bpmn:incoming>
+      <bpmn:outgoing>flow_16</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="esc_gw" name="Rule or escalate?">
+      <bpmn:incoming>flow_16</bpmn:incoming>
+      <bpmn:outgoing>flow_17</bpmn:outgoing>
+      <bpmn:outgoing>flow_18</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="esc_ruling" name="Resolved">
+      <bpmn:incoming>flow_17</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:task id="esc_op" name="Answer">
+      <bpmn:incoming>flow_18</bpmn:incoming>
+      <bpmn:outgoing>flow_19</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:sequenceFlow id="flow_0" sourceRef="start" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_1" sourceRef="task_build" targetRef="gw_build"/>
+    <bpmn:sequenceFlow id="flow_2" sourceRef="gw_build" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_3" sourceRef="gw_build" targetRef="task_review"/>
+    <bpmn:sequenceFlow id="flow_4" sourceRef="task_review" targetRef="gw_review"/>
+    <bpmn:sequenceFlow id="flow_5" sourceRef="gw_review" targetRef="task_build"/>
+    <bpmn:sequenceFlow id="flow_6" sourceRef="gw_review" targetRef="task_merge"/>
+    <bpmn:sequenceFlow id="flow_7" sourceRef="task_merge" targetRef="gw_merge"/>
+    <bpmn:sequenceFlow id="flow_8" sourceRef="gw_merge" targetRef="task_merge"/>
+    <bpmn:sequenceFlow id="flow_9" sourceRef="gw_merge" targetRef="land_merge"/>
+    <bpmn:sequenceFlow id="flow_10" sourceRef="land_merge" targetRef="task_wrap"/>
+    <bpmn:sequenceFlow id="flow_11" sourceRef="task_wrap" targetRef="gw_wrap"/>
+    <bpmn:sequenceFlow id="flow_12" sourceRef="gw_wrap" targetRef="task_wrap"/>
+    <bpmn:sequenceFlow id="flow_13" sourceRef="gw_wrap" targetRef="land_wrap"/>
+    <bpmn:sequenceFlow id="flow_14" sourceRef="land_wrap" targetRef="end"/>
+    <bpmn:sequenceFlow id="flow_15" sourceRef="esc_start" targetRef="esc_arch"/>
+    <bpmn:sequenceFlow id="flow_16" sourceRef="esc_arch" targetRef="esc_gw"/>
+    <bpmn:sequenceFlow id="flow_17" sourceRef="esc_gw" targetRef="esc_ruling"/>
+    <bpmn:sequenceFlow id="flow_18" sourceRef="esc_gw" targetRef="esc_op"/>
+    <bpmn:sequenceFlow id="flow_19" sourceRef="esc_op" targetRef="esc_arch"/>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="dia">
+    <bpmndi:BPMNPlane id="plane" bpmnElement="collab">
+      <bpmndi:BPMNShape id="pool_di" bpmnElement="pool" isHorizontal="true">
+        <dc:Bounds x="40" y="40" width="1526" height="460"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_engine_di" bpmnElement="lane_engine" isHorizontal="true">
+        <dc:Bounds x="70" y="40" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_worker_di" bpmnElement="lane_worker" isHorizontal="true">
+        <dc:Bounds x="70" y="132" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_reviewer_di" bpmnElement="lane_reviewer" isHorizontal="true">
+        <dc:Bounds x="70" y="224" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_architect_di" bpmnElement="lane_architect" isHorizontal="true">
+        <dc:Bounds x="70" y="316" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="lane_operator_di" bpmnElement="lane_operator" isHorizontal="true">
+        <dc:Bounds x="70" y="408" width="1496" height="92"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="start_di" bpmnElement="start">
+        <dc:Bounds x="152" y="71" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="124" y="104" width="87" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_build_di" bpmnElement="task_build">
+        <dc:Bounds x="289" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_build_di" bpmnElement="gw_build" isMarkerVisible="true">
+        <dc:Bounds x="332" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="331" y="44" width="45" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_review_di" bpmnElement="task_review">
+        <dc:Bounds x="475" y="241" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_review_di" bpmnElement="gw_review" isMarkerVisible="true">
+        <dc:Bounds x="518" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="503" y="44" width="73" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_merge_di" bpmnElement="task_merge">
+        <dc:Bounds x="661" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_merge_di" bpmnElement="gw_merge" isMarkerVisible="true">
+        <dc:Bounds x="704" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="696" y="44" width="59" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="land_merge_di" bpmnElement="land_merge">
+        <dc:Bounds x="847" y="57" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="task_wrap_di" bpmnElement="task_wrap">
+        <dc:Bounds x="1033" y="149" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gw_wrap_di" bpmnElement="gw_wrap" isMarkerVisible="true">
+        <dc:Bounds x="1076" y="65" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1064" y="44" width="66" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="land_wrap_di" bpmnElement="land_wrap">
+        <dc:Bounds x="1219" y="57" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="end_di" bpmnElement="end">
+        <dc:Bounds x="1454" y="71" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="1450" y="104" width="38" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_start_di" bpmnElement="esc_start">
+        <dc:Bounds x="338" y="347" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="313" y="380" width="80" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_arch_di" bpmnElement="esc_arch">
+        <dc:Bounds x="475" y="333" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_gw_di" bpmnElement="esc_gw" isMarkerVisible="true">
+        <dc:Bounds x="704" y="341" width="42" height="42"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="661" y="320" width="129" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_ruling_di" bpmnElement="esc_ruling">
+        <dc:Bounds x="896" y="347" width="30" height="30"/>
+        <bpmndi:BPMNLabel><dc:Bounds x="878" y="380" width="66" height="18"/></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="esc_op_di" bpmnElement="esc_op">
+        <dc:Bounds x="661" y="425" width="128" height="58"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flow_0_di" bpmnElement="flow_0">
+        <di:waypoint x="167" y="101"/>
+        <di:waypoint x="167" y="178"/>
+        <di:waypoint x="289" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_1_di" bpmnElement="flow_1">
+        <di:waypoint x="338" y="149"/>
+        <di:waypoint x="338" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_2_di" bpmnElement="flow_2">
+        <di:waypoint x="368" y="107"/>
+        <di:waypoint x="368" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_3_di" bpmnElement="flow_3">
+        <di:waypoint x="374" y="86"/>
+        <di:waypoint x="446" y="86"/>
+        <di:waypoint x="446" y="270"/>
+        <di:waypoint x="475" y="270"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_4_di" bpmnElement="flow_4">
+        <di:waypoint x="539" y="241"/>
+        <di:waypoint x="539" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_5_di" bpmnElement="flow_5">
+        <di:waypoint x="539" y="107"/>
+        <di:waypoint x="539" y="178"/>
+        <di:waypoint x="417" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_6_di" bpmnElement="flow_6">
+        <di:waypoint x="539" y="107"/>
+        <di:waypoint x="539" y="178"/>
+        <di:waypoint x="661" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_7_di" bpmnElement="flow_7">
+        <di:waypoint x="710" y="149"/>
+        <di:waypoint x="710" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_8_di" bpmnElement="flow_8">
+        <di:waypoint x="740" y="107"/>
+        <di:waypoint x="740" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_9_di" bpmnElement="flow_9">
+        <di:waypoint x="746" y="86"/>
+        <di:waypoint x="847" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_10_di" bpmnElement="flow_10">
+        <di:waypoint x="911" y="115"/>
+        <di:waypoint x="911" y="178"/>
+        <di:waypoint x="1033" y="178"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_11_di" bpmnElement="flow_11">
+        <di:waypoint x="1082" y="149"/>
+        <di:waypoint x="1082" y="107"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_12_di" bpmnElement="flow_12">
+        <di:waypoint x="1112" y="107"/>
+        <di:waypoint x="1112" y="149"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_13_di" bpmnElement="flow_13">
+        <di:waypoint x="1118" y="86"/>
+        <di:waypoint x="1219" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_14_di" bpmnElement="flow_14">
+        <di:waypoint x="1347" y="86"/>
+        <di:waypoint x="1454" y="86"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_15_di" bpmnElement="flow_15">
+        <di:waypoint x="368" y="362"/>
+        <di:waypoint x="475" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_16_di" bpmnElement="flow_16">
+        <di:waypoint x="603" y="362"/>
+        <di:waypoint x="704" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_17_di" bpmnElement="flow_17">
+        <di:waypoint x="746" y="362"/>
+        <di:waypoint x="896" y="362"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_18_di" bpmnElement="flow_18">
+        <di:waypoint x="725" y="383"/>
+        <di:waypoint x="725" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flow_19_di" bpmnElement="flow_19">
+        <di:waypoint x="661" y="454"/>
+        <di:waypoint x="539" y="454"/>
+        <di:waypoint x="539" y="391"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

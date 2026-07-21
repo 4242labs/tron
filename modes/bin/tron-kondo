@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# Open Claude Code already booted as TRON-KONDO (bring an existing project up to canon).
-exec claude "/tron-kondo $*"
