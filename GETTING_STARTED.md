@@ -2,6 +2,20 @@
 
 How to install and run TRON. For what it is and how it works, see [`README.md`](README.md).
 
+## Install
+
+```bash
+curl -fsSL https://tron.42labs.io/seed.sh | sh
+```
+
+That clones TRON into `~/.tron` and symlinks the `tron` launcher into `~/.local/bin`, so you can
+run `tron` from anywhere. It's idempotent — re-run it any time to update to the latest. It never
+edits your shell rc and never uses `sudo`; if `~/.local/bin` isn't on your `PATH`, it prints the one
+line to add. Pin a version with `... | TRON_REF=v0.4.2 sh`; override `TRON_HOME` / `TRON_BIN` to
+relocate. The script is [`install.sh`](install.sh) at the repo root — the URL just redirects to it.
+
+Prefer to do it by hand? `git clone https://github.com/4242labs/tron && cd tron && ./tron start`.
+
 ## Requirements
 
 - `python3` and `git`.
@@ -16,14 +30,14 @@ How to install and run TRON. For what it is and how it works, see [`README.md`](
 ## Run
 
 ```bash
-# From a clone:
-./tron start                 # run TRON on this repo: a short bootup (where to start,
+# Installed on PATH (via the one-liner above); from a clone, use ./tron instead.
+tron start                   # run TRON on this repo: a short bootup (where to start,
                              #   how many workers), then it dispatches the fleet and
                              #   drives the pipeline to done, printing milestones
-./tron start <project>       # point it at a project path directly
-./tron --watch               # long-running: after the pipeline is complete it idles,
+tron start <project>         # point it at a project path directly
+tron --watch                 # long-running: after the pipeline is complete it idles,
                              #   wakes on new register work; a STOP file in the project exits
-./tron --selftest            # engine selftests — no agents, no tokens
+tron --selftest              # engine selftests — no agents, no tokens
 ```
 
 TRON runs autonomously — it isn't a chat REPL. It prints **milestone** notes as blocks land, and
