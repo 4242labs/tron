@@ -103,3 +103,9 @@ Change discipline: a new word goes in `glossary.py` (`--write` regenerates
 the doc); a new boilerplate is a new file under `prompts/`; a process
 change is a `workflow.toml` edit that must survive the lint. Nothing is
 defined twice.
+
+## Contributors
+
+<!-- contributors:start -->
+<a href="https://github.com/42piratas" title="42piratas"><img src="https://avatars.githubusercontent.com/u/18232600?v=4&s=64" width="64" height="64" alt="42piratas" /></a><a href="https://github.com/Basmatiii" title="Basmatiii"><img src="https://avatars.githubusercontent.com/u/91470583?v=4&s=64" width="64" height="64" alt="Basmatiii" /></a>
+<!-- contributors:end -->
