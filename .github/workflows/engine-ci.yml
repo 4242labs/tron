@@ -39,12 +39,12 @@ jobs:
           set -euo pipefail
           fail=0
           run() { echo "::group::$*"; if ! python3 $*; then echo "FAILED: $*"; fail=1; fi; echo "::endgroup::"; }
-          run tron.py --selftest
-          run gate.py
-          run tg.py
-          run events.py
-          run workflow.py
-          run bpmn.py
-          run glossary.py
+          run engine/tron.py --selftest
+          run engine/gate.py
+          run engine/tg.py
+          run engine/events.py
+          run engine/workflow.py
+          run engine/bpmn.py
+          run engine/glossary.py
           run evaluation/harness.py --selftest
           exit $fail

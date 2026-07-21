@@ -2,4 +2,4 @@
 # TRON launcher — `tron start [project]` runs the engine; `tron --selftest`
 # and `tron --watch` pass straight through. Symlink this onto your PATH
 # (e.g. ln -s "$PWD/tron" ~/.local/bin/tron) to call `tron start` anywhere.
-exec python3 "$(dirname "$(readlink -f "$0")")/tron.py" "$@"
+exec python3 "$(dirname "$(readlink -f "$0")")/engine/tron.py" "$@"

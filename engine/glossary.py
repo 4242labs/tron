@@ -11,7 +11,7 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
-DOC = Path(__file__).resolve().parent / "GLOSSARY.md"
+DOC = Path(__file__).resolve().parent.parent / "docs" / "GLOSSARY.md"
 
 Word = namedtuple("Word", "sender fields domain meaning")
 

@@ -1,111 +1,106 @@
-# tron
+<p align="center">
+  <img src=".github/tron-logo.svg" alt="TRON" width="340" />
+</p>
 
-A deterministic workflow engine for a fleet of LLM builders. The process
-is DATA — both spines: `workflow.toml` composes the pass spine (how a block
-advances) and `workflow.ESCALATION` the exception spine (where a stuck seat's
-signal goes, architect-first); the engine executes both, and the diagrams
-(`WORKFLOW.md` + the interactive `workflow/` BPMN) are generated from those
-same tables — drift is impossible. The model builds and judges; the engine
+<p align="center">
+  A deterministic orchestrator that builds software from specs (blocks) — one agent you talk to; it runs the fleet.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License: AGPL-3.0" /></a>
+  <a href="https://github.com/4242labs/tron/graphs/contributors"><img src="https://img.shields.io/github/contributors/4242labs/tron" alt="Contributors" /></a>
+  <a href="https://github.com/4242labs/tron/wiki"><img src="https://img.shields.io/badge/docs-wiki-success.svg" alt="Wiki" /></a>
+</p>
+
+---
+
+## What this is
+
+You point TRON at your project's pipeline. TRON dispatches and supervises a fleet of worker agents —
+architects, engineers, reviewers — and drives the work to done. **You talk to TRON. TRON talks to
+everyone else.**
+
+The core is a **deterministic engine**, not a chatbot improvising. The process is *data*: `workflow.toml`
+composes the pass spine (how a block advances) and `workflow.ESCALATION` the exception spine (where a
+stuck seat's signal goes, architect-first). The engine executes both; the diagrams are generated from
+those same tables, so drift is impossible. The model builds and makes a few narrow judgments; the engine
 verifies, records, escalates, and lands.
-Vocabulary: `GLOSSARY.md`. Voice to the operator: `voice.md`.
 
-## Run
+**Not** a production runtime for unattended app traffic, and not a multi-machine fleet manager.
 
-```
-python3 tron.py            # asks for a project path (Enter = built-in demo)
-python3 tron.py --watch    # long-running: idles, wakes on register work, STOP file exits
-python3 tron.py --selftest # engine selftests — no agents, no tokens
-python3 workflow.py        # flow lint + doc-sync selftests; --write regenerates WORKFLOW.md
-python3 bpmn.py            # BPMN doc-sync selftests; --write regenerates workflow/
-python3 gate.py            # truth-gate selftests (real throwaway git repos)
-python3 tg.py              # telegram transport selftests (fake transport, no network)
-python3 events.py          # event-vocabulary selftests; --write regenerates EVENTS.md
-python3 harness.py project-01 3  # SIM harness: 3 SIMs of PROJECT-01, stats.md out
-                           #   --parallel N seeds a project-owned flow with
-                           #   [limits] max_parallel = N; --ablate ARM runs the
-                           #   engine with ONE invariant disabled (experiment
-                           #   arms for the paper: truth_gate, judge_isolation,
-                           #   architect_first — loud at boot, typed in events)
-python3 game.py            # the communication game (--seed N reproducible)
-```
+> **New here?** [`GETTING_STARTED.md`](GETTING_STARTED.md) — requirements, the commands, and the file layout.
 
-With `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, gitignored) the
-operator line rides Telegram: milestone notes at run start / block done /
-run done, and pages that WAIT for the operator's reply there. Without it,
-everything degrades to the terminal.
+---
+
+## How it works
+
+- **The process is data.** `engine/workflow.toml` is the pass spine (phases = actor+persona seats, words,
+  gates, transitions, limits); `workflow.ESCALATION` is the exception spine. A lint refuses an unsound
+  flow before it ever runs. The diagrams (`docs/WORKFLOW.md`, the interactive `workflow/` BPMN) are
+  **generated** from those tables — never hand-edited.
+- **The architect clears the way.** A single persistent, forward-only architect scopes the work ahead by
+  authoring the next block. A block is dispatchable once its file is ready with every dependency landed on
+  trunk. Finished work is never reopened; remediation is always a new block ahead.
+- **Engineers build; reviewers check.** Engineers and reviewers share a worker pool (you set its size).
+  Each block runs in a fresh engine-made worktree arena on its own branch; judges read the delivery in
+  their **own** detached checkout pinned to the engine-attested sha.
+- **The gate never trusts a claim.** "Reports done" is only a trigger. The gate runs the definition of
+  done on the *evidence* — commits + untouched trunk + engine-run tests + an acceptance challenge; the
+  worker owns the merge inside the single engine-wide window; the engine lands, re-validates **on trunk**,
+  then the worker wraps (docs + session log + clean tree). Done = landed + trunk-green + wrapped.
+- **Walls go to you.** Anything no worker can clear routes architect-first; the operator is the last
+  resort — and answers from anywhere via Telegram.
+- **Crash-safe.** Crashed runs recover at boot: stray agents killed, unverified branches preserved as
+  `orphan/*`, blocks re-dispatched fresh. Every engine decision is one typed JSON line in `events.jsonl`
+  — the single measurement source.
+
+> **Blueprint first, model second.** The flow is a deterministic *blueprint* — a closed trigger grammar
+> and an explicit event table, lint-validated before it runs. The *model* comes second: called only to
+> build and to answer bounded, well-scoped judgments — never to choose a step.
 
 ## Layout
 
 ```
-workflow.toml  # THE process, as data: phases = actor+persona seats, words,
-               #   gates, transitions, [limits] — lint refuses unsound flows
-workflow.py    # parse + lint + WORKFLOW.md generator; ESCALATION = the
-               #   exception spine as data (the engine routes from it)
-WORKFLOW.md    # the diagram — GENERATED, never hand-edited
-bpmn.py        # BPMN 2.0 generator: pass spine + escalation overlay, one source
-workflow/      # workflow.bpmn + workflow.html (GENERATED, vendored bpmn-js
-               #   viewer) — the interactive diagram; unpublished until 0.4.2
-glossary.py    # the closed vocabulary: single-source dict + parser (+ doc gen)
-GLOSSARY.md    # the vocabulary document — GENERATED from glossary.py
-voice.md       # how TRON talks to operators (modular, editable)
-prompts/       # every engine boilerplate, one file per prompt; personas too
-prompts.py     # prompt loader; {gateway}/{persona} compose shared parts
-agents.py      # persistent CLI seats + liveness guard (overrun -> probe the
-               #   session -> re-issue once -> only then page: talk-first)
-gate.py        # the truth gate: commits/trunk/tests/judge_copy/merge verbs
-pipeline.py    # the register + engine-recorded documents (single writer)
-roster.py      # session manifest + deterministic user report per run
-transcript.py  # verbatim run logs (runs/) + operator paging (telegram-first)
-tg.py          # the Telegram line (stdlib-only, graceful degrade)
-events.py      # the typed event log: closed vocabulary (EVENTS.md GENERATED),
-               #   one JSON line per engine decision — the measurement source
-harness.py     # the SIM harness: N reps of a template, fresh git project
-               #   each, aggregated stats.md from the event logs alone
-bootup.py      # the FROZEN operator bootup journey (verbatim questions +
-               #   AIDE, a REAL LLM advisor — advisory only, fail-open;
-               #   piped stdin = no questions, all defaults)
-tron.py        # the engine: one generic flow driver + dispatch + WAKE
-game.py        # the communication game on the same engine parts
-runs/          # per run: verbatim transcript + typed events.jsonl + manifest
-               #   + report + the exact workflow.toml that drove it
-sims/          # templates/<name>/ (plain-file SIM seeds) + one dir per
-               #   harness batch: rep evidence + stats.md
+tron/
+├── tron                # launcher — `tron start [project]`
+├── README.md · GETTING_STARTED.md · LICENSE · VERSION
+├── engine/             # the deterministic engine
+│   ├── tron.py         #   the flow driver + dispatch + WAKE
+│   ├── workflow.toml   #   THE process, as data (pass spine + limits)
+│   ├── workflow.py     #   parse + lint + ESCALATION (exception spine)
+│   ├── gate.py         #   the truth gate (commits/trunk/tests/merge)
+│   ├── glossary.py     #   the closed vocabulary — single source
+│   ├── events.py       #   the typed event log (the measurement source)
+│   ├── bpmn.py         #   BPMN generator (pass spine + escalation overlay)
+│   ├── agents.py · roster.py · pipeline.py · transcript.py · tg.py
+│   ├── bootup.py       #   the FROZEN operator bootup journey
+│   └── prompts/        #   every engine/persona prompt, one file each
+├── docs/               # GENERATED reference: GLOSSARY.md · EVENTS.md · WORKFLOW.md; voice.md
+├── workflow/           # GENERATED interactive BPMN diagram (vendored bpmn-js)
+└── evaluation/         # the SIM validation suite (harness + templates)
 ```
 
-## A project
+Change discipline: a new word goes in `engine/glossary.py` (`--write` regenerates the doc); a new
+boilerplate is a new file under `engine/prompts/`; a process change is a `engine/workflow.toml` edit that
+must survive the lint. Nothing is defined twice.
 
-Committed core docs: `context.md` (what it is), `principles.md` (conduct),
-`playbook.md` (shared infra memory — agents UPDATE it when they learn
-something durable), optional own `workflow.toml` (a committed flow
-overrides the engine default — same lint bar), `policy.md` (acceptance
-bar), `blocks/*.md` (each may declare `test:` and `trunk-test:` commands),
-and `pipeline.md` — the permanent register, written ONLY by the engine.
-`decisions.md` stays UNTRACKED (architect-exclusive by physics: worktrees
-never materialize it). Operator channels, structural by filename:
-`parley.md` (question -> architect answers from artifacts),
-`report-request.md` (-> architect writes, engine records under reports/).
+## Contributing
 
-Dispatch: every block whose deps are done (parallel, cap 2), each to fresh
-seats in an engine-made worktree arena on the block's own branch. Judges
-read the delivery in their OWN detached checkout pinned to the
-engine-attested sha. The gate never trusts a claim: commits + untouched
-trunk + engine-run tests + AC challenge; verdicts are recorded verbatim in
-`reviews.md`; the WORKER owns the merge inside the single engine-wide
-window; the engine performs the mechanical land, re-validates ON the
-trunk, then the worker wraps (docs + session log + clean tree) before the
-arena retires. Done = landed + trunk-green + wrapped. Every wall routes
-architect-first; the operator is the last resort — and answers from
-anywhere via Telegram. Crashed runs recover at boot: stray agent processes
-killed, unverified branches preserved as `orphan/*`, blocks re-dispatched
-fresh.
+Pull requests welcome. TRON is a canon repo — one source of truth — so contributions extend the canon
+itself: a sharper protocol, an engine or lint improvement, better docs. Per-project or machine-specific
+assumptions live in seeded instances, never here.
 
-Change discipline: a new word goes in `glossary.py` (`--write` regenerates
-the doc); a new boilerplate is a new file under `prompts/`; a process
-change is a `workflow.toml` edit that must survive the lint. Nothing is
-defined twice.
+Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
 
 ## Contributors
 
 <!-- contributors:start -->
 <a href="https://github.com/42piratas" title="42piratas"><img src="https://avatars.githubusercontent.com/u/18232600?v=4&s=64" width="64" height="64" alt="42piratas" /></a><a href="https://github.com/Basmatiii" title="Basmatiii"><img src="https://avatars.githubusercontent.com/u/91470583?v=4&s=64" width="64" height="64" alt="Basmatiii" /></a>
 <!-- contributors:end -->
+
+## License
+
+Open source — [AGPL-3.0](LICENSE). | Commercial — contact **ahoy[at]42labs.io**.
+
+---
+If it earned its keep, [coffee is appreciated](https://buymeacoffee.com/42piratas). ☕

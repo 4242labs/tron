@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape, quoteattr
 import workflow
 
 ROOT = Path(__file__).resolve().parent
-DIR = ROOT / "workflow"
+DIR = ROOT.parent / "workflow"
 BPMN = DIR / "workflow.bpmn"
 HTML = DIR / "workflow.html"
 VENDOR = "vendor/bpmn-viewer.production.min.js"

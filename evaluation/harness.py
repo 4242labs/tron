@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # engine modules live at repo root
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engine"))  # engine modules live in engine/
 import events
 from gate import git
 
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent   # evaluation/
 RUNS = ROOT / "runs"                      # runtime output (gitignored)
 SIMS = ROOT / "sims"                      # runtime output (gitignored)
 TEMPLATES = ROOT / "templates"            # the SIM scaffold (tracked)
-ENGINE = [sys.executable, str(ROOT.parent / "tron.py")]  # engine at repo root; selftests substitute a fake
+ENGINE = [sys.executable, str(ROOT.parent / "engine" / "tron.py")]  # engine in engine/; selftests substitute a fake
 TIMEOUT_S = 45 * 60                      # per-SIM wall-clock cap
 
 

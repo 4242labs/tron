@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DOC = ROOT / "EVENTS.md"
+DOC = ROOT.parent / "docs" / "EVENTS.md"
 
 # The closed vocabulary — the single source. A new event type is added
 # HERE (then `python3 events.py --write` regenerates EVENTS.md); emitting

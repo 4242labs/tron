@@ -23,7 +23,7 @@ import prompts
 
 ROOT = Path(__file__).resolve().parent
 FILE = ROOT / "workflow.toml"
-DOC = ROOT / "WORKFLOW.md"
+DOC = ROOT.parent / "docs" / "WORKFLOW.md"
 END = "landed"                              # the terminal pseudo-phase
 ACTORS = ("worker", "reviewer")             # vocabulary roles a phase may seat
 GATES = ("verify_done", "verify_merged",    # engine verbs a work phase may cite
