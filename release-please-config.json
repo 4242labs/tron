@@ -4,7 +4,8 @@
     ".": {
       "release-type": "simple",
       "version-file": "VERSION",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "release-as": "0.4.2"
     }
   }
 }
