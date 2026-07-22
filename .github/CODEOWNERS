@@ -1,0 +1,10 @@
+# Canon repo — every change is reviewed by a maintainer before it lands.
+# Branch protection on `main` requires a CODEOWNER approval + the `test-and-lint`
+# check, and history is kept linear. See CONTRIBUTING.md.
+
+*                 @42piratas @Basmatiii
+
+# The engine is the heart of the canon: the process-as-data, the gate, the
+# closed vocabulary. Changes here are owned by the maintainer of the flow.
+/engine/          @42piratas
+/.github/         @42piratas

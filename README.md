@@ -98,7 +98,8 @@ must survive the lint. Nothing is defined twice.
 
 Pull requests welcome. TRON is a canon repo — one source of truth — so contributions extend the canon
 itself: a sharper protocol, an engine or lint improvement, better docs. Per-project or machine-specific
-assumptions live in seeded instances, never here.
+assumptions live in seeded instances, never here. The workflow, the local checks, and the merge gates
+are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
 
