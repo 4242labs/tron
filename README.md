@@ -28,6 +28,16 @@ verifies, records, escalates, and lands.
 
 **Not** a production runtime for unattended app traffic, and not a multi-machine fleet manager.
 
+**What it needs from you.** TRON expects **complete, well-specified inputs**: each
+block needs exact acceptance criteria, a declared test the engine can run, and
+every dependency and asset present in the scaffold *before* it is dispatched. The
+gate judges evidence, not intent — an under-specified block, a missing asset, or a
+scaffold whose declared test can't run on a fresh trunk checkout will wall or halt
+rather than improvise. A landing that leaves trunk red halts the run; recovery is
+fix-the-spec-and-restart (boot re-dispatches crash-safely) or a remediation block
+ahead — not an in-flight patch. TRON front-loads the work of a robust scaffold; it
+doesn't substitute for it.
+
 ## Install
 
 ```bash
