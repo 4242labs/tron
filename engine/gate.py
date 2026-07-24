@@ -210,7 +210,15 @@ def selftest():
            trunk_test_cmd("test: t\ntrunk-test: python3 check.py b16")
            == "python3 check.py b16",
            test_cmd("trunk-test: python3 check.py") is None,
-           trunk_test_cmd("test: only the suite") is None]
+           trunk_test_cmd("test: only the suite") is None,
+           # test-timeout: seconds the gate allows the suite before a hang-kill
+           test_timeout("# block, no directive") == 300,          # absent -> default
+           test_timeout("# block", default=99) == 99,             # custom default
+           test_timeout("test-timeout: 1200\n## tasks") == 1200,  # parsed
+           test_timeout("test-timeout: -5") == 300,               # non-positive -> default
+           test_timeout("test-timeout: abc") == 300,              # non-int -> default
+           test_timeout("test-timeout:") == 300,                  # empty -> default
+           test_cmd("test-timeout: 1200") is None]                # never confused with test:
     git(repo, "checkout", "-q", "main")
     open(f"{repo}/h", "w").write("illegal")
     git(repo, "add", "."); git(repo, "commit", "-m", "illegal trunk commit")

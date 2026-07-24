@@ -16,6 +16,7 @@ The diagram WORKFLOW.md is GENERATED from the same parsed table
 
 import sys
 import tomllib
+from collections import namedtuple
 from pathlib import Path
 
 import glossary
@@ -49,30 +50,37 @@ REQUIRED = {
 # returns it to the stuck seat; an escalation — or a recurrence of an
 # already-ruled wall, or the architect_first arm ablated — reaches the
 # operator, whose answer syncs back down through the architect.
-ESC_TIERS = ("architect", "operator")   # above the actors; architect-first
-ESC_SYNC = "architect"                  # the operator's answer syncs here
-
-# what puts a seat on the exception spine, and how each is judged
-ESC_TRIGGERS = (
-    {"id": "question", "origin": "seat",
-     "judge": "architect reads the block, rules or escalates"},
-    {"id": "unparsable", "origin": "seat",
-     "judge": "architect translates, rules, or escalates"},
-    {"id": "wall", "origin": "engine",
-     "judge": "architect rules first; a recurrence goes straight up"},
-    {"id": "parley", "origin": "operator",
-     "judge": "architect answers from the artifacts, or escalates"},
+# workflow.ESCALATION IS that table — defined once, here, as a single object.
+# The ESC_* names below are views into it (not a second definition); tron.py
+# routes from these fields and bpmn.py draws them.
+_Escalation = namedtuple("Escalation", "tiers sync triggers edges")
+ESCALATION = _Escalation(
+    tiers=("architect", "operator"),   # above the actors; architect-first
+    sync="architect",                  # the operator's answer syncs here
+    # what puts a seat on the exception spine, and how each is judged
+    triggers=(
+        {"id": "question", "origin": "seat",
+         "judge": "architect reads the block, rules or escalates"},
+        {"id": "unparsable", "origin": "seat",
+         "judge": "architect translates, rules, or escalates"},
+        {"id": "wall", "origin": "engine",
+         "judge": "architect rules first; a recurrence goes straight up"},
+        {"id": "parley", "origin": "operator",
+         "judge": "architect answers from the artifacts, or escalates"},
+    ),
+    # the exception edges, source lane -> target lane; "seat" is whichever
+    # workflow actor is stuck. bpmn.py draws exactly these as the overlay.
+    edges=(
+        {"frm": "seat", "to": "architect",
+         "name": "stuck: QUESTION / wall / unparsable"},
+        {"frm": "architect", "to": "seat", "name": "ruling — back to the seat"},
+        {"frm": "architect", "to": "operator", "name": "ESCALATE / recurrence"},
+        {"frm": "operator", "to": "architect", "name": "answer — syncs back"},
+    ),
 )
-
-# the exception edges, source lane -> target lane; "seat" is whichever
-# workflow actor is stuck. bpmn.py draws exactly these as the overlay.
-ESC_EDGES = (
-    {"frm": "seat", "to": "architect",
-     "name": "stuck: QUESTION / wall / unparsable"},
-    {"frm": "architect", "to": "seat", "name": "ruling — back to the seat"},
-    {"frm": "architect", "to": "operator", "name": "ESCALATE / recurrence"},
-    {"frm": "operator", "to": "architect", "name": "answer — syncs back"},
-)
+# views into the single ESCALATION table — one source, no redefinition
+ESC_TIERS, ESC_SYNC, ESC_TRIGGERS, ESC_EDGES = (
+    ESCALATION.tiers, ESCALATION.sync, ESCALATION.triggers, ESCALATION.edges)
 
 
 def escalation_route(occurrence=1, ablated=False):
