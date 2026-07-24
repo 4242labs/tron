@@ -28,6 +28,10 @@ docs. Per-project or machine-specific assumptions live in seeded instances, neve
    python3 engine/glossary.py      # --write regenerates docs/GLOSSARY.md
    python3 engine/events.py        # --write regenerates docs/EVENTS.md
    python3 engine/bpmn.py          # --write regenerates workflow/
+   python3 engine/agents.py        # seat models + budgets
+   python3 engine/bootup.py        # the frozen operator bootup journey
+   python3 engine/pipeline.py      # the block register
+   python3 engine/roster.py        # persona roster
    python3 evaluation/harness.py --selftest
    ```
    If you changed a source-of-truth table, **commit the regenerated artifacts too** —

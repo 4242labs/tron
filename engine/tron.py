@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""tron v0.1 — a minimal deterministic orchestrator: one block, full cycle.
+"""tron — the deterministic orchestrator: it drives every block, full cycle.
 
 OPERATOR runs this in a terminal. The engine spawns a worker + an architect
 (and, on DONE, a reviewer) as persistent CLI agent sessions. Agents talk back
 in the closed vocabulary (glossary.py / GLOSSARY.md); anything else routes
-agent -> architect -> OPERATOR. Spec: SCOPE-v0.1.md.
+agent -> architect -> OPERATOR.
 
 Modules: glossary.py (the vocabulary — single source), prompts.py + prompts/
 (every engine boilerplate, one file each), agents.py (CLI agent sessions),
