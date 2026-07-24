@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/4242labs/TRON/compare/v0.4.2...v0.4.3) (2026-07-24)
+
+
+### Bug Fixes
+
+* perfection-review findings (42L-1129) ([#176](https://github.com/4242labs/TRON/issues/176)) ([81581ee](https://github.com/4242labs/TRON/commit/81581ee9d19aabdccd531af0f1a4b073126902b5))
+
 ## [0.4.2](https://github.com/4242labs/TRON/compare/v0.4.1...v0.4.2) (2026-07-24)
 
 First public release of the deterministic engine. The engine takes the model off
