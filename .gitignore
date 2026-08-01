@@ -5,3 +5,11 @@ arenas/
 runs/
 evaluation/runs/
 evaluation/sims/
+
+# Claude Code -- local-only files stay untracked (kit hook layer is tracked)
+.claude/settings.local.json
+.claude/worktrees/
+.claude/hooks/*.local.json
+
+# TRON worktrees
+.worktrees/
