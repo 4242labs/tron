@@ -148,6 +148,29 @@ def wall_verdict(architect, case, block):
 
 
 # ------------------------------------------------------------- phase loop
+def project_problem(path):
+    """The reason a project cannot be dispatched, or None when it can.
+
+    Pure, like workflow.lint(): the caller halts on a named reason. The
+    flow is linted before it runs; the project it runs ON gets the same
+    bar. `tron start` runs on the folder the operator is standing in, so
+    a folder that carries no block specs is the likeliest first command
+    of all — it must say what is missing, not raise from the read.
+    """
+    if not path.is_dir():
+        return f"no such project folder: {path}"
+    bdir = path / "blocks"
+    if bdir.is_dir():
+        if not sorted(bdir.glob("*.md")):
+            return (f"{bdir} holds no block specs — a block is a *.md file "
+                    f"in blocks/; author one and retry")
+        return None
+    if not (path / "block.md").is_file():
+        return (f"{path} is not a TRON project — it needs a blocks/ dir of "
+                f"block specs, or a single block.md; author one and retry")
+    return None
+
+
 def load_project(path):
     """(context, [(name, block_text), ...]) — blocks/ dir, or one block.md.
 
@@ -158,6 +181,9 @@ def load_project(path):
     materializes committed content, so exclusivity is physical, not a
     convention. A tracked decisions.md is an illegal state.
     """
+    problem = project_problem(path)
+    if problem:   # an unspecified project must never dispatch
+        halt(problem)
     bdir = path / "blocks"
     if bdir.is_dir():
         blocks = [(p.stem, p.read_text()) for p in sorted(bdir.glob("*.md"))]
@@ -1035,6 +1061,20 @@ def selftest():
         (lambda cb: "architect" in cb[0].lower()
          and [n for n, _ in cb[1]][:3] == ["block-02", "block-03", "block-04"])
         (load_project(_fixture())),
+        # a project with no specs is refused BY NAME, never by traceback:
+        # `tron start` runs on the operator's current folder, so the empty
+        # one is the likeliest first command of all
+        project_problem(_fixture()) is None,           # the sound project
+        "no such project folder" in project_problem(Path("/nonexistent")),
+        (lambda d: "is not a TRON project" in project_problem(d))
+        (Path(__import__("tempfile").mkdtemp(prefix="tron-bare-"))),
+        (lambda d: ((d / "blocks").mkdir() or True)
+         and "holds no block specs" in project_problem(d))
+        (Path(__import__("tempfile").mkdtemp(prefix="tron-noblocks-"))),
+        (lambda d: ((d / "block.md").write_text("# block-01\n") or True)
+         and project_problem(d) is None                # the single-block form
+         and [n for n, _ in load_project(d)[1]] == ["block-01"])
+        (Path(__import__("tempfile").mkdtemp(prefix="tron-single-"))),
         # register structure: the permanent prefix holds and every dep
         # names a real row
         (lambda rows: [r["id"] for r in rows][:4] == ["01", "02", "03", "04"]
