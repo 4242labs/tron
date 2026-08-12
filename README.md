@@ -112,7 +112,7 @@ must survive the lint. Nothing is defined twice.
 
 TRON's design and validation are written up in a preprint — *Demoting the Master
 Control Program: Deterministic Orchestration of a Fleet of LLM Agents*
-([doi.org/10.5281/zenodo.21613792](https://doi.org/10.5281/zenodo.21613792)).
+([doi.org/10.5281/zenodo.21613791](https://doi.org/10.5281/zenodo.21613791)).
 The paper and the full evidence bundle (typed event logs, ablations, and two
 third-party-oracle probes — MIT 6.5840 MapReduce and Raft) live under
 [`paper/`](paper/); the [Validation &amp; Research](https://github.com/4242labs/tron/wiki/Validation-and-Research)

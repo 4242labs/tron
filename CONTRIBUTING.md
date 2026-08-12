@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > **Closed to outside contributions.** TRON is research: this repo is the system measured in the
-> [preprint](https://doi.org/10.5281/zenodo.21613792), and a patch stream through it would quietly
+> [preprint](https://doi.org/10.5281/zenodo.21613791), and a patch stream through it would quietly
 > invalidate what was published. Pull requests will be closed unmerged, however good they are —
 > that is about the paper, not about you.
 >
