@@ -3,7 +3,7 @@
 This directory is the companion archive for the paper:
 
 > **Demoting the Master Control Program: Deterministic Orchestration of a Fleet of LLM Agents**
-> Ânderson Q. · 42labs · *preprint* · Zenodo: [10.5281/zenodo.21613792](https://doi.org/10.5281/zenodo.21613792)
+> Ânderson Q. · 42labs · *preprint* · Zenodo: [10.5281/zenodo.21613791](https://doi.org/10.5281/zenodo.21613791)
 
 TRON is the deterministic finite-state orchestrator the paper describes; its full
 engine lives at the root of this repository. For concepts, installation, and how
@@ -68,14 +68,20 @@ and citable — see each probe's `PROVENANCE.md`.
 
 ## Citing
 
+The record has two kinds of DOI. `10.5281/zenodo.21613791` is the **concept DOI**: it always
+resolves to the newest version, and it is what every link here uses. The BibTeX below cites the
+**version DOI** of the current release, because a citation should resolve to the exact text that was
+read.
+
 ```bibtex
 @misc{quadros_tron_2026,
   title     = {Demoting the Master Control Program: Deterministic Orchestration of a Fleet of LLM Agents},
   author    = {Quadros, {\^A}nderson},
   year      = {2026},
   publisher = {Zenodo},
-  doi       = {10.5281/zenodo.21613792},
+  version   = {2},
+  doi       = {10.5281/zenodo.21909112},
   note      = {Preprint},
-  url       = {https://doi.org/10.5281/zenodo.21613792}
+  url       = {https://doi.org/10.5281/zenodo.21909112}
 }
 ```
