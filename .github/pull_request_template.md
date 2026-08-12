@@ -1,3 +1,7 @@
+<!-- TRON is closed to outside contributions — it is the system measured in the preprint, so
+     unsolicited pull requests are closed unmerged. See CONTRIBUTING.md. Bug reports are welcome as
+     issues, and so is a conversation: ahoy@42labs.io. -->
+
 <!-- Keep it to what changed and why. Delete any section that doesn't apply. -->
 
 ## What & why

@@ -120,12 +120,17 @@ wiki page summarizes the results and how to cite.
 
 ## Contributing
 
-Pull requests welcome. TRON is a canon repo — one source of truth — so contributions extend the canon
-itself: a sharper protocol, an engine or lint improvement, better docs. Per-project or machine-specific
-assumptions live in seeded instances, never here. The workflow, the local checks, and the merge gates
-are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+**Closed to outside contributions.** TRON is the system measured in the preprint above, and a patch
+stream through it would quietly invalidate what was published. Pull requests are not being accepted
+and will be closed unmerged — that is about the paper, not about you.
 
-Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/issues/new/choose).
+Still open: **bug reports** ([open an issue](https://github.com/4242labs/tron/issues/new)) and
+**forks** — the AGPL-3.0 grants you exactly that, and a fork that moves faster than this repo is a
+good outcome, not a betrayal. [`CONTRIBUTING.md`](CONTRIBUTING.md) stays published because it
+describes how the repo actually works, which is what a fork inherits.
+
+And if you'd like to talk — about the design, a result, or using TRON somewhere — reach out:
+<ahoy@42labs.io>. That door is open even though this one isn't.
 
 ## Contributors
 
