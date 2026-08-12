@@ -15,6 +15,7 @@ to run TRON on your own project, see the [wiki](https://github.com/4242labs/tron
 |:--|:--|
 | `demoting-the-mcp.pdf` | The preprint (rendered). |
 | `PAPER.md` | The paper source (Markdown; diagrams render on GitHub). |
+| `build.py` · `mkfigs.py` · `arxiv.sty` · `fig*.svg` | The build kit that renders the PDF from `PAPER.md`. |
 | `evidence/EXPERIMENTS.md` | Index of the by-construction false-done fixtures (Experiments A/B) and how they map to the engine's gate stages. |
 | `evidence/ablation-analysis.md` | Event-level ablation findings (`truth_gate` / `judge_isolation` / `architect_first` arms). |
 | `evidence/crash-resume.md` | The four live crash-and-resume trials. |
@@ -42,6 +43,21 @@ Two things here **are** directly runnable against the current engine:
 
 The reported campaign ran on an earlier pin of this engine — a predecessor
 version line since evolved into the maintained public build in this repository.
+
+## Rebuilding the PDF
+
+`PAPER.md` is the source of truth; `demoting-the-mcp.pdf` is its render. The build
+needs `pandoc`, `tectonic`, `cairo`, and `cairosvg`:
+
+```sh
+brew install pandoc tectonic cairo
+python3 -m venv paper/.venv && paper/.venv/bin/pip install cairosvg
+DYLD_LIBRARY_PATH=/opt/homebrew/lib paper/.venv/bin/python paper/build.py
+```
+
+`build.py` converts the two Mermaid figures to vector PDFs, assembles `main.tex`
+against `arxiv.sty`, and compiles. Copy the resulting `main.pdf` over
+`demoting-the-mcp.pdf` to publish a new render.
 
 ## Withheld
 
