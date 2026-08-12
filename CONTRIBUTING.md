@@ -1,32 +1,34 @@
 # Contributing to TRON
 
-**Status: passively maintained.** TRON is used in production at 42labs and gets commits
-regularly — but it is not a staffed product. There is no support rota and no SLA. Issues
-and pull requests are welcome and genuinely read; expect a reply in weeks rather than
-days, and sometimes not at all. That is capacity, not disinterest. Plan accordingly
-before you invest a weekend.
+> [!IMPORTANT]
+> **Closed to outside contributions.** TRON is research: this repo is the system measured in the
+> [preprint](https://doi.org/10.5281/zenodo.21613792), and a patch stream through it would quietly
+> invalidate what was published. Pull requests will be closed unmerged, however good they are —
+> that is about the paper, not about you.
+>
+> **Reach out anyway, if you'd like.** Questions about the design, an argument with a result, an
+> idea, an interest in using TRON somewhere — all genuinely welcome, by
+> [issue](https://github.com/4242labs/tron/issues/new) or at <ahoy@42labs.io>. It is only the merge
+> button that is shut.
+>
+> Everything below stays published because it describes how this repo actually works — which is
+> what you inherit if you fork it, and what the terms would be if contributions ever open.
 
-TRON is a **canon repo** — one source of truth for the orchestrator. Contributions
-extend the canon itself: a sharper protocol, an engine or lint improvement, better
-docs. Per-project or machine-specific assumptions live in seeded instances, never here.
+TRON is a **canon repo** — one source of truth for the orchestrator. Per-project or
+machine-specific assumptions live in seeded instances, never here.
 
-## What's welcome
+## What is still open
 
-- **Bug reports with a reproduction.** A good report names the flow step or the event involved — and, best of all, comes with a failing selftest.
-- **Small, focused pull requests.** One logical change, selftests green.
-- **Documentation** — typos, unclear passages, missing setup steps. Always welcome, usually fast.
+- **Bug reports with a reproduction.** A good report names the flow step or the event involved — and, best of all, comes with a failing selftest. These get read and they get fixed.
+- **Questions and conversation.** An issue or an email. No patch required, and none expected.
+- **Forks.** The AGPL-3.0 grants you exactly that. If you need TRON to move somewhere it isn't going, that is the real answer, not a brush-off.
 
-## What is unlikely to land
+## What is not
 
-- Large refactors, architecture changes, rewrites.
-- Features not discussed in an issue first. **Open the issue before you write the code** — one message, potentially a saved weekend.
-- Unrequested dependency bumps, formatting-only diffs, build-tooling swaps.
-- Hand-edits to generated files, or anything that defines an existing concept a second time. See the rules below — both are refused on sight, however good the change underneath is.
-
-## If you need it faster
-
-Fork it. The AGPL-3.0 grants you exactly that. A fork that moves faster than this repo is
-a good outcome, not a betrayal — this is a real answer, not a brush-off.
+Pull requests — features, refactors, rewrites, dependency bumps, formatting diffs, and yes, typo
+fixes too. Some of them would be good changes; that isn't the point. The engine that ran the
+experiments has to stay the engine described in the paper. Send the typo as an issue and it gets
+fixed here.
 
 ## The rules of the canon
 
@@ -42,7 +44,9 @@ a good outcome, not a betrayal — this is a real answer, not a brush-off.
 
 ## Workflow
 
-1. **Branch** off `main` (or fork). One logical change per branch.
+How a change is made here — the maintainers' loop, and what a fork inherits.
+
+1. **Branch** off `main`. One logical change per branch.
 2. **Build + validate locally:**
    ```bash
    python3 engine/tron.py --selftest
@@ -63,12 +67,13 @@ a good outcome, not a betrayal — this is a real answer, not a brush-off.
 3. **Open a PR** and fill in the template — what changed and why.
 4. **Green CI + one maintainer review.** `main` is protected: the `test-and-lint`
    check must pass and a [CODEOWNER](.github/CODEOWNERS) must approve. History stays
-   linear — your branch is squashed or rebased on merge, not merge-committed.
+   linear — the branch is squashed or rebased on merge, not merge-committed.
 5. A maintainer merges. Finished work is never reopened; follow-ups are new PRs.
 
 ## Reporting bugs / ideas
 
-[Open an issue](https://github.com/4242labs/tron/issues/new/choose).
+[Open an issue](https://github.com/4242labs/tron/issues/new). Or write to <ahoy@42labs.io> if it is
+more of a conversation than a ticket.
 
 ## Licensing
 
