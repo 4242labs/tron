@@ -134,7 +134,6 @@ Found a bug or have an idea? [Open an issue](https://github.com/4242labs/tron/is
 ## License
 
 Open source — [AGPL-3.0](LICENSE). Commercial — contact ahoy@42labs.io.
-Both, in full: [LICENSING.md](LICENSING.md).
 
 ---
 If it earned its keep, [coffee is appreciated](https://buymeacoffee.com/42piratas). ☕
