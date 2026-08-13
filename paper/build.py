@@ -109,7 +109,7 @@ PRE = r"""\documentclass{article}
 \begin{abstract}
 """ + abstract_tex + r"""
 \end{abstract}
-\keywords{deterministic orchestration, LLM agent fleets, finite-state control plane, evidence-gated completion, false-completion rate, git-as-truth, multi-agent systems}
+\keywords{deterministic orchestration, LLM agent fleets, finite-state control plane, dependency-graph scheduling, evidence-gated completion, specification gaming, false-completion rate, untrusted-model control, git-as-truth, event sourcing, multi-agent systems}
 
 """ + body_tex + r"""
 \end{document}

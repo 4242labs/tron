@@ -185,8 +185,8 @@ MetaAgent (arXiv:2507.22606) is LLM-generated FSM control: soft, with every
 transition hinging on a verifier LLM. The machine described here is hard, a
 table lookup over a closed grammar, and the only model output the engine ever
 consumes is the agents' verbs, never a transition. Hinging a transition on a
-verifier LLM is fragile precisely because LLM verdicts are themselves unreliable
-arbiters, with position, verbosity, and self-enhancement biases well documented
+verifier LLM is fragile precisely because the LLM-as-judge is itself an unreliable
+arbiter, with position, verbosity, and self-enhancement biases well documented
 (Zheng et al., NeurIPS 2023), so we never let one decide a step.
 
 EviBound (arXiv:2511.05524) is the closest match to gate-decided-done. Dual
@@ -198,7 +198,7 @@ governs a single agent's research claims.
 
 Hack-Verifiable (arXiv:2605.20744) plants detectable reward-hacking
 opportunities so exploitation is deterministically measurable. It is an
-empirical case-file for the failure mode the evidence gate neutralizes, and the
+empirical case-file for the specification gaming the evidence gate neutralizes, and the
 template for our by-construction false-done metric (§12.1).
 
 Claw-Eval (arXiv:2604.06132) grades the *full trajectory* from execution traces,
@@ -274,7 +274,8 @@ vocabulary cannot parse is not guessed at, but routed to the architect (§9).
 The model therefore appears in exactly three bounded roles, none on the
 steering path: workers build; judges review a delivered branch in isolation
 and return a verdict verb; and an in-fleet architect (with an operator-facing
-AIDE persona) triages walls and composes escalation copy. The engine is not
+AIDE persona) triages walls and composes escalation copy. The model is the
+untrusted component throughout; the trusted one is code. The engine is not
 itself a model — it is plain code around the model — and the model is a
 swappable part by design: any LLM or mix is meant to fill those roles under
 the same sealed engine, though we exercise only one assignment and do not test
@@ -308,7 +309,8 @@ worker.*
 ## 6. The state substrate: git as external truth
 
 The core owns no authoritative state and authors no content in version
-control. Its only write is the gated, mechanical land (§7). The single source
+control. Its only write is the gated, mechanical land (§7). Authorship and
+landing are separate privileges. The single source
 of truth about the work — which blocks are done, in progress, or next — is the
 git-tracked pipeline, and the engine only reads it. Each dispatched block gets
 an *arena*: an isolated git worktree on its own `feat/<block>` branch, created
@@ -334,8 +336,9 @@ cannot complete safely pages the operator rather than acting on a stale view.
 
 Observability is by construction. In a deterministic runtime the trace is a
 property rather than a bolt-on: `events.jsonl` (typed dispatch, gate, verdict,
-land, and trunk-check records) *is* the audit trail, and same-inputs to
-same-decisions makes the control plane replayable, which no probabilistic
+land, and trunk-check records) *is* the audit trail, the control plane's
+event-sourced record, and same-inputs to same-decisions makes it replayable,
+which no probabilistic
 orchestrator trace can promise.
 
 ## 7. The gate: what closes work
@@ -481,12 +484,14 @@ We author blocks to five principles. Spec-driven: exact observable outcomes, not
 a direction to explore, so if two builders could satisfy the text differently it
 is under-specified and gets rewritten. Architecturally coherent: one module or
 CLI surface, one landing, one place in the dependency graph, so layer boundaries
-are block boundaries. Short-memory-sized: it fits inside one builder's context,
-so long horizons are expressed as more blocks rather than bigger blocks. One
+are block boundaries. Short-memory-sized: context engineering at the unit of
+work, since it fits inside one builder's context, so long horizons are
+expressed as more blocks rather than bigger blocks. One
 branch, one gate: never split across blocks, never partially landed. And
 declares its own test: behavior lands *with* its test, which the engine runs
 itself in isolation. The dependency graph (`pipeline.md`) is what the scheduler
-consumes, and blocks with satisfied dependencies run in parallel up to the
+consumes by ready-set selection, and blocks with satisfied dependencies run in
+parallel up to the
 configured width, with a shared contract file (for example `MODULES.md`) the
 deliberate merge-contention surface.
 
@@ -837,7 +842,7 @@ engine-written run reports, and the deterministic process definition the
 engine executed are published at `github.com/4242labs/tron` under `paper/`,
 alongside the maintained engine itself and the by-construction false-done
 fixtures of §12.1 (runnable against the current build). The archive is for
-inspection and audit rather than re-execution: worker and judge steps are
+inspection and audit rather than reproduction by re-execution: worker and judge steps are
 stochastic LLM calls, and the campaign ran on an earlier pin of this engine —
 a predecessor version line since evolved into the maintained public build — so
 the published record and not a re-run is the evidence. Pilot and warmup runs
