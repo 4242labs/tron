@@ -8,7 +8,7 @@
 >
 > **Reach out anyway, if you'd like.** Questions about the design, an argument with a result, an
 > idea, an interest in using TRON somewhere — all genuinely welcome, by
-> [issue](https://github.com/4242labs/tron/issues/new) or at <ahoy@42labs.io>. It is only the merge
+> [issue](https://github.com/4242labs/tron/issues/new/choose) or at <ahoy@42labs.io>. It is only the merge
 > button that is shut.
 >
 > Everything below stays published because it describes how this repo actually works — which is
@@ -72,7 +72,7 @@ How a change is made here — the maintainers' loop, and what a fork inherits.
 
 ## Reporting bugs / ideas
 
-[Open an issue](https://github.com/4242labs/tron/issues/new). Or write to <ahoy@42labs.io> if it is
+[Open an issue](https://github.com/4242labs/tron/issues/new/choose). Or write to <ahoy@42labs.io> if it is
 more of a conversation than a ticket.
 
 ## Licensing

@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in the engine behaves differently from what the docs or the selftests say.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bug reports are one of the things this repo is open to, and they get read and fixed.
+        A report that names the flow step or the event involved is worth ten that describe a feeling —
+        and one that comes with a failing selftest is the best kind there is.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The behaviour you saw, not the fix you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: Point at the doc, the glossary entry, or the selftest that says so, if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest sequence that shows it. A failing selftest beats prose.
+      placeholder: |
+        1. python3 engine/tron.py --selftest
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: locus
+    attributes:
+      label: Flow step or event
+      description: Which workflow step, block, or event is involved — if you can tell.
+      placeholder: "e.g. block-close, or event tron.block.completed"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: TRON version (`VERSION`), OS, Python version.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste it — it is formatted automatically, no backticks needed.
+      render: shell

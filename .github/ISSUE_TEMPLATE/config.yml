@@ -1,0 +1,10 @@
+# Blank issues stay enabled on purpose: CONTRIBUTING.md invites conversation, and a form is a
+# poor container for a letter. The templates are a convenience, never a gate.
+blank_issues_enabled: true
+contact_links:
+  - name: Email the maintainers
+    url: mailto:ahoy@42labs.io
+    about: For anything that is more of a conversation than a ticket — including commercial licensing.
+  - name: Read CONTRIBUTING first
+    url: https://github.com/4242labs/tron/blob/main/CONTRIBUTING.md
+    about: This repo is closed to pull requests. What is still open, and why, is written down there.
