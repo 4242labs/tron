@@ -79,9 +79,9 @@ read.
   author    = {Quadros, {\^A}nderson},
   year      = {2026},
   publisher = {Zenodo},
-  version   = {2},
-  doi       = {10.5281/zenodo.21909112},
+  version   = {3},
+  doi       = {10.5281/zenodo.21922855},
   note      = {Preprint},
-  url       = {https://doi.org/10.5281/zenodo.21909112}
+  url       = {https://doi.org/10.5281/zenodo.21922855}
 }
 ```
