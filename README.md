@@ -124,7 +124,7 @@ wiki page summarizes the results and how to cite.
 stream through it would quietly invalidate what was published. Pull requests are not being accepted
 and will be closed unmerged — that is about the paper, not about you.
 
-Still open: **bug reports** ([open an issue](https://github.com/4242labs/tron/issues/new)) and
+Still open: **bug reports** ([open an issue](https://github.com/4242labs/tron/issues/new/choose)) and
 **forks** — the AGPL-3.0 grants you exactly that, and a fork that moves faster than this repo is a
 good outcome, not a betrayal. [`CONTRIBUTING.md`](CONTRIBUTING.md) stays published because it
 describes how the repo actually works, which is what a fork inherits.

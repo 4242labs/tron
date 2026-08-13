@@ -1,0 +1,25 @@
+name: Question, idea, or an argument with a result
+description: Ask about the design, disagree with something in the paper, or say where you want to use TRON.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No patch required, and none expected — this repo is closed to pull requests but not to
+        conversation. If it reads more like a letter than a ticket, <ahoy@42labs.io> works just as well.
+
+  - type: textarea
+    id: body
+    attributes:
+      label: What's on your mind
+      description: |
+        A question about how something works, an argument with a measured result, an idea, or an
+        interest in using TRON somewhere it isn't going yet.
+    validations:
+      required: true
+
+  - type: input
+    id: pointer
+    attributes:
+      label: Where in the repo or the paper
+      description: A file, a doc section, a glossary term, or a figure — if it points somewhere specific.
