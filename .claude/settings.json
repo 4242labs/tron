@@ -1,4 +1,40 @@
 {
+  "enabledPlugins": {
+    "ponytail@ponytail": true
+  },
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --mirror:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fdx:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git commit --no-verify:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(rm -rf /:*)",
+      "Bash(gh pr merge --auto:*)",
+      "Bash(gh repo delete:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)"
+    ],
+    "ask": [
+      "Bash(gh pr merge:*)",
+      "Bash(gh repo create:*)",
+      "Bash(gh api --method DELETE:*)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
   "worktree": {
     "bgIsolation": "none"
   },
