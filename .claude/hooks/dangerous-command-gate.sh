@@ -89,10 +89,12 @@ while IFS= read -r seg; do
         refuse "\`git commit -n\` is \`--no-verify\`; it skips the canon commit gates."
       ;;
     gh\ *)
-      printf '%s' "$n" | grep -qE '^gh .*\bpr\b.*\bmerge\b.*--auto' && \
+      # Anchor on the subcommand pair. `.*` between `gh` and the verb would swallow
+      # `gh pr merge --repo X --delete-branch`, which is an ordinary landing.
+      printf '%s' "$n" | grep -qE '^gh( +--[A-Za-z-]+([= ][^ ]+)?)* +pr +merge\b.*(^|[[:space:]])--auto([[:space:]]|=|$)' && \
         refuse "auto-merge. Canon: the merge is the operator's click, never armed to fire later."
 
-      printf '%s' "$n" | grep -qE '^gh .*\brepo\b.*\bdelete\b' && \
+      printf '%s' "$n" | grep -qE '^gh( +--[A-Za-z-]+([= ][^ ]+)?)* +repo +delete\b' && \
         refuse "repo deletion."
       ;;
   esac
