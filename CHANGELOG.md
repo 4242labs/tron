@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.4](https://github.com/4242labs/tron/compare/v0.4.3...v0.4.4) (2026-08-14)
+
+
+### Bug Fixes
+
+* **ci:** open a PR for the contributors refresh instead of pushing to main ([#194](https://github.com/4242labs/tron/issues/194)) ([de0f84d](https://github.com/4242labs/tron/commit/de0f84d807d2e8ab02a95d722cbc9fc298a5d292))
+* **install:** require python3 3.11+ in preflight ([#181](https://github.com/4242labs/tron/issues/181)) ([ff27d50](https://github.com/4242labs/tron/commit/ff27d504d083a2ff7409227d1ff3a287a8a6570f))
+* refuse a project with no block specs by name, not by traceback ([#180](https://github.com/4242labs/tron/issues/180)) ([dc1f8a2](https://github.com/4242labs/tron/commit/dc1f8a2bcf1e54ffe7059cd12890fce0194c65dd))
+
 ## [0.4.3](https://github.com/4242labs/TRON/compare/v0.4.2...v0.4.3) (2026-07-24)
 
 
