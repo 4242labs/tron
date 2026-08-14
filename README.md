@@ -135,7 +135,7 @@ And if you'd like to talk — about the design, a result, or using TRON somewher
 ## Contributors
 
 <!-- contributors:start -->
-<a href="https://github.com/42piratas" title="42piratas"><img src="https://avatars.githubusercontent.com/u/18232600?v=4&s=64" width="64" height="64" alt="42piratas" /></a><a href="https://github.com/Basmatiii" title="Basmatiii"><img src="https://avatars.githubusercontent.com/u/91470583?v=4&s=64" width="64" height="64" alt="Basmatiii" /></a>
+<a href="https://github.com/42piratas" title="42piratas"><img src="https://avatars.githubusercontent.com/u/18232600?v=4&s=64" width="64" height="64" alt="42piratas" /></a><a href="https://github.com/Basmatiii" title="Basmatiii"><img src="https://avatars.githubusercontent.com/u/91470583?v=4&s=64" width="64" height="64" alt="Basmatiii" /></a><a href="https://github.com/alexwbend" title="alexwbend"><img src="https://avatars.githubusercontent.com/u/258693662?v=4&s=64" width="64" height="64" alt="alexwbend" /></a>
 <!-- contributors:end -->
 
 ## License
