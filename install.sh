@@ -5,7 +5,7 @@
 #   curl -fsSL https://tron.42labs.io/seed.sh | sh
 #
 # What it does (and nothing more):
-#   1. Checks that python3 and git are present.
+#   1. Checks that git and python3 (3.11+) are present.
 #   2. Clones 4242labs/tron into ~/.tron  (or updates it in place if re-run).
 #   3. Symlinks the `tron` launcher into ~/.local/bin so you can run `tron`
 #      from anywhere.
@@ -52,6 +52,15 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 have git     || die "git is required but not found. Install git and re-run."
 have python3 || die "python3 is required but not found. Install Python 3 and re-run."
+
+# The engine reads workflow.toml with tomllib — stdlib only from 3.11 on.
+# Without this gate the install reports success and the FIRST `tron start`
+# dies on a ModuleNotFoundError traceback, far from the cause. Fail here,
+# where the fix has a name.
+PY_VER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '?')"
+python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null \
+  || die "python3 is $PY_VER — TRON needs 3.11 or newer (the engine reads \
+workflow.toml with tomllib). Install Python 3.11+ and re-run."
 
 say ""
 say "${B}TRON${RST} — deterministic orchestrator"
