@@ -2,8 +2,9 @@ name: release-please
 
 # Maintains VERSION + CHANGELOG.md from conventional-commit history on merge to main.
 # See CONTRIBUTING.md (commit convention).
-# Uses the repository secret WWW_SYNC_TOKEN to open the release PR (the default GITHUB_TOKEN
-# can't create PRs).
+# Uses the org secret RELEASE_PLEASE_TOKEN to open the release PR (the default GITHUB_TOKEN
+# can't create PRs). One token for every 4242labs repo — the old repo-scoped WWW_SYNC_TOKEN
+# was named for a job it had outgrown.
 
 on:
   push:
@@ -16,6 +17,6 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.WWW_SYNC_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
