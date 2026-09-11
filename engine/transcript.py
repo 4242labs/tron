@@ -10,6 +10,7 @@ import threading
 import time
 
 import events
+import discord
 import tg
 
 LOG_PATH = None
@@ -53,9 +54,10 @@ def operator(context):
         print(f"[TRON -> OPERATOR] {context}")
         log_entry("TRON -> OPERATOR", context)
         events.emit("page", context=context[:200])
-        ans = tg.ask("[TRON] Hey boss — the fleet needs you.\n\n"
-                     + context + "\n\nReply here; your answer goes "
-                     "straight back in.")
+        page = ("[TRON] Hey boss — the fleet needs you.\n\n" + context
+                + "\n\nReply here; your answer goes straight back in.")
+        discord.note(page)
+        ans = tg.ask(page)
         if ans is None:
             try:
                 ans = input("OPERATOR> ").strip()
