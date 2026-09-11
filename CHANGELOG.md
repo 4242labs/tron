@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/4242labs/tron/compare/v0.4.4...v0.5.0) (2026-09-11)
+
+
+### Features
+
+* add TRON Discord messaging ([96ec25a](https://github.com/4242labs/tron/commit/96ec25aaef787a622f8dbaa111fa22799591af9f))
+
+
+### Bug Fixes
+
+* identify TRON Discord requests ([b73ebb0](https://github.com/4242labs/tron/commit/b73ebb0a291fac8c9c165ffaa36479fb3c494bc8))
+
 ## [0.4.4](https://github.com/4242labs/tron/compare/v0.4.3...v0.4.4) (2026-08-14)
 
 
