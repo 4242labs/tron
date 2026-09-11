@@ -15,7 +15,16 @@ ROOT = Path(__file__).resolve().parent
 ENV = ROOT / ".env"
 # The operator-managed bot credential is shared by TRON worktrees.  Keep the
 # engine-local file first for standalone installs and tests.
-MODES_ENV = ROOT.parents[2] / "tron-modes" / ".env"
+def _modes_env() -> Path:
+    """Find the shared modes env from either a checkout or an added worktree."""
+    for parent in ROOT.parents:
+        candidate = parent / "tron-modes" / ".env"
+        if candidate.exists():
+            return candidate
+    return ROOT.parents[2] / "tron-modes" / ".env"
+
+
+MODES_ENV = _modes_env()
 CHANNEL_ID = "1547918251651112971"
 MESSAGE_URL = f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages"
 _state = {"loaded": False, "token": None, "after": None}
