@@ -47,10 +47,14 @@ def _load():
 
 
 def _request(url, data=None, timeout=10):
+    headers = {
+        "Authorization": f"Bot {_state['token']}",
+        "User-Agent": "42labs-tron/1.0",
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
-        url, data=data,
-        headers={"Authorization": f"Bot {_state['token']}",
-                 "Content-Type": "application/json"})
+        url, data=data, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode())
 
