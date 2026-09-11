@@ -26,6 +26,7 @@ import pipeline
 import prompts
 import roster
 import bootup
+import discord
 import tg
 import transcript
 import workflow
@@ -83,11 +84,12 @@ MERGE = threading.Lock()   # ONE merge window at a time; main only moves
 
 # ---------------------------------------------------------------- routing
 def milestone(text):
-    """Milestone narration rides Telegram unless TRON_QUIET says a
-    harness batch is driving. Only the narration is quietable — pages
+    """Milestone narration rides Telegram and Discord unless TRON_QUIET
+    says a harness batch is driving. Only narration is quietable — pages
     (transcript.operator) always reach the operator."""
     if not os.environ.get("TRON_QUIET"):
         tg.note(text)
+        discord.note(text)
 
 
 def interpret(agent, architect, reply, context="", tag=""):
@@ -271,6 +273,9 @@ def report_request(path, architect):
 def channels(path, architect):
     """Every operator-initiated channel, one poll."""
     parley(path, architect)
+    for text in discord.inbox():
+        (path / "parley.md").write_text(text)
+        parley(path, architect)
     report_request(path, architect)
 
 
